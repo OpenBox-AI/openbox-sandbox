@@ -1,0 +1,34 @@
+[Unit]
+Description=OpenBox client-side sandbox boundary
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openbox-sandbox
+Group=openbox-sandbox
+Environment=OPENBOX_SANDBOX_CONFIG=/etc/openbox-sandbox/service.json
+ExecStart=/opt/openbox/bin/openbox-sandbox
+Restart=on-failure
+RestartSec=5s
+# Do not externally kill the process while it owns sandbox cleanup.
+TimeoutStopSec=infinity
+StateDirectory=openbox-sandbox
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+ReadOnlyPaths=/etc/openbox-sandbox
+ReadWritePaths=/var/lib/openbox-sandbox
+
+[Install]
+WantedBy=multi-user.target

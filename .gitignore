@@ -1,0 +1,13 @@
+/target/
+/.openbox-local/
+.DS_Store
+*.log
+*.pid
+*.sock
+*.tmp
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
