@@ -1,6 +1,10 @@
 # OpenBox Sandbox
 
-A framework-neutral sandbox service for running client-owned commands through OpenShell.
+OpenBox Sandbox is the standalone, production-intent, framework-neutral sandbox runtime for running client-owned commands through OpenShell.
+
+## Repository boundary
+
+Integration PoC/showcase material belongs exclusively to the separate `OpenBox-AI/openbox-sandbox-poc` repository and is not a dependency.
 
 ## Install
 
@@ -63,12 +67,14 @@ Cargo fetches the exact approved OpenShell source revision from `Cargo.lock`; no
 ## Developer checks
 
 ```sh
+./scripts/check-language.sh
+./scripts/test-check-language.sh
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo test
 cargo doc --all-features --no-deps
 cargo deny check
-bash -n install.sh scripts/local-bootstrap.sh
-shellcheck -x install.sh scripts/local-bootstrap.sh
+bash -n install.sh scripts/check-language.sh scripts/local-bootstrap.sh scripts/test-check-language.sh
+shellcheck -x install.sh scripts/check-language.sh scripts/local-bootstrap.sh scripts/test-check-language.sh
 ```
