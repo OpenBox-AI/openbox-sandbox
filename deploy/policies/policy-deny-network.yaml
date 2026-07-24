@@ -1,4 +1,6 @@
 # Hardened deny-network policy candidate.
+# Empty network policy keeps the proxy baseline inactive and /tmp inaccessible.
+# Network-enabled policies must pin /tmp read-only to preserve exact attestation.
 # Human security review and production qualification remain required.
 version: 1
 filesystem_policy:

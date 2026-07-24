@@ -64,6 +64,8 @@ Cargo fetches the exact approved OpenShell source revision from `Cargo.lock`; no
 
 `deploy/policies/policy-deny-network.yaml` is the default security-floor candidate. Network-enabled policies are accepted only when their exact identity, version, body, and SHA-256 match the configured release identity and they meet the filesystem, Landlock, process, and middleware security floor.
 
+Writable paths are exactly `[/sandbox]`. Every non-empty network policy must also declare `/tmp` exactly once as read-only, with no conflicting path declarations and no network middleware. This pins the provider proxy baseline so it cannot enrich `/tmp` as writable, preserving the exact loaded-policy readiness attestation.
+
 ## Developer checks
 
 ```sh

@@ -1,8 +1,13 @@
 use core::fmt::Write as _;
 
+use std::collections::HashSet;
+
 use crate::{PolicyDocument, PolicyIdentity, TemplateIdentity};
-use openshell_core::proto::SandboxPolicy;
+use openshell_core::proto::{FilesystemPolicy, SandboxPolicy};
 use sha2::{Digest, Sha256};
+
+const SANDBOX_WRITABLE_PATH: &str = "/sandbox";
+const PROXY_TEMP_PATH: &str = "/tmp";
 
 pub fn validate_image(template: &TemplateIdentity) -> Result<String, ()> {
     let image = template.as_str();
@@ -47,11 +52,33 @@ fn meets_security_floor(policy: &SandboxPolicy) -> bool {
         return false;
     };
     !filesystem.include_workdir
-        && filesystem.read_write == ["/sandbox"]
+        && filesystem.read_write == [SANDBOX_WRITABLE_PATH]
+        && filesystem_paths_are_unambiguous(filesystem)
+        && proxy_temp_path_is_pinned_read_only(policy, filesystem)
         && landlock.compatibility == "hard_requirement"
         && process.run_as_user == "sandbox"
         && process.run_as_group == "sandbox"
         && policy.network_middlewares.is_empty()
+}
+
+fn filesystem_paths_are_unambiguous(filesystem: &FilesystemPolicy) -> bool {
+    let mut paths = HashSet::new();
+    filesystem
+        .read_only
+        .iter()
+        .chain(&filesystem.read_write)
+        .all(|path| paths.insert(openshell_policy::normalize_path(path)))
+}
+
+fn proxy_temp_path_is_pinned_read_only(
+    policy: &SandboxPolicy,
+    filesystem: &FilesystemPolicy,
+) -> bool {
+    policy.network_policies.is_empty()
+        || filesystem
+            .read_only
+            .iter()
+            .any(|path| path == PROXY_TEMP_PATH)
 }
 
 pub fn deterministic_policy_hash(policy: &SandboxPolicy) -> String {
@@ -130,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn checked_in_policy_meets_the_adapter_security_floor() {
+    fn checked_in_deny_network_policy_meets_the_adapter_security_floor() {
         let document = PolicyDocument::new("application/yaml", POLICY.as_bytes().to_vec()).unwrap();
         let identity = PolicyIdentity::new(
             "openbox-deny-network",
@@ -146,12 +173,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn exact_release_bound_network_policy_is_framework_neutral() {
-        const NETWORK_POLICY: &str = r"version: 1
+    const NETWORK_POLICY: &str = r"version: 1
 filesystem_policy:
   include_workdir: false
-  read_only: [/usr, /lib, /etc, /proc]
+  read_only: [/usr, /lib, /etc, /proc, /tmp]
   read_write: [/sandbox]
 landlock:
   compatibility: hard_requirement
@@ -167,18 +192,26 @@ network_policies:
     binaries:
       - path: /usr/bin/client
 ";
-        let document =
-            PolicyDocument::new("application/yaml", NETWORK_POLICY.as_bytes().to_vec()).unwrap();
-        let digest = sha256_hex(NETWORK_POLICY.as_bytes());
+
+    fn parse_with_matching_identity(yaml: &str) -> Result<SandboxPolicy, ()> {
+        let document = PolicyDocument::new("application/yaml", yaml.as_bytes().to_vec()).unwrap();
         let identity = PolicyIdentity::new(
             "approved-client-policy",
             1,
-            Sha256Digest::parse(digest).unwrap(),
+            Sha256Digest::parse(sha256_hex(yaml.as_bytes())).unwrap(),
         )
         .unwrap();
-        let policy = parse_and_validate_policy(&document, &identity).unwrap();
-        assert_eq!(policy.network_policies.len(), 1);
+        parse_and_validate_policy(&document, &identity)
+    }
 
+    #[test]
+    fn exact_release_bound_network_policy_is_framework_neutral() {
+        let policy = parse_with_matching_identity(NETWORK_POLICY).unwrap();
+        assert_eq!(policy.network_policies.len(), 1);
+        assert_eq!(policy.filesystem.unwrap().read_write, ["/sandbox"]);
+
+        let document =
+            PolicyDocument::new("application/yaml", NETWORK_POLICY.as_bytes().to_vec()).unwrap();
         let wrong_identity = PolicyIdentity::new(
             "approved-client-policy",
             1,
@@ -186,5 +219,53 @@ network_policies:
         )
         .unwrap();
         assert!(parse_and_validate_policy(&document, &wrong_identity).is_err());
+    }
+
+    #[test]
+    fn network_policy_requires_explicit_read_only_temp_path() {
+        let without_temp = NETWORK_POLICY.replace(", /tmp", "");
+        assert!(parse_with_matching_identity(&without_temp).is_err());
+    }
+
+    #[test]
+    fn network_policy_rejects_writable_temp_path() {
+        let writable_temp = NETWORK_POLICY
+            .replace(", /tmp", "")
+            .replace("read_write: [/sandbox]", "read_write: [/sandbox, /tmp]");
+        assert!(parse_with_matching_identity(&writable_temp).is_err());
+    }
+
+    #[test]
+    fn network_policy_rejects_duplicate_or_conflicting_paths() {
+        let duplicate = NETWORK_POLICY.replace("/proc, /tmp", "/proc, /tmp, /tmp/");
+        assert!(parse_with_matching_identity(&duplicate).is_err());
+
+        let conflicting =
+            NETWORK_POLICY.replace("read_write: [/sandbox]", "read_write: [/sandbox, /tmp]");
+        assert!(parse_with_matching_identity(&conflicting).is_err());
+    }
+
+    #[test]
+    fn explicit_read_only_temp_path_prevents_proxy_temp_enrichment() {
+        let mut policy = parse_with_matching_identity(NETWORK_POLICY).unwrap();
+        let before = policy.clone();
+        model_proxy_temp_baseline_enrichment(&mut policy);
+        assert_eq!(policy, before);
+    }
+
+    fn model_proxy_temp_baseline_enrichment(policy: &mut SandboxPolicy) {
+        // The pinned proxy adds writable temporary storage only when the path is undeclared.
+        if policy.network_policies.is_empty() {
+            return;
+        }
+        let filesystem = policy.filesystem.as_mut().unwrap();
+        if !filesystem
+            .read_only
+            .iter()
+            .chain(&filesystem.read_write)
+            .any(|path| path == PROXY_TEMP_PATH)
+        {
+            filesystem.read_write.push(PROXY_TEMP_PATH.to_owned());
+        }
     }
 }
