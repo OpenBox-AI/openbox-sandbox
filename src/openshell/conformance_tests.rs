@@ -1,3 +1,11 @@
+//! UNIT TESTS ONLY — NOT SYSTEM VALIDATION.
+//!
+//! This module uses `FakeSandboxRuntime` / fake transports. A green result
+//! here proves LOGIC in isolation, not that the broker actually works against
+//! a real OpenShell gateway. Under the standing "no fake tests in production"
+//! rule, do not report passing counts from this module as "validated" or
+//! "integration proven". Real coverage lives in `tests/live_openshell.rs`.
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -157,8 +165,7 @@ impl AdapterHarness {
 impl ConformanceHarness for AdapterHarness {
     fn build_case(&self, scenario: ConformanceScenario) -> ConformanceCase {
         let index = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request_id =
-            RequestOwnedId::parse(format!("sbx-10000000-0000-4000-8000-{index:012x}")).unwrap();
+        let request_id = RequestOwnedId::parse(format!("sbx-1{index:014x}")).unwrap();
         let transport = Arc::new(ScriptTransport::new(scenario));
         let inner = OpenShellRuntime::from_transport(transport.clone(), Duration::from_millis(1));
         let recording = Arc::new(Mutex::new(RuntimeRecording::default()));
@@ -492,7 +499,7 @@ async fn pinned_adapter_passes_the_unchanged_twenty_scenario_suite() {
 async fn gateway_added_create_capability_is_rejected_with_cleanup_ownership() {
     let transport = Arc::new(ScriptTransport::with_mutated_create_response());
     let runtime = OpenShellRuntime::from_transport(transport.clone(), Duration::from_millis(1));
-    let request_id = RequestOwnedId::parse("sbx-20000000-0000-4000-8000-000000000001").unwrap();
+    let request_id = RequestOwnedId::parse("sbx-200000000000001").unwrap();
     let failure = runtime
         .create(
             create_request(ConformanceScenario::HappyPath, request_id.clone()),
