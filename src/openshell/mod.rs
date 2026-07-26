@@ -40,16 +40,19 @@ pub const OPENSHELL_SOURCE_PIN: &str = env!("OPENBOX_OPENSHELL_SOURCE_PIN");
 pub struct OpenShellRuntime {
     transport: Arc<dyn OpenShellTransport>,
     poll_interval: Duration,
+    allow_degraded_landlock: bool,
 }
 
 impl OpenShellRuntime {
     /// Establishes the authenticated mTLS channel without invoking the `OpenShell` CLI.
     pub async fn connect(config: OpenShellConfig) -> Result<Self, OpenShellConnectError> {
         let poll_interval = config.poll_interval();
+        let allow_degraded_landlock = config.allow_degraded_landlock();
         let channel = config.connect_channel().await?;
         Ok(Self {
             transport: Arc::new(TonicOpenShellTransport::new(channel)),
             poll_interval,
+            allow_degraded_landlock,
         })
     }
 
@@ -58,6 +61,7 @@ impl OpenShellRuntime {
         Self {
             transport,
             poll_interval,
+            allow_degraded_landlock: false,
         }
     }
 
@@ -68,6 +72,10 @@ impl OpenShellRuntime {
     const fn poll_interval(&self) -> Duration {
         self.poll_interval
     }
+
+    const fn allow_degraded_landlock(&self) -> bool {
+        self.allow_degraded_landlock
+    }
 }
 
 impl fmt::Debug for OpenShellRuntime {
@@ -76,6 +84,7 @@ impl fmt::Debug for OpenShellRuntime {
             .debug_struct("OpenShellRuntime")
             .field("transport", &"authenticated_mtls")
             .field("poll_interval", &self.poll_interval)
+            .field("allow_degraded_landlock", &self.allow_degraded_landlock)
             .finish_non_exhaustive()
     }
 }

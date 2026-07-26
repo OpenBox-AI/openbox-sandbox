@@ -21,6 +21,8 @@ pub struct OpenShellConfig {
     mtls_directory: PathBuf,
     connect_timeout: Duration,
     poll_interval: Duration,
+    allow_degraded_landlock: bool,
+    allow_insecure_gateway: bool,
 }
 
 impl OpenShellConfig {
@@ -41,7 +43,29 @@ impl OpenShellConfig {
             mtls_directory,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
             poll_interval: DEFAULT_POLL_INTERVAL,
+            allow_degraded_landlock: false,
+            allow_insecure_gateway: false,
         })
+    }
+
+    /// Enables the non-production tier that admits `best_effort` Landlock policies.
+    #[must_use]
+    pub fn with_degraded_landlock(mut self, allow: bool) -> Self {
+        self.allow_degraded_landlock = allow;
+        self
+    }
+
+    /// Enables the non-production plaintext gateway transport (h2c, no mTLS).
+    ///
+    /// Intended for local development against an `openshell-gateway --disable-tls`
+    /// instance — the `vm` driver's guest supervisor connects back over plain
+    /// `http://`, so mTLS on the gateway port is not viable in that flow. When
+    /// true, `mtls_directory` is ignored and the server is not TLS-verified.
+    /// Use only on trusted loopback.
+    #[must_use]
+    pub fn with_insecure_gateway(mut self, allow: bool) -> Self {
+        self.allow_insecure_gateway = allow;
+        self
     }
 
     /// Replaces the channel connection timeout.
@@ -78,14 +102,11 @@ impl OpenShellConfig {
         self.poll_interval
     }
 
+    pub(crate) const fn allow_degraded_landlock(&self) -> bool {
+        self.allow_degraded_landlock
+    }
+
     pub(crate) async fn connect_channel(&self) -> Result<Channel, OpenShellConnectError> {
-        validate_credential_directory(&self.mtls_directory)?;
-        let ca = read_credential(&self.mtls_directory, "ca.crt", false)?;
-        let certificate = read_credential(&self.mtls_directory, "tls.crt", false)?;
-        let key = read_credential(&self.mtls_directory, "tls.key", true)?;
-        let tls = ClientTlsConfig::new()
-            .ca_certificate(Certificate::from_pem(ca))
-            .identity(Identity::from_pem(certificate, key));
         let endpoint = Endpoint::from_shared(self.endpoint.clone())
             .map_err(|_| {
                 OpenShellConnectError::new(OpenShellConnectErrorCode::TransportConfiguration)
@@ -93,11 +114,21 @@ impl OpenShellConfig {
             .connect_timeout(self.connect_timeout)
             .http2_adaptive_window(true)
             .http2_keep_alive_interval(Duration::from_secs(10))
-            .keep_alive_while_idle(true)
-            .tls_config(tls)
-            .map_err(|_| {
+            .keep_alive_while_idle(true);
+        let endpoint = if self.allow_insecure_gateway {
+            endpoint
+        } else {
+            validate_credential_directory(&self.mtls_directory)?;
+            let ca = read_credential(&self.mtls_directory, "ca.crt", false)?;
+            let certificate = read_credential(&self.mtls_directory, "tls.crt", false)?;
+            let key = read_credential(&self.mtls_directory, "tls.key", true)?;
+            let tls = ClientTlsConfig::new()
+                .ca_certificate(Certificate::from_pem(ca))
+                .identity(Identity::from_pem(certificate, key));
+            endpoint.tls_config(tls).map_err(|_| {
                 OpenShellConnectError::new(OpenShellConnectErrorCode::TransportConfiguration)
-            })?;
+            })?
+        };
         endpoint
             .connect()
             .await
@@ -113,6 +144,8 @@ impl fmt::Debug for OpenShellConfig {
             .field("mtls_directory", &"<redacted>")
             .field("connect_timeout", &self.connect_timeout)
             .field("poll_interval", &self.poll_interval)
+            .field("allow_degraded_landlock", &self.allow_degraded_landlock)
+            .field("allow_insecure_gateway", &self.allow_insecure_gateway)
             .finish()
     }
 }

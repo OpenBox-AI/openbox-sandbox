@@ -34,15 +34,17 @@ pub async fn create(
             detail("immutable image validation failed"),
         )
     })?;
-    let normalized_policy =
-        parse_and_validate_policy(request.policy_document(), request.expected_policy()).map_err(
-            |()| {
-                CreateFailure::not_created(
-                    CreateFailureCode::Validation,
-                    detail("policy validation failed"),
-                )
-            },
-        )?;
+    let normalized_policy = parse_and_validate_policy(
+        request.policy_document(),
+        request.expected_policy(),
+        runtime.allow_degraded_landlock(),
+    )
+    .map_err(|()| {
+        CreateFailure::not_created(
+            CreateFailureCode::Validation,
+            detail("policy validation failed"),
+        )
+    })?;
     let budget = OperationBudget::new(context);
     budget.check().map_err(create_pre_submission_budget)?;
 
@@ -697,15 +699,13 @@ mod tests {
     use super::*;
 
     fn target() -> CleanupTarget {
-        CleanupTarget::new(
-            RequestOwnedId::parse("sbx-550e8400-e29b-41d4-a716-446655440000").unwrap(),
-        )
+        CleanupTarget::new(RequestOwnedId::parse("sbx-000000000000000").unwrap())
     }
 
     #[test]
     fn raw_create_request_contains_only_name_image_and_policy() {
         let request = build_create_request(
-            "sbx-550e8400-e29b-41d4-a716-446655440000",
+            "sbx-000000000000000",
             format!("example.invalid/proof@sha256:{}", "a".repeat(64)),
             SandboxPolicy {
                 version: 1,
@@ -735,7 +735,7 @@ mod tests {
 
     #[test]
     fn workspace_capable_requests_always_select_the_default_workspace() {
-        let name = "sbx-550e8400-e29b-41d4-a716-446655440000";
+        let name = "sbx-000000000000000";
         let get = build_get_request(name);
         let policy = build_policy_status_request(name, 1);
         let delete = build_delete_request(name);

@@ -27,6 +27,7 @@ pub fn validate_image(template: &TemplateIdentity) -> Result<String, ()> {
 pub fn parse_and_validate_policy(
     document: &PolicyDocument,
     identity: &PolicyIdentity,
+    allow_degraded_landlock: bool,
 ) -> Result<SandboxPolicy, ()> {
     if document.media_type() != "application/yaml"
         || sha256_hex(document.as_bytes()) != identity.sha256().as_str()
@@ -35,13 +36,15 @@ pub fn parse_and_validate_policy(
     }
     let yaml = std::str::from_utf8(document.as_bytes()).map_err(|_| ())?;
     let policy = openshell_policy::parse_sandbox_policy(yaml).map_err(|_| ())?;
-    if u64::from(policy.version) != identity.version() || !meets_security_floor(&policy) {
+    if u64::from(policy.version) != identity.version()
+        || !meets_security_floor(&policy, allow_degraded_landlock)
+    {
         return Err(());
     }
     Ok(policy)
 }
 
-fn meets_security_floor(policy: &SandboxPolicy) -> bool {
+fn meets_security_floor(policy: &SandboxPolicy, allow_degraded_landlock: bool) -> bool {
     let Some(filesystem) = policy.filesystem.as_ref() else {
         return false;
     };
@@ -55,7 +58,8 @@ fn meets_security_floor(policy: &SandboxPolicy) -> bool {
         && filesystem.read_write == [SANDBOX_WRITABLE_PATH]
         && filesystem_paths_are_unambiguous(filesystem)
         && proxy_temp_path_is_pinned_read_only(policy, filesystem)
-        && landlock.compatibility == "hard_requirement"
+        && (landlock.compatibility == "hard_requirement"
+            || (allow_degraded_landlock && landlock.compatibility == "best_effort"))
         && process.run_as_user == "sandbox"
         && process.run_as_group == "sandbox"
         && policy.network_middlewares.is_empty()
@@ -165,7 +169,7 @@ mod tests {
             Sha256Digest::parse(sha256_hex(POLICY.as_bytes())).unwrap(),
         )
         .unwrap();
-        let policy = parse_and_validate_policy(&document, &identity).unwrap();
+        let policy = parse_and_validate_policy(&document, &identity, false).unwrap();
         assert_eq!(policy.version, 1);
         assert_eq!(
             deterministic_policy_hash(&policy),
@@ -201,7 +205,52 @@ network_policies:
             Sha256Digest::parse(sha256_hex(yaml.as_bytes())).unwrap(),
         )
         .unwrap();
-        parse_and_validate_policy(&document, &identity)
+        parse_and_validate_policy(&document, &identity, false)
+    }
+
+    const BEST_EFFORT_POLICY: &str = r"version: 1
+filesystem_policy:
+  include_workdir: false
+  read_only: [/usr, /lib, /etc, /proc]
+  read_write: [/sandbox]
+landlock:
+  compatibility: best_effort
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+network_policies: {}
+";
+
+    fn parse_allowing_degraded(yaml: &str, allow_degraded: bool) -> Result<SandboxPolicy, ()> {
+        let document = PolicyDocument::new("application/yaml", yaml.as_bytes().to_vec()).unwrap();
+        let identity = PolicyIdentity::new(
+            "approved-client-policy",
+            1,
+            Sha256Digest::parse(sha256_hex(yaml.as_bytes())).unwrap(),
+        )
+        .unwrap();
+        parse_and_validate_policy(&document, &identity, allow_degraded)
+    }
+
+    #[test]
+    fn best_effort_landlock_is_rejected_by_default_and_accepted_only_when_opted_in() {
+        assert!(parse_allowing_degraded(BEST_EFFORT_POLICY, false).is_err());
+        assert!(parse_allowing_degraded(BEST_EFFORT_POLICY, true).is_ok());
+    }
+
+    #[test]
+    fn hard_requirement_landlock_is_accepted_in_both_tiers() {
+        assert!(parse_allowing_degraded(NETWORK_POLICY, false).is_ok());
+        assert!(parse_allowing_degraded(NETWORK_POLICY, true).is_ok());
+    }
+
+    #[test]
+    fn degraded_tier_still_enforces_every_other_floor_rule() {
+        let wrong_user = BEST_EFFORT_POLICY.replace("run_as_user: sandbox", "run_as_user: root");
+        assert!(parse_allowing_degraded(&wrong_user, true).is_err());
+        let writable_workdir =
+            BEST_EFFORT_POLICY.replace("include_workdir: false", "include_workdir: true");
+        assert!(parse_allowing_degraded(&writable_workdir, true).is_err());
     }
 
     #[test]
@@ -218,7 +267,7 @@ network_policies:
             Sha256Digest::parse("0".repeat(64)).unwrap(),
         )
         .unwrap();
-        assert!(parse_and_validate_policy(&document, &wrong_identity).is_err());
+        assert!(parse_and_validate_policy(&document, &wrong_identity, false).is_err());
     }
 
     #[test]

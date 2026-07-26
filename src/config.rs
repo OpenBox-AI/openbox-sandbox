@@ -31,6 +31,8 @@ pub struct ProcessConfig {
     pub reconcile_wait_deadline_ms: u64,
     pub maximum_connections: usize,
     pub drain_timeout_ms: u64,
+    #[serde(default)]
+    pub allow_degraded_landlock: bool,
 }
 
 #[derive(Deserialize)]
@@ -401,6 +403,19 @@ mod tests {
 
         write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o644);
         assert!(load(&path).is_err());
+    }
+
+    #[test]
+    fn degraded_landlock_defaults_off_and_parses_when_explicitly_set() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let (path, mut value) = fixture(&root);
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+        assert!(!load(&path).unwrap().allow_degraded_landlock);
+
+        value["allow_degraded_landlock"] = serde_json::Value::Bool(true);
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+        assert!(load(&path).unwrap().allow_degraded_landlock);
     }
 
     #[test]

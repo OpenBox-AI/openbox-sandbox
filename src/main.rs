@@ -59,7 +59,8 @@ async fn run() -> Result<(), ProcessError> {
             .with_connect_timeout(Duration::from_millis(config.runtime_connect_timeout_ms))
             .map_err(|_| ProcessError::Runtime)?
             .with_poll_interval(Duration::from_millis(config.runtime_poll_interval_ms))
-            .map_err(|_| ProcessError::Runtime)?;
+            .map_err(|_| ProcessError::Runtime)?
+            .with_degraded_landlock(config.allow_degraded_landlock);
     if mode == Mode::CheckConfig {
         return Ok(());
     }
