@@ -1,0 +1,13 @@
+[package]
+name = "openbox-sandbox-launcher"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Single-binary self-extracting launcher for openbox-sandbox (prototype)."
+
+[[bin]]
+name = "openbox-sandbox"
+path = "src/main.rs"
+
+# Isolated from the parent crate: this launcher builds on its own.
+[workspace]
