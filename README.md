@@ -2,6 +2,10 @@
 
 OpenBox Sandbox is the standalone, production-intent, framework-neutral sandbox runtime for running client-owned commands through OpenShell.
 
+## Platform
+
+The host that runs OpenShell and this service must run on a Linux kernel, and Linux is the preferred and supported platform for production. Isolation is enforced by Linux kernel features — Landlock, namespaces, cgroups, and seccomp — that have no macOS or Windows equivalent, and the runtime installs as a rootless-Podman, systemd-managed deployment. The sandboxes it runs are Podman containers created on that Linux host. macOS and Windows cannot host it natively; use a Linux VM to provide the kernel, which is also the recommended path for local development on those hosts.
+
 ## Repository boundary
 
 Integration PoC/showcase material belongs exclusively to the separate `OpenBox-AI/openbox-sandbox-poc` repository and is not a dependency.
