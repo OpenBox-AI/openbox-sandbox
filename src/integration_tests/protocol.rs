@@ -51,7 +51,7 @@ fn request_round_trip_preserves_exact_argv_and_rejects_unknown_fields() {
         OperationId::parse("550e8400-e29b-41d4-a716-446655440000").unwrap(),
         bundle(),
         ServiceRequest::PrepareExec {
-            request_id: RequestOwnedId::parse("sbx-550e8400-e29b-41d4-a716-446655440001").unwrap(),
+            request_id: RequestOwnedId::parse("sbx-000000000000001").unwrap(),
             lifecycle_token: crate::CapabilityToken::generate(),
             request: exec_request(),
             deadline_ms: DeadlineMillis::new(45_000).unwrap(),

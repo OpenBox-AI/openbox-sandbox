@@ -37,7 +37,7 @@ pub fn raw_stderr_fixture() -> Vec<u8> {
 
 /// Returns a deterministic valid request-owned identifier for a nonzero fixture index.
 pub fn request_id_fixture(index: u64) -> RequestOwnedId {
-    RequestOwnedId::parse(format!("sbx-00000000-0000-4000-8000-{index:012x}"))
+    RequestOwnedId::parse(format!("sbx-{index:015x}"))
         .expect("fixture index produces a valid UUID-v4-shaped ID")
 }
 

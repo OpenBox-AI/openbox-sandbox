@@ -12,7 +12,7 @@ assert_not_impl_any!(ReadySandbox: Clone);
 assert_not_impl_any!(OpaqueProviderHandle: Clone);
 
 fn id() -> RequestOwnedId {
-    RequestOwnedId::parse("sbx-550e8400-e29b-41d4-a716-446655440000").unwrap()
+    RequestOwnedId::parse("sbx-000000000000000").unwrap()
 }
 
 fn cleanup() -> CleanupTarget {

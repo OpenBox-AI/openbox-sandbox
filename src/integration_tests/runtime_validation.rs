@@ -12,20 +12,36 @@ fn digest() -> Sha256Digest {
 }
 
 #[test]
-fn request_owned_id_uses_exact_uuid_v4_shape() {
+fn request_owned_id_uses_gateway_compatible_short_shape() {
+    // sbx-<15 lowercase hex> = 19 chars total, fits OpenShell's
+    // MAX_ROUTABLE_NAME_LEN = 19 while retaining 60 bits of entropy.
     let id = RequestOwnedId::generate();
-    assert_eq!(id.as_str().len(), 40);
+    assert_eq!(id.as_str().len(), 19);
     assert!(id.as_str().starts_with("sbx-"));
+    let suffix = &id.as_str()[4..];
+    assert_eq!(suffix.len(), 15);
+    assert!(
+        suffix
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "generated suffix must be lowercase hex"
+    );
     assert_eq!(RequestOwnedId::parse(id.to_string()).unwrap(), id);
+
+    // A hand-crafted valid value round-trips.
+    let hand = RequestOwnedId::parse("sbx-000000000000abc").unwrap();
+    assert_eq!(hand.as_str(), "sbx-000000000000abc");
 
     for invalid in [
         "",
         "sbx-not-a-uuid",
-        "SBX-550e8400-e29b-41d4-a716-446655440000",
-        "sbx-550e8400e29b41d4a716446655440000",
-        "sbx-550e8400-e29b-11d4-a716-446655440000",
-        "sbx-550e8400-e29b-41d4-0716-446655440000",
-        "prefix-sbx-550e8400-e29b-41d4-a716-446655440000",
+        "SBX-000000000000000",                      // uppercase prefix
+        "sbx-ABCDEF012345678",                      // uppercase hex
+        "sbx-00000000000000",                       // 14 hex, too short
+        "sbx-0000000000000000",                     // 16 hex, too long
+        "sbx-550e8400-e29b-41d4-a716-446655440000", // old 40-char shape
+        "sbx-00000000000000g",                      // non-hex char
+        "prefix-sbx-000000000000000",
     ] {
         assert!(
             RequestOwnedId::parse(invalid).is_err(),

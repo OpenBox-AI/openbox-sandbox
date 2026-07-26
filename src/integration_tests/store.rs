@@ -65,9 +65,7 @@ async fn malformed_unowned_and_symlink_entries_fail_closed() {
     let outside = tempfile::NamedTempFile::new().unwrap();
     symlink(
         outside.path(),
-        directory
-            .path()
-            .join("sbx-00000000-0000-4000-8000-000000000001.json"),
+        directory.path().join("sbx-000000000000001.json"),
     )
     .unwrap();
     assert!(store.load_all().await.is_err());

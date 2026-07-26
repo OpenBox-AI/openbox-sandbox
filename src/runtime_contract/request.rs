@@ -4,7 +4,7 @@ use core::fmt;
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
-use uuid::{Uuid, Variant};
+use uuid::Uuid;
 
 use crate::{ValidationCode, ValidationError};
 
@@ -22,22 +22,31 @@ pub struct RequestOwnedId(String);
 
 impl RequestOwnedId {
     /// Generates a fresh request-owned identifier.
+    ///
+    /// Format is `sbx-<15-lowercase-hex>` = 19 characters. Chosen to fit the
+    /// `OpenShell` gateway's `MAX_ROUTABLE_NAME_LEN = 19`. The 15-hex payload is
+    /// derived from a v4 UUID and provides 60 bits of entropy, which is more
+    /// than sufficient for per-run request naming.
     pub fn generate() -> Self {
-        Self(format!("sbx-{}", Uuid::new_v4()))
+        let simple = Uuid::new_v4().simple().to_string();
+        let mut payload = String::with_capacity(15);
+        payload.push_str(&simple[..15]);
+        Self(format!("sbx-{payload}"))
     }
 
     /// Parses and validates a request-owned identifier.
+    ///
+    /// Accepts exactly `sbx-<15-lowercase-hex>` (19 characters total).
     pub fn parse(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         let suffix = value.strip_prefix("sbx-").ok_or_else(|| {
             ValidationError::new("request_owned_id", ValidationCode::InvalidFormat)
         })?;
-        let uuid = Uuid::parse_str(suffix)
-            .map_err(|_| ValidationError::new("request_owned_id", ValidationCode::InvalidFormat))?;
-        if value.len() != 40
-            || uuid.get_version_num() != 4
-            || uuid.get_variant() != Variant::RFC4122
-            || uuid.to_string() != suffix
+        if value.len() != 19
+            || suffix.len() != 15
+            || !suffix
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
             return Err(ValidationError::new(
                 "request_owned_id",
