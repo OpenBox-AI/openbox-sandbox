@@ -20,25 +20,6 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────
-  # cargo-deny: license, advisory, source audit
-  # ──────────────────────────────────────────────────────────────────────
-  deny:
-    name: cargo-deny
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install cargo-deny
-        run: |
-          set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/EmbarkStudios/cargo-deny/main/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
-
-      - name: Audit licenses, advisories, sources
-        working-directory: ${{ env.LAUNCHER_DIR }}
-        run: cargo deny check
-
-  # ──────────────────────────────────────────────────────────────────────
   # Build matrix: macOS aarch64, Linux amd64, Linux arm64
   # ──────────────────────────────────────────────────────────────────────
   build:
@@ -86,7 +67,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          BIN="${{ env.LAUNCHER_DIR }}/target/${{ matrix.target }}/release/openbox-sandbox"
+          BIN="${{ env.LAUNCHER_DIR }}/target/${{ matrix.target }}/release/osb"
           if command -v strip &>/dev/null; then
             strip "$BIN"
             echo "Stripped $BIN"
@@ -98,7 +79,7 @@ jobs:
 
       - name: Rename binary
         run: |
-          SRC="${{ env.LAUNCHER_DIR }}/target/${{ matrix.target }}/release/openbox-sandbox"
+          SRC="${{ env.LAUNCHER_DIR }}/target/${{ matrix.target }}/release/osb"
           DST="${{ matrix.artifact }}"
           cp "$SRC" "$DST"
           echo "BINARY=$DST" >> "$GITHUB_ENV"

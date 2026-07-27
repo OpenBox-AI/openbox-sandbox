@@ -15,45 +15,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install cargo-deny
-        run: |
-          set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/EmbarkStudios/cargo-deny/main/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
-
+      - uses: taiki-e/install-action@cargo-deny
       - name: Check licenses
         working-directory: packaging/launcher
-        run: cargo deny check licenses
+        run: cargo deny --config ../../deny.toml check licenses
 
   advisories:
     name: Advisory audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install cargo-deny
-        run: |
-          set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/EmbarkStudios/cargo-deny/main/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
-
+      - uses: taiki-e/install-action@cargo-deny
       - name: Check advisories
         working-directory: packaging/launcher
-        run: cargo deny check advisories
+        run: cargo deny --config ../../deny.toml check advisories
 
   sources:
     name: Source audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install cargo-deny
-        run: |
-          set -euo pipefail
-          curl -sSfL https://raw.githubusercontent.com/EmbarkStudios/cargo-deny/main/install.sh \
-            | sudo sh -s -- -b /usr/local/bin
-
+      - uses: taiki-e/install-action@cargo-deny
       - name: Check sources
         working-directory: packaging/launcher
-        run: cargo deny check sources
+        run: cargo deny --config ../../deny.toml check sources
