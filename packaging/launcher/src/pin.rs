@@ -1,11 +1,9 @@
 //! OpenShell dependency pinning + startup verification.
 //!
-//! The launcher drives OpenShell as an external dependency (Homebrew install,
-//! a release tarball fetched by `scripts/fetch-openshell-deps.sh`, or a local
-//! build). An unpinned or drifted OpenShell is a real hazard: this project has
-//! been bitten by broker↔OpenShell contract drift (the 40-char → 19-char
-//! `MAX_ROUTABLE_NAME_LEN` mismatch after a pin bump). So the launcher refuses
-//! to run against an OpenShell whose version does not match the pinned release.
+//! OpenBox Sandbox is a thin client that connects to an operator-installed
+//! OpenShell gateway. The launcher verifies the local gateway installation
+//! against a pinned release to prevent contract drift (the 40-char → 19-char
+//! MAX_ROUTABLE_NAME_LEN mismatch after a pin bump already bit this project).
 //!
 //! Two layers:
 //!   1. **Version** — `<gateway> --version` must report the pinned version.
@@ -17,9 +15,6 @@
 //!      resolved gateway/driver binaries via env (`OPENBOX_SANDBOX_GATEWAY_SHA256`,
 //!      `OPENBOX_SANDBOX_DRIVER_SHA256`); when set, the launcher verifies them.
 //!      This is for air-gapped deployments that control the exact on-disk bytes.
-//!      Supply-chain verification of the *downloaded release tarball* lives in
-//!      `scripts/fetch-openshell-deps.sh`, because that hash is over the tarball,
-//!      not the extracted binary.
 //!
 //! `REQUIRED_VERSION` is the single pin; override at runtime with
 //! `OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION` (e.g. to test a local build of a
@@ -52,10 +47,11 @@ pub fn verify(artifacts: &Artifacts, strict: bool) -> Result<(), VerifyError> {
     let required = required_version();
 
     // Version: run `<binary> --version` and require the pinned version.
-    let gateway_version = extract_version(&artifacts.gateway).map_err(|reason| VerifyError {
-        artifact: "openshell-gateway",
-        reason,
-    })?;
+    let gateway_version =
+        extract_version_from(&artifacts.gateway).map_err(|reason| VerifyError {
+            artifact: "openshell-gateway",
+            reason,
+        })?;
     if !version_satisfies(&gateway_version, &required) {
         return Err(VerifyError {
             artifact: "openshell-gateway",
@@ -63,7 +59,7 @@ pub fn verify(artifacts: &Artifacts, strict: bool) -> Result<(), VerifyError> {
         });
     }
 
-    let cli_version = extract_version(&artifacts.cli).map_err(|reason| VerifyError {
+    let cli_version = extract_version_from(&artifacts.cli).map_err(|reason| VerifyError {
         artifact: "openshell-cli",
         reason,
     })?;
@@ -75,7 +71,7 @@ pub fn verify(artifacts: &Artifacts, strict: bool) -> Result<(), VerifyError> {
     }
 
     if let Some(driver) = &artifacts.driver_vm {
-        let driver_version = extract_version(driver).map_err(|reason| VerifyError {
+        let driver_version = extract_version_from(driver).map_err(|reason| VerifyError {
             artifact: "openshell-driver-vm",
             reason,
         })?;
@@ -126,8 +122,9 @@ fn required_version() -> String {
 }
 
 /// Run `<binary> --version` and return the trailing version token, falling back
-/// to the whole output if there is no token.
-fn extract_version(binary: &Path) -> Result<String, String> {
+/// to the whole output if there is no token. Public so `verify_runtime` can
+/// report the detected version without re-implementing the parsing.
+pub fn extract_version_from(binary: &Path) -> Result<String, String> {
     let output = Command::new(binary)
         .arg("--version")
         .output()

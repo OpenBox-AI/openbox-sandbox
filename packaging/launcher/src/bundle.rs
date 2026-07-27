@@ -1,17 +1,14 @@
 //! Artifact discovery.
 //!
-//! The launcher drives real, already-built artifacts rather than embedding
-//! them. Resolution order for each artifact:
+//! OpenBox Sandbox is a thin client. Artifacts (the OpenShell gateway, CLI,
+//! driver, and policies) are resolved from an operator-installed location.
+//! Resolution order:
 //!   1. `$OPENBOX_BUNDLE_DIR` — an operator-provided release bundle. Binaries
 //!      may use either its conventional `bin/` and `libexec/` layout (as emitted
 //!      by `scripts/fetch-openshell-deps.sh`) or live directly at its root.
 //!   2. A well-known install location (Homebrew on macOS, `/usr/local` on Linux).
 //!   3. `PATH` (for the `openshell` / `openshell-gateway` binaries).
 //!   4. The in-repo build output, so `cargo run` works from a source checkout.
-//!
-//! A future self-extracting build can populate `$OPENBOX_BUNDLE_DIR` from an
-//! appended payload before calling [`resolve`]; the rest of the launcher does
-//! not change.
 
 use std::env;
 use std::path::{Path, PathBuf};

@@ -1,24 +1,29 @@
-//! openbox-sandbox launcher.
+//! openbox-sandbox thin client / launcher.
 //!
-//! A thin launcher that locates, pins, and runs externally-provided OpenBox and
-//! OpenShell artifacts. It is NOT a self-contained binary: the operator must
-//! install or fetch the pinned OpenShell release (via `brew install openshell`
-//! or `scripts/fetch-openshell-deps.sh`) before running the launcher.
+//! A thin communication and service client that connects to an
+//! operator-installed OpenShell gateway over mTLS. OpenBox Sandbox does NOT
+//! embed, extract, or ship the OpenShell gateway, CLI, VM driver, or any VM
+//! assets — all of those are the environment owner's responsibility.
 //!
-//! OpenShell supports four drivers; the launcher detects what is present:
+//! Architecture:
+//!   OpenBox Sandbox → mTLS/API → operator-installed OpenShell gateway → driver/runtime
+//!
+//! The launcher locates a local OpenShell installation (for the "gateway on
+//! this host" deployment model), verifies its version against a pinned
+//! release, and execs the gateway in the foreground. In pure remote-client
+//! mode the gateway endpoint is configured externally and --verify-runtime
+//! validates compatibility without needing a local gateway binary.
+//!
+//! OpenShell supports four drivers; the operator's gateway selects one:
 //!   - podman: rootless container runtime (preferred container path).
 //!   - docker: container runtime with a root daemon.
 //!   - kubernetes: delegates sandboxes to a cluster.
-//!   - vm: libkrun microVM (KVM on Linux, Hypervisor.framework on macOS); self-contained, needs only a hypervisor.
+//!   - vm: libkrun microVM (KVM on Linux, Hypervisor.framework on macOS).
 //!
 //! Platform behavior:
 //!   - Linux: any driver; container path uses Landlock (strict) or best_effort.
 //!   - macOS: the microVM driver is the real target; container drivers are degraded and need consent.
 //!   - Windows: unsupported directly; run inside WSL2.
-//!
-//! Detection, driver selection, posture, artifact resolution, and gateway
-//! launch are implemented. Artifacts are resolved from `$OPENBOX_BUNDLE_DIR`, a
-//! platform install prefix, `PATH`, or the in-repo build (see bundle.rs).
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -26,7 +31,7 @@ use std::process::{Command, ExitCode};
 mod bundle;
 mod pin;
 
-/// One OpenShell compute driver the launcher can select.
+/// One OpenShell compute driver the launcher can detect.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Runtime {
     Podman,
@@ -57,7 +62,7 @@ impl Runtime {
             Runtime::Podman => "Podman (rootless container)",
             Runtime::Docker => "Docker (container, root daemon)",
             Runtime::Kubernetes => "Kubernetes (cluster)",
-            Runtime::MicroVm => "libkrun microVM (hardware-isolated, self-contained)",
+            Runtime::MicroVm => "libkrun microVM (hardware-isolated)",
         }
     }
 
@@ -92,6 +97,12 @@ fn main() -> ExitCode {
         print_help();
         return ExitCode::SUCCESS;
     }
+
+    // ── Info-only flags ──────────────────────────────────────────────────
+    if args.iter().any(|a| a == "--verify-runtime") {
+        return verify_runtime();
+    }
+
     let allow_degraded = args.iter().any(|arg| arg == "--allow-degraded");
     let dry_run = args.iter().any(|arg| arg == "--dry-run");
     let requested_key = flag_value(&args, "--driver");
@@ -157,27 +168,27 @@ fn main() -> ExitCode {
                 "artifacts",
                 &format!("required artifact not found: {missing}"),
             );
-            note("set OPENBOX_BUNDLE_DIR to a directory holding the OpenShell gateway,");
-            note("CLI, and policies, or install OpenShell (brew install openshell).");
+            note("OpenShell must be installed by the environment owner.");
+            note("run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
+            note("the pinned release, or install via Homebrew (brew install openshell).");
             return ExitCode::FAILURE;
         }
     };
     report_artifacts(&artifacts);
 
-    // Dependency pin: refuse to run against an OpenShell whose version/hash
-    // does not match the pinned manifest. Version always checked; sha256 only
-    // in strict mode (on by default). Override the required version with
-    // OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION; skip the hash check with
-    // --skip-hash / OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH=1 (e.g. local builds).
+    // Dependency pin: refuse to run against an OpenShell whose version does not
+    // match the pinned release. This is fail-closed: a version drift can break
+    // the sandbox-name / hook contracts. The version is checked by running
+    // `<gateway> --version`. sha256 is opt-in via env for air-gapped deploys.
     let skip_hash = args.iter().any(|a| a == "--skip-hash")
         || std::env::var("OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH").as_deref() == Ok("1");
     if let Err(err) = pin::verify(&artifacts, !skip_hash) {
         fail("pin", &format!("{} rejected: {}", err.artifact, err.reason));
         note("OpenShell is pinned to a tested version; a mismatch can break the");
-        note("sandbox-name / hook contracts. Pin the matching release, or set");
+        note("sandbox-name / hook contracts. Install the matching release, or set");
         note("OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION to the installed version.");
         if err.reason.starts_with("version") {
-            note("or run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
+            note("run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
             note("the pinned release.");
         }
         return ExitCode::FAILURE;
@@ -192,6 +203,70 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     launch(chosen, posture, &artifacts)
+}
+
+/// Verify the runtime environment: check gateway compatibility, report
+/// configured endpoint, mTLS readiness, and detected OpenShell version.
+/// Does not start anything; intended for `--verify-runtime` / diagnostics.
+fn verify_runtime() -> ExitCode {
+    banner();
+    let (os, arch) = platform();
+    field("platform", &format!("{os}/{arch}"));
+
+    // Check if a local gateway binary exists and report its version.
+    match bundle::resolve() {
+        Ok(artifacts) => {
+            field("gateway", &artifacts.gateway.display().to_string());
+            match pin::extract_version_from(&artifacts.gateway) {
+                Ok(version) => {
+                    field("version", &version);
+                    if version == pin::REQUIRED_VERSION {
+                        field("compatible", "yes (pinned version matches)");
+                    } else {
+                        field(
+                            "compatible",
+                            &format!("NO — required {}, found {}", pin::REQUIRED_VERSION, version),
+                        );
+                        fail(
+                            "runtime",
+                            "OpenShell version mismatch; install the pinned release",
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+                Err(e) => {
+                    field("version", &format!("could not determine: {e}"));
+                    fail("runtime", "cannot verify gateway version");
+                    return ExitCode::FAILURE;
+                }
+            }
+            if artifacts.driver_vm.is_some() {
+                field("vm_driver", "present");
+            } else {
+                field("vm_driver", "not found (needed for microVM)");
+            }
+        }
+        Err(missing) => {
+            field("gateway", &format!("not found ({missing})"));
+            note("No local OpenShell gateway detected. In pure remote-client");
+            note("mode, configure the gateway endpoint externally.");
+            note("To install: run packaging/launcher/scripts/fetch-openshell-deps.sh");
+            return ExitCode::FAILURE;
+        }
+    }
+
+    // Report environment.
+    field("pin_version", pin::REQUIRED_VERSION);
+    if let Ok(endpoint) = std::env::var("OPENBOX_GATEWAY_ENDPOINT") {
+        field("endpoint", &endpoint);
+    } else {
+        field("endpoint", "local (exec gateway binary)");
+    }
+
+    println!();
+    note("CONSTRAIN is fail-closed: if the sandbox runtime is unavailable,");
+    note("the governed activity fails. There is no host fallback.");
+    ExitCode::SUCCESS
 }
 
 /// Per-platform auto-selection order. On macOS the microVM is preferred because
@@ -299,16 +374,12 @@ fn posture_config(posture: Posture) -> (bool, bool) {
     match posture {
         Posture::ContainerStrict => (false, false),
         Posture::ContainerDegraded => (true, true),
-        // The microVM guest kernel has no Landlock, so the floor runs the
-        // best_effort tier; the cluster path defers to admission policy.
         Posture::MicroVm => (true, true),
         Posture::Cluster => (false, false),
     }
 }
 
-/// Start the OpenShell gateway with the selected driver and wait on it. This is
-/// the real bootstrap: it execs the resolved gateway binary in the foreground so
-/// the launcher's exit status tracks the gateway's.
+/// Start the OpenShell gateway with the selected driver and wait on it.
 fn launch(chosen: Runtime, posture: Posture, artifacts: &bundle::Artifacts) -> ExitCode {
     let (degraded, dev_policy) = posture_config(posture);
     println!();
@@ -328,8 +399,6 @@ fn launch(chosen: Runtime, posture: Posture, artifacts: &bundle::Artifacts) -> E
         .env("OPENSHELL_DRIVERS", chosen.key())
         .arg("--drivers")
         .arg(chosen.key());
-    // The gateway inherits stdio and runs in the foreground; the launcher exits
-    // with the gateway's status. Ctrl-C stops both.
     match command.status() {
         Ok(status) if status.success() => ExitCode::SUCCESS,
         Ok(status) => {
@@ -427,18 +496,22 @@ fn windows_guidance() {
 
 fn print_help() {
     println!(
-        "openbox-sandbox launcher\n\n\
-         USAGE:\n  openbox-sandbox [--driver podman|docker|kubernetes|vm] [--allow-degraded]\n\n\
-         Locates, verifies, and runs the pinned OpenShell gateway and driver.\n\
-         Artifacts are resolved from $OPENBOX_BUNDLE_DIR, install prefixes,\n\
-         PATH, or the in-repo build output (see bundle.rs). A version pin\n\
-         guard refuses to run against an unpinned OpenShell.\n\n\
+        "openbox-sandbox — thin client / launcher\n\n\
+         USAGE:\n  \
+         openbox-sandbox [OPTIONS]\n\n\
+         Thin client that connects to an operator-installed OpenShell gateway.\n\
+         OpenBox Sandbox does NOT embed OpenShell; the environment owner must\n\
+         install the pinned OpenShell release separately.\n\n\
          OPTIONS:\n\
-         \x20 --driver <name>    Force a driver instead of auto-selecting.\n\
-         \x20 --allow-degraded   Accept reduced isolation (container driver without Landlock).\n\
-         \x20 --dry-run          Resolve artifacts and print the plan; start nothing.\n\
-         \x20 --skip-hash         Skip the pinned-artifact sha256 check (local builds).\n\
-         \x20 -h, --help         Show this help.\n"
+         \x20 --driver <name>      Force a driver (podman|docker|kubernetes|vm).\n\
+         \x20 --allow-degraded     Accept reduced isolation (container w/o Landlock).\n\
+         \x20 --dry-run            Resolve artifacts and print the plan; start nothing.\n\
+         \x20 --verify-runtime     Check gateway compatibility and report status.\n\
+         \x20 --skip-hash          Skip the pinned-artifact sha256 check (dev only).\n\
+         \x20 -h, --help           Show this help.\n\n\
+         INSTALLATION:\n\
+         \x20 Run packaging/launcher/scripts/fetch-openshell-deps.sh to install\n\
+         \x20 the pinned OpenShell release, or: brew install openshell\n"
     );
 }
 
