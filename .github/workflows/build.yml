@@ -68,13 +68,13 @@ jobs:
         run: |
           set -euo pipefail
           BIN="${{ env.LAUNCHER_DIR }}/target/${{ matrix.target }}/release/osb"
-          if command -v strip &>/dev/null; then
-            strip "$BIN"
-            echo "Stripped $BIN"
-          elif [[ "${{ matrix.target }}" == "aarch64"* ]]; then
+          if [[ "${{ matrix.target }}" == "aarch64"* ]]; then
             sudo apt-get update && sudo apt-get install -y binutils-aarch64-linux-gnu
             aarch64-linux-gnu-strip "$BIN"
             echo "Stripped $BIN (cross strip)"
+          elif command -v strip &>/dev/null; then
+            strip "$BIN"
+            echo "Stripped $BIN"
           fi
 
       - name: Rename binary
