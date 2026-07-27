@@ -1,0 +1,59 @@
+name: cargo-deny
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  licenses:
+    name: License audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/EmbarkStudios/cargo-deny/main/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+
+      - name: Check licenses
+        working-directory: packaging/launcher
+        run: cargo deny check licenses
+
+  advisories:
+    name: Advisory audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/EmbarkStudios/cargo-deny/main/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+
+      - name: Check advisories
+        working-directory: packaging/launcher
+        run: cargo deny check advisories
+
+  sources:
+    name: Source audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-deny
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/EmbarkStudios/cargo-deny/main/install.sh \
+            | sudo sh -s -- -b /usr/local/bin
+
+      - name: Check sources
+        working-directory: packaging/launcher
+        run: cargo deny check sources
