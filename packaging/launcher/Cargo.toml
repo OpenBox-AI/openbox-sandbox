@@ -6,7 +6,7 @@ publish = false
 description = "Launcher that locates, pins, and runs externally-provided OpenBox and OpenShell artifacts."
 
 [[bin]]
-name = "openbox-sandbox"
+name = "osb"
 path = "src/main.rs"
 
 # Isolated from the parent crate: this launcher builds on its own.

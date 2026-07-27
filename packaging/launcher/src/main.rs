@@ -29,7 +29,10 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 mod bundle;
+mod deps;
 mod pin;
+mod service;
+mod setup;
 
 /// One OpenShell compute driver the launcher can detect.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -98,6 +101,14 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // ── Subcommands ─────────────────────────────────────────────────────
+    if args.iter().any(|a| a == "setup") {
+        let skip_deps = args.iter().any(|a| a == "--skip-deps");
+        let skip_service = args.iter().any(|a| a == "--skip-service");
+        let no_start = args.iter().any(|a| a == "--no-start");
+        return setup::run(skip_deps, skip_service, no_start);
+    }
+
     // ── Info-only flags ──────────────────────────────────────────────────
     if args.iter().any(|a| a == "--verify-runtime") {
         return verify_runtime();
@@ -109,10 +120,10 @@ fn main() -> ExitCode {
 
     banner();
     let (os, arch) = platform();
-    field("platform", &format!("{os}/{arch}"));
+    info(&format!("{os}/{arch}"));
 
     if os == "windows" {
-        windows_guidance();
+        err("Windows is not supported directly; use WSL2.");
         return ExitCode::FAILURE;
     }
 
@@ -120,10 +131,7 @@ fn main() -> ExitCode {
         None => None,
         Some(Some(runtime)) => Some(runtime),
         Some(None) => {
-            fail(
-                "driver",
-                "unknown --driver (use podman|docker|kubernetes|vm)",
-            );
+            err("unknown --driver (use podman|docker|kubernetes|vm)");
             return ExitCode::FAILURE;
         }
     };
@@ -132,21 +140,17 @@ fn main() -> ExitCode {
         .into_iter()
         .filter(|runtime| runtime.available())
         .collect();
-    field("runtimes", &runtime_summary(&available));
+    info(&format!("runtimes: {}", runtime_summary(&available)));
     if available.is_empty() {
-        fail("runtime", "no supported driver is present");
-        note("install one of: Podman, Docker, kubectl + a cluster, or a hypervisor");
-        note("(KVM on Linux / Hypervisor.framework on macOS) for the microVM driver.");
+        err("no supported driver present");
+        info("install one of: Podman, Docker, kubectl + cluster, or hypervisor");
         return ExitCode::FAILURE;
     }
 
     let chosen = match requested {
         Some(runtime) if available.contains(&runtime) => runtime,
         Some(runtime) => {
-            fail(
-                "driver",
-                &format!("requested '{}' is not available", runtime.key()),
-            );
+            err(&format!("--driver {} is not available", runtime.key()));
             return ExitCode::FAILURE;
         }
         None => *priority(os)
@@ -154,7 +158,7 @@ fn main() -> ExitCode {
             .find(|runtime| available.contains(runtime))
             .expect("a runtime is available"),
     };
-    field("driver", chosen.label());
+    info(&format!("driver: {}", chosen.label()));
 
     let posture = match assess(chosen, os, allow_degraded) {
         Some(posture) => posture,
@@ -164,39 +168,32 @@ fn main() -> ExitCode {
     let artifacts = match bundle::resolve() {
         Ok(artifacts) => artifacts,
         Err(missing) => {
-            fail(
-                "artifacts",
-                &format!("required artifact not found: {missing}"),
-            );
-            note("OpenShell must be installed by the environment owner.");
-            note("run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
-            note("the pinned release, or install via Homebrew (brew install openshell).");
+            err(&format!("artifact not found: {missing}"));
+            info("OpenShell must be installed by the environment owner.");
+            info("run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
+            info("the pinned release, or install via Homebrew (brew install openshell).");
             return ExitCode::FAILURE;
         }
     };
     report_artifacts(&artifacts);
 
-    // Dependency pin: refuse to run against an OpenShell whose version does not
-    // match the pinned release. This is fail-closed: a version drift can break
-    // the sandbox-name / hook contracts. The version is checked by running
-    // `<gateway> --version`. sha256 is opt-in via env for air-gapped deploys.
     let skip_hash = args.iter().any(|a| a == "--skip-hash")
         || std::env::var("OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH").as_deref() == Ok("1");
-    if let Err(err) = pin::verify(&artifacts, !skip_hash) {
-        fail("pin", &format!("{} rejected: {}", err.artifact, err.reason));
-        note("OpenShell is pinned to a tested version; a mismatch can break the");
-        note("sandbox-name / hook contracts. Install the matching release, or set");
-        note("OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION to the installed version.");
-        if err.reason.starts_with("version") {
-            note("run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
-            note("the pinned release.");
+    if let Err(err_msg) = pin::verify(&artifacts, !skip_hash) {
+        err(&format!("{}: {}", err_msg.artifact, err_msg.reason));
+        info("OpenShell is pinned to a tested version; a mismatch can break the");
+        info("sandbox-name / hook contracts. Install the matching release, or set");
+        info("OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION to the installed version.");
+        if err_msg.reason.starts_with("version") {
+            info("run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
+            info("the pinned release.");
         }
         return ExitCode::FAILURE;
     }
-    field(
-        "pin",
-        &format!("openshell {} verified", pin::REQUIRED_VERSION),
-    );
+    info(&format!(
+        "pin: openshell {} verified",
+        pin::REQUIRED_VERSION
+    ));
 
     if dry_run {
         plan(os, arch, chosen, posture, &artifacts);
@@ -211,61 +208,56 @@ fn main() -> ExitCode {
 fn verify_runtime() -> ExitCode {
     banner();
     let (os, arch) = platform();
-    field("platform", &format!("{os}/{arch}"));
+    info(&format!("{os}/{arch}"));
 
-    // Check if a local gateway binary exists and report its version.
     match bundle::resolve() {
         Ok(artifacts) => {
-            field("gateway", &artifacts.gateway.display().to_string());
+            info(&format!("gateway: {}", artifacts.gateway.display()));
             match pin::extract_version_from(&artifacts.gateway) {
                 Ok(version) => {
-                    field("version", &version);
+                    info(&format!("version: {version}"));
                     if version == pin::REQUIRED_VERSION {
-                        field("compatible", "yes (pinned version matches)");
+                        ok("pinned version matches");
                     } else {
-                        field(
-                            "compatible",
-                            &format!("NO — required {}, found {}", pin::REQUIRED_VERSION, version),
-                        );
-                        fail(
-                            "runtime",
-                            "OpenShell version mismatch; install the pinned release",
-                        );
+                        err(&format!(
+                            "version mismatch — required {}, found {}",
+                            pin::REQUIRED_VERSION,
+                            version
+                        ));
+                        info("install the pinned release");
                         return ExitCode::FAILURE;
                     }
                 }
                 Err(e) => {
-                    field("version", &format!("could not determine: {e}"));
-                    fail("runtime", "cannot verify gateway version");
+                    err(&format!("cannot determine version: {e}"));
                     return ExitCode::FAILURE;
                 }
             }
             if artifacts.driver_vm.is_some() {
-                field("vm_driver", "present");
+                info("vm driver: present");
             } else {
-                field("vm_driver", "not found (needed for microVM)");
+                info("vm driver: not found (needed for microVM)");
             }
         }
         Err(missing) => {
-            field("gateway", &format!("not found ({missing})"));
-            note("No local OpenShell gateway detected. In pure remote-client");
-            note("mode, configure the gateway endpoint externally.");
-            note("To install: run packaging/launcher/scripts/fetch-openshell-deps.sh");
+            err(&format!("gateway not found ({missing})"));
+            info("No local OpenShell gateway detected. In pure remote-client");
+            info("mode, configure the gateway endpoint externally.");
+            info("To install: run packaging/launcher/scripts/fetch-openshell-deps.sh");
             return ExitCode::FAILURE;
         }
     }
 
-    // Report environment.
-    field("pin_version", pin::REQUIRED_VERSION);
+    info(&format!("pin: {}", pin::REQUIRED_VERSION));
     if let Ok(endpoint) = std::env::var("OPENBOX_GATEWAY_ENDPOINT") {
-        field("endpoint", &endpoint);
+        info(&format!("endpoint: {endpoint}"));
     } else {
-        field("endpoint", "local (exec gateway binary)");
+        info("endpoint: local (exec gateway binary)");
     }
 
     println!();
-    note("CONSTRAIN is fail-closed: if the sandbox runtime is unavailable,");
-    note("the governed activity fails. There is no host fallback.");
+    info("CONSTRAIN is fail-closed: if the sandbox runtime is unavailable,");
+    info("the governed activity fails. There is no host fallback.");
     ExitCode::SUCCESS
 }
 
@@ -292,47 +284,50 @@ fn priority(os: &str) -> [Runtime; 4] {
 fn assess(chosen: Runtime, os: &str, allow_degraded: bool) -> Option<Posture> {
     match chosen {
         Runtime::MicroVm => {
-            field("isolation", "microVM (hardware boundary)");
+            info("isolation: microVM (hardware boundary)");
             if os == "macos" {
-                note("Runs on Apple Hypervisor.framework with its own guest kernel;");
-                note("no container runtime required. This is the supported macOS path.");
+                info("Runs on Apple Hypervisor.framework with its own guest kernel;");
+                info("no container runtime required. This is the supported macOS path.");
             }
             Some(Posture::MicroVm)
         }
         Runtime::Kubernetes => {
-            field("isolation", "delegated to the cluster");
+            info("isolation: delegated to the cluster");
             Some(Posture::Cluster)
         }
         Runtime::Podman | Runtime::Docker => match os {
             "linux" => {
                 if landlock_available() {
-                    field("isolation", "strict (landlock hard_requirement)");
+                    info("isolation: strict (landlock)");
                     Some(Posture::ContainerStrict)
                 } else {
-                    warn("Landlock is not available on this kernel.");
-                    note("Continuing best_effort: namespaces/cgroups/seccomp still apply.");
-                    field("isolation", "degraded (best_effort)");
+                    warn("Landlock not available on this kernel.");
+                    info("Continuing best_effort: namespaces/cgroups/seccomp still apply.");
+                    info("isolation: degraded (best_effort)");
                     Some(Posture::ContainerDegraded)
                 }
             }
             "macos" => {
-                warn("A container driver on macOS is degraded and NOT recommended.");
-                note("It runs inside the runtime's Linux VM where Landlock is absent.");
-                note("Prefer --driver vm (libkrun microVM) for real isolation on macOS.");
+                warn("Container driver on macOS is degraded and NOT recommended.");
+                info("It runs inside the runtime's Linux VM where Landlock is absent.");
+                info("Prefer --driver vm (libkrun microVM) for real isolation on macOS.");
                 if !command_ok(chosen.key(), &["info"]) {
-                    fail(chosen.key(), "no reachable connection (is the VM started?)");
+                    err(&format!(
+                        "{}: no reachable connection (is the VM started?)",
+                        chosen.key()
+                    ));
                     return None;
                 }
                 if !allow_degraded {
-                    fail("isolation", "refusing degraded run without consent");
-                    note("re-run with --allow-degraded, or use --driver vm.");
+                    err("refusing degraded run without consent");
+                    info("re-run with --allow-degraded, or use --driver vm.");
                     return None;
                 }
-                field("isolation", "degraded (best_effort, via runtime VM)");
+                info("isolation: degraded (best_effort, via runtime VM)");
                 Some(Posture::ContainerDegraded)
             }
             _ => {
-                fail("platform", "unsupported operating system");
+                err("unsupported operating system");
                 None
             }
         },
@@ -342,31 +337,27 @@ fn assess(chosen: Runtime, os: &str, allow_degraded: bool) -> Option<Posture> {
 /// Report the resolved artifact paths so the operator can see exactly what the
 /// launcher will run.
 fn report_artifacts(artifacts: &bundle::Artifacts) {
-    field("gateway", &artifacts.gateway.display().to_string());
-    field("cli", &artifacts.cli.display().to_string());
-    field("policy", &artifacts.policy(false).display().to_string());
-    field("policy(dev)", &artifacts.policy(true).display().to_string());
+    info(&format!("gateway: {}", artifacts.gateway.display()));
+    info(&format!("cli:     {}", artifacts.cli.display()));
+    info(&format!("policy:  {}", artifacts.policy(false).display()));
 }
 
 /// Print the concrete plan without starting anything (`--dry-run`).
 fn plan(os: &str, arch: &str, chosen: Runtime, posture: Posture, artifacts: &bundle::Artifacts) {
     println!();
-    field(
-        "PLAN",
-        &format!("bootstrap openbox-sandbox for {os}/{arch}"),
-    );
     let (degraded, policy) = posture_config(posture);
-    note(&format!("1. driver: OPENSHELL_DRIVERS={}", chosen.key()));
-    note(&format!("2. gateway: {}", artifacts.gateway.display()));
-    note(&format!(
+    step(&format!("PLAN — bootstrap for {os}/{arch}"));
+    info(&format!("1. driver: OPENSHELL_DRIVERS={}", chosen.key()));
+    info(&format!("2. gateway: {}", artifacts.gateway.display()));
+    info(&format!(
         "3. service config allow_degraded_landlock = {degraded}"
     ));
-    note(&format!(
+    info(&format!(
         "4. policy: {}",
         artifacts.policy(policy).display()
     ));
-    note("5. generate local mTLS identities on first run");
-    note("6. start the OpenShell gateway; then start the openbox-sandbox service");
+    info("5. generate local mTLS identities on first run");
+    info("6. start the OpenShell gateway; then start the openbox-sandbox service");
 }
 
 /// Map a posture to (allow_degraded_landlock, use_dev_policy).
@@ -383,16 +374,16 @@ fn posture_config(posture: Posture) -> (bool, bool) {
 fn launch(chosen: Runtime, posture: Posture, artifacts: &bundle::Artifacts) -> ExitCode {
     let (degraded, dev_policy) = posture_config(posture);
     println!();
-    field("START", "openbox-sandbox");
-    note(&format!(
+    step("START openbox-sandbox");
+    info(&format!(
         "driver={} degraded_landlock={degraded}",
         chosen.key()
     ));
-    note(&format!(
+    info(&format!(
         "policy={}",
         artifacts.policy(dev_policy).display()
     ));
-    note(&format!("gateway={}", artifacts.gateway.display()));
+    info(&format!("gateway={}", artifacts.gateway.display()));
 
     let mut command = Command::new(&artifacts.gateway);
     command
@@ -402,20 +393,20 @@ fn launch(chosen: Runtime, posture: Posture, artifacts: &bundle::Artifacts) -> E
     match command.status() {
         Ok(status) if status.success() => ExitCode::SUCCESS,
         Ok(status) => {
-            fail(
-                "gateway",
-                &format!("exited with status {}", status.code().unwrap_or(-1)),
-            );
+            err(&format!(
+                "gateway exited with status {}",
+                status.code().unwrap_or(-1)
+            ));
             ExitCode::FAILURE
         }
         Err(error) => {
-            fail("gateway", &format!("failed to start: {error}"));
+            err(&format!("gateway failed to start: {error}"));
             ExitCode::FAILURE
         }
     }
 }
 
-fn platform() -> (&'static str, &'static str) {
+pub(crate) fn platform() -> (&'static str, &'static str) {
     let os = if cfg!(target_os = "linux") {
         "linux"
     } else if cfg!(target_os = "macos") {
@@ -488,21 +479,21 @@ fn runtime_summary(available: &[Runtime]) -> String {
         .join(", ")
 }
 
-fn windows_guidance() {
-    warn("Windows is not a supported direct target.");
-    note("Run inside WSL2 (a Linux VM). Install a WSL distro, then run the Linux build there:");
-    note("  wsl -d <distro> -- ./openbox-sandbox");
-}
-
 fn print_help() {
     println!(
         "openbox-sandbox — thin client / launcher\n\n\
          USAGE:\n  \
-         openbox-sandbox [OPTIONS]\n\n\
+         openbox-sandbox setup [OPTIONS]     Run first-time setup.\n  \
+         openbox-sandbox [OPTIONS]           Start the sandbox service.\n\n\
          Thin client that connects to an operator-installed OpenShell gateway.\n\
          OpenBox Sandbox does NOT embed OpenShell; the environment owner must\n\
          install the pinned OpenShell release separately.\n\n\
-         OPTIONS:\n\
+         SETUP SUBCOMMAND:\n\
+         \x20 setup               Full first-run: deps, OpenShell, service.\n\
+         \x20   --skip-deps       Skip dependency installation.\n\
+         \x20   --skip-service    Skip service setup.\n\
+         \x20   --no-start        Set up but don't start the service.\n\n\
+         START OPTIONS:\n\
          \x20 --driver <name>      Force a driver (podman|docker|kubernetes|vm).\n\
          \x20 --allow-degraded     Accept reduced isolation (container w/o Landlock).\n\
          \x20 --dry-run            Resolve artifacts and print the plan; start nothing.\n\
@@ -515,22 +506,28 @@ fn print_help() {
     );
 }
 
-fn banner() {
-    println!("openbox-sandbox launcher");
+// ── Output helpers ──────────────────────────────────────────────────────
+
+pub(crate) fn banner() {
+    println!("openbox-sandbox\n");
 }
 
-fn field(key: &str, value: &str) {
-    println!("  {key:<16} {value}");
+pub(crate) fn step(msg: &str) {
+    eprintln!("▸ {msg}");
 }
 
-fn warn(message: &str) {
-    println!("  WARN            {message}");
+pub(crate) fn ok(msg: &str) {
+    eprintln!("  ✓ {msg}");
 }
 
-fn fail(key: &str, message: &str) {
-    println!("  ERROR  {key:<9} {message}");
+pub(crate) fn info(msg: &str) {
+    eprintln!("  • {msg}");
 }
 
-fn note(message: &str) {
-    println!("        {message}");
+pub(crate) fn warn(msg: &str) {
+    eprintln!("  ⚠ {msg}");
+}
+
+pub(crate) fn err(msg: &str) {
+    eprintln!("  ✗ {msg}");
 }
