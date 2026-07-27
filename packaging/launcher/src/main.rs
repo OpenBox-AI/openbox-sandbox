@@ -1,8 +1,9 @@
-//! openbox-sandbox single-binary launcher.
+//! openbox-sandbox launcher.
 //!
-//! One self-extracting executable per OS/arch. It bundles the OpenBox-owned
-//! artifacts (service, OpenShell gateway/CLI, pinned sandbox image, default
-//! config/cert generation) and drives one OpenShell compute driver.
+//! A thin launcher that locates, pins, and runs externally-provided OpenBox and
+//! OpenShell artifacts. It is NOT a self-contained binary: the operator must
+//! install or fetch the pinned OpenShell release (via `brew install openshell`
+//! or `scripts/fetch-openshell-deps.sh`) before running the launcher.
 //!
 //! OpenShell supports four drivers; the launcher detects what is present:
 //!   - podman: rootless container runtime (preferred container path).
@@ -23,6 +24,7 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 mod bundle;
+mod pin;
 
 /// One OpenShell compute driver the launcher can select.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -161,6 +163,29 @@ fn main() -> ExitCode {
         }
     };
     report_artifacts(&artifacts);
+
+    // Dependency pin: refuse to run against an OpenShell whose version/hash
+    // does not match the pinned manifest. Version always checked; sha256 only
+    // in strict mode (on by default). Override the required version with
+    // OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION; skip the hash check with
+    // --skip-hash / OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH=1 (e.g. local builds).
+    let skip_hash = args.iter().any(|a| a == "--skip-hash")
+        || std::env::var("OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH").as_deref() == Ok("1");
+    if let Err(err) = pin::verify(&artifacts, !skip_hash) {
+        fail("pin", &format!("{} rejected: {}", err.artifact, err.reason));
+        note("OpenShell is pinned to a tested version; a mismatch can break the");
+        note("sandbox-name / hook contracts. Pin the matching release, or set");
+        note("OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION to the installed version.");
+        if err.reason.starts_with("version") {
+            note("or run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
+            note("the pinned release.");
+        }
+        return ExitCode::FAILURE;
+    }
+    field(
+        "pin",
+        &format!("openshell {} verified", pin::REQUIRED_VERSION),
+    );
 
     if dry_run {
         plan(os, arch, chosen, posture, &artifacts);
@@ -404,13 +429,15 @@ fn print_help() {
     println!(
         "openbox-sandbox launcher\n\n\
          USAGE:\n  openbox-sandbox [--driver podman|docker|kubernetes|vm] [--allow-degraded]\n\n\
-         The single binary bundles the service, OpenShell, and the sandbox image,\n\
-         and drives one OpenShell compute driver. The microVM (vm) driver is\n\
-         self-contained and needs only a hypervisor; the others need their runtime.\n\n\
+         Locates, verifies, and runs the pinned OpenShell gateway and driver.\n\
+         Artifacts are resolved from $OPENBOX_BUNDLE_DIR, install prefixes,\n\
+         PATH, or the in-repo build output (see bundle.rs). A version pin\n\
+         guard refuses to run against an unpinned OpenShell.\n\n\
          OPTIONS:\n\
          \x20 --driver <name>    Force a driver instead of auto-selecting.\n\
          \x20 --allow-degraded   Accept reduced isolation (container driver without Landlock).\n\
          \x20 --dry-run          Resolve artifacts and print the plan; start nothing.\n\
+         \x20 --skip-hash         Skip the pinned-artifact sha256 check (local builds).\n\
          \x20 -h, --help         Show this help.\n"
     );
 }

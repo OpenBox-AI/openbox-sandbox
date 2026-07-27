@@ -2,7 +2,9 @@
 //!
 //! The launcher drives real, already-built artifacts rather than embedding
 //! them. Resolution order for each artifact:
-//!   1. `$OPENBOX_BUNDLE_DIR/<name>` — an operator-provided bundle directory.
+//!   1. `$OPENBOX_BUNDLE_DIR` — an operator-provided release bundle. Binaries
+//!      may use either its conventional `bin/` and `libexec/` layout (as emitted
+//!      by `scripts/fetch-openshell-deps.sh`) or live directly at its root.
 //!   2. A well-known install location (Homebrew on macOS, `/usr/local` on Linux).
 //!   3. `PATH` (for the `openshell` / `openshell-gateway` binaries).
 //!   4. The in-repo build output, so `cargo run` works from a source checkout.
@@ -20,9 +22,12 @@ pub struct Artifacts {
     pub gateway: PathBuf,
     /// OpenShell CLI.
     pub cli: PathBuf,
-    /// Strict floor policy (landlock hard_requirement).
+    /// OpenShell microVM driver, when installed. It is optional because
+    /// container/kubernetes deployments do not need it.
+    pub driver_vm: Option<PathBuf>,
+    /// Strict floor policy (Landlock hard_requirement).
     pub policy_strict: PathBuf,
-    /// Degraded dev policy (landlock best_effort).
+    /// Degraded dev policy (Landlock best_effort).
     pub policy_dev: PathBuf,
 }
 
@@ -49,6 +54,7 @@ pub fn resolve() -> Result<Artifacts, &'static str> {
     Ok(Artifacts {
         gateway,
         cli,
+        driver_vm: find_driver_vm(),
         policy_strict,
         policy_dev,
     })
@@ -62,9 +68,10 @@ fn bundle_dir() -> Option<PathBuf> {
 /// Locate an executable artifact by name.
 fn find_binary(name: &str) -> Option<PathBuf> {
     if let Some(dir) = bundle_dir() {
-        let candidate = dir.join(name);
-        if is_file(&candidate) {
-            return Some(candidate);
+        for candidate in [dir.join(name), dir.join("bin").join(name)] {
+            if is_file(&candidate) {
+                return Some(candidate);
+            }
         }
     }
     for prefix in install_prefixes() {
@@ -76,12 +83,45 @@ fn find_binary(name: &str) -> Option<PathBuf> {
     find_on_path(name)
 }
 
+/// Locate the optional VM driver in the release/Homebrew layouts OpenShell
+/// itself probes. This is not required for container/kubernetes deployments.
+fn find_driver_vm() -> Option<PathBuf> {
+    const NAME: &str = "openshell-driver-vm";
+    if let Some(dir) = bundle_dir() {
+        for candidate in [
+            dir.join(NAME),
+            dir.join("libexec").join(NAME),
+            dir.join("bin").join(NAME),
+        ] {
+            if is_file(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    for prefix in install_prefixes() {
+        for candidate in [
+            prefix.join("libexec").join(NAME),
+            prefix.join("libexec").join("openshell").join(NAME),
+            prefix.join("bin").join(NAME),
+        ] {
+            if is_file(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+    find_on_path(NAME)
+}
+
 /// Locate a policy file by name.
 fn find_policy(name: &str) -> Option<PathBuf> {
     if let Some(dir) = bundle_dir() {
-        let candidate = dir.join(name);
-        if is_file(&candidate) {
-            return Some(candidate);
+        for candidate in [
+            dir.join(name),
+            dir.join("share").join("openbox-sandbox").join(name),
+        ] {
+            if is_file(&candidate) {
+                return Some(candidate);
+            }
         }
     }
     let mut candidates = Vec::new();

@@ -3,7 +3,7 @@ name = "openbox-sandbox-launcher"
 version = "0.0.0"
 edition = "2021"
 publish = false
-description = "Single-binary self-extracting launcher for openbox-sandbox (prototype)."
+description = "Launcher that locates, pins, and runs externally-provided OpenBox and OpenShell artifacts."
 
 [[bin]]
 name = "openbox-sandbox"
