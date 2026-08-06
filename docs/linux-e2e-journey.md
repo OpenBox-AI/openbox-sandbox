@@ -1652,3 +1652,35 @@ directly — no mise, no gh), syft SBOMs, **keyless cosign signing** (OIDC
   fixup-squash; `workflow` scope added to the dev token for workflow-file
   pushes; the YAML validation failure (`--notes` multiline string) was found
   with actionlint and fixed).
+
+### Part 14 — LOCKED RELEASED OpenShell 0.0.88; source build removed (FINAL)
+
+**Decision (user):** never compile OpenShell. Lock a released version; CI
+downloads NVIDIA's prebuilt tarballs (sha256-verified against their published
+checksums); the released VM driver already ships with the supervisor + runtime
+embedded (39.7 MB vs 18 MB unembedded — proven by the size gate).
+
+**Changes (commit `launcher: lock released OpenShell 0.0.88 and drop the
+source build`):**
+- `pin.rs`: version gate accepts the locked release `0.0.88` (or the source
+  marker) — `LOCKED_RELEASE_VERSION` const.
+- wizard `require_source_marker`: accepts `0.0.88` or the marker;
+  `OPENSHELL_LOCKED_VERSION` env-overridable.
+- `install.sh` + `docs/installation.md`: same relaxed gate; the wire contract
+  is proven by the live verify test instead of the marker.
+- `hosted-bin.yml`: the OpenShell clone/build/supervisor/vm-runtime steps are
+  replaced by one download step (`fetch-openshell-deps.sh` with
+  `OPENBOX_OPENSHELL_VERSION=0.0.88` + `TARGET_TRIPLE`); driver size gate
+  (>30 MB) retained; cache now covers only our crates.
+- fetch script: portable `sha256sum` fallback (containers have no `shasum`).
+
+**Result (run 31114215514): all 4 jobs GREEN in ~10 min** (darwin + both
+linux + publish, 41 assets). AWS consumer flow from the CI release:
+download → checksums → `obs provision` (auto-fetch; gate logs
+`verified (f1690849 | 0.0.88)`) → warm → **verify: 69/69 in 2.50 s**
+(the released 0.0.88 wire contract is compatible — the empirical proof the
+gate always wanted) → uninstall clean.
+
+**CI runs are now fast:** only our three crates compile (cached); the
+OpenShell compile is gone entirely. The version is locked; nothing about
+OpenShell changes unless the lock is bumped deliberately.
