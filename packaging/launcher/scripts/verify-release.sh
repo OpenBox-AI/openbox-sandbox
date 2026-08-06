@@ -9,19 +9,22 @@ set -euo pipefail
 # The release directory should contain:
 #   - SHA256SUMS
 #   - One or more openbox-sandbox-* binaries
-#   - Corresponding *.spdx.json SBOM files
-#   - Corresponding *.sbom.bundle.json cosign bundles
+#   - Corresponding *.spdx.json and *.cyclonedx.json SBOM files
+#   - Corresponding *.spdx.json.sbom.bundle.json cosign bundles
 #
 # Verification steps:
 #   1. SHA-256 checksum verification
-#   2. SBOM presence check
-#   3. Cosign bundle presence check (informational — full verification requires cosign)
+#   2. Required dual-format SBOM and signing-bundle presence
+#   3. Cosign verification when cosign is installed
 
-if [[ $# -lt 1 ]]; then
+usage() {
   echo "Usage: $0 <release-dir>" >&2
   echo "       $0 --binary <binary-path> <sha256sums-path>" >&2
   exit 1
-fi
+}
+
+[[ $# -ge 1 ]] || usage
+[[ $1 == "--binary" || $# -eq 1 ]] || usage
 
 verify_checksums() {
   local dir="$1"
@@ -41,7 +44,7 @@ verify_sbom_presence() {
   local dir="$1"
 
   echo "=== SBOM Presence Check ==="
-  local missing=0
+  local missing=0 binaries=0
   for binary in "$dir"/openbox-sandbox-*; do
     [[ -f "$binary" ]] || continue
     # Skip SBOM files themselves
@@ -51,6 +54,7 @@ verify_sbom_presence() {
     [[ "$binary" == SHA256SUMS ]] && continue
     [[ "$binary" == asset-manifest.json ]] && continue
 
+    binaries=$((binaries + 1))
     local name
     name="$(basename "$binary")"
     local spdx="$dir/${name}.spdx.json"
@@ -59,41 +63,56 @@ verify_sbom_presence() {
     if [[ -f "$spdx" ]]; then
       echo "  $name: SPDX SBOM present"
     else
-      echo "  $name: WARNING — SPDX SBOM missing"
+      echo "  $name: ERROR — SPDX SBOM missing" >&2
       missing=1
     fi
 
     if [[ -f "$cdx" ]]; then
       echo "  $name: CycloneDX SBOM present"
     else
-      echo "  $name: WARNING — CycloneDX SBOM missing"
+      echo "  $name: ERROR — CycloneDX SBOM missing" >&2
+      missing=1
+    fi
+
+    local bundle="$dir/${name}.spdx.json.sbom.bundle.json"
+    if [[ -f "$bundle" ]]; then
+      echo "  $name: cosign bundle present"
+    else
+      echo "  $name: ERROR — cosign bundle missing" >&2
+      missing=1
     fi
   done
+  if [[ $binaries -eq 0 ]]; then
+    echo "  ERROR — no launcher binaries found" >&2
+    missing=1
+  fi
   echo ""
   return "$missing"
 }
 
 verify_cosign_bundles() {
-  local dir="$1"
+  local dir="$1" binary name spdx bundle
 
-  echo "=== Cosign Bundle Check (informational) ==="
+  echo "=== Cosign Bundle Verification ==="
   if ! command -v cosign &>/dev/null; then
-    echo "  cosign not installed — skipping bundle verification"
+    echo "  cosign not installed — signatures present but cryptographic verification skipped"
     echo "  Install: https://docs.sigstore.dev/cosign/installation/"
     echo ""
     return 0
   fi
 
-  for bundle in "$dir"/*.sbom.bundle.json; do
-    [[ -f "$bundle" ]] || continue
-    local name
-    name="$(basename "$bundle" .sbom.bundle.json)"
-    echo "  $name: cosign bundle found ($(wc -c < "$bundle") bytes)"
-    # Full verification requires the original SBOM file
-    local spdx="$dir/${name}.spdx.json"
-    if [[ -f "$spdx" ]]; then
-      echo "    To verify: cosign verify-blob --bundle $bundle --certificate-identity-regexp 'https://github.com/OpenBox-AI/openbox-sandbox/.github/workflows/build.yml@refs/tags/.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com $spdx"
-    fi
+  for binary in "$dir"/openbox-sandbox-*; do
+    [[ -f "$binary" ]] || continue
+    [[ "$binary" == *.spdx.json || "$binary" == *.cyclonedx.json || "$binary" == *.sbom.bundle.json ]] && continue
+    name="$(basename "$binary")"
+    spdx="$dir/${name}.spdx.json"
+    bundle="$dir/${name}.spdx.json.sbom.bundle.json"
+    cosign verify-blob \
+      --bundle "$bundle" \
+      --certificate-identity-regexp 'https://github.com/OpenBox-AI/openbox-sandbox/.github/workflows/build.yml@refs/tags/.*' \
+      --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      "$spdx" >/dev/null
+    echo "  $name: SPDX cosign signature verified"
   done
   echo ""
 }
@@ -118,7 +137,7 @@ if [[ "$1" == "--binary" ]]; then
 
   echo "=== Verifying $(basename "$BINARY") ==="
   echo ""
-  EXPECTED="$(grep "$(basename "$BINARY")" "$SUMS" | awk '{print $1}')"
+  EXPECTED="$(awk -v name="$(basename "$BINARY")" '$2 == name || $2 == "*" name { print $1 }' "$SUMS")"
   if [[ -z "$EXPECTED" ]]; then
     echo "ERROR: $(basename "$BINARY") not found in SHA256SUMS" >&2
     exit 1
@@ -146,7 +165,7 @@ else
   echo ""
 
   verify_checksums "$RELEASE_DIR"
-  verify_sbom_presence "$RELEASE_DIR" || true
+  verify_sbom_presence "$RELEASE_DIR"
   verify_cosign_bundles "$RELEASE_DIR"
 
   echo "=== Asset Manifest ==="
