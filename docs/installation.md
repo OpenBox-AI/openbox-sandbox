@@ -65,6 +65,11 @@ The approved OpenShell revision is:
 f169084923503a02a94425857b938de2841cab0c
 ```
 
+The hosted-bin (launcher) flow locks the released OpenShell version `0.0.88`
+instead of building from source: released binaries never carry the source
+marker, so the marker check accepts the locked version as an equivalent, and
+the live verify test proves the wire contract at runtime.
+
 ### Local-development mode
 
 If no adjacent `release/` directory exists, the installer enters a clearly labelled, non-production bootstrap. `--local` selects the same path explicitly.

@@ -104,10 +104,11 @@ release design record.
 
 ## Hosted-bin (toolchain-free) flow
 
-Binaries are built once on a build host (source-built OpenShell at the root
-protocol pin `f1690849`, VM driver with the embedded guest supervisor) and
-published as GitHub release assets. Consumers never install a toolchain,
-never build, and never need the source tree:
+OpenShell is locked to released version **0.0.88** (NVIDIA's prebuilt
+tarballs, sha256-verified; the released VM driver ships with the supervisor
+embedded) and assembled with our binaries into GitHub release assets.
+Consumers never install a toolchain, never build, and never need the source
+tree:
 
 1. `curl` the release assets (stable URLs once public):
    `https://github.com/OpenBox-AI/openbox-sandbox/releases/download/<tag>/<asset>`
@@ -120,7 +121,8 @@ never build, and never need the source tree:
    (absolute), and `OPENBOX_POLICY_FILE` (absolute — the policy is a release
    asset, not a repo file) auto-fetches + verifies the bundle, starts the
    stack, and warms the VM driver image cache by default (one create→ready→
-   delete cycle; `OPENBOX_WARM_CACHE=0` skips).
+   delete cycle; `OPENBOX_WARM_CACHE=0` skips). The version gate accepts the
+   locked release `0.0.88` or the root-protocol source marker `gf1690849`.
 5. `obs verify` with `OPENBOX_VERIFY_BIN=<prebuilt-harness>` runs the live
    lifecycle proof without cargo.
 6. `obs uninstall` tears the stack down cleanly. Pass the **same**

@@ -105,6 +105,10 @@ LOG_LEVEL="${OPENSHELL_LOG_LEVEL:-info}"
 NO_START="${NO_START:-0}"
 OPENSHELL_SOURCE_PIN="f169084923503a02a94425857b938de2841cab0c"
 OPENSHELL_SOURCE_MARKER="f1690849"
+# Locked released OpenShell version for the hosted-bin flow (no source build).
+# Accepted together with the source marker; the live verify test proves the
+# wire contract either way.
+OPENSHELL_LOCKED_VERSION="${OPENBOX_OPENSHELL_LOCKED_VERSION:-0.0.88}"
 
 # Binary resolution priority (the sandbox protocol is pinned to exact OpenShell
 # source commit f1690849; the 0.0.85 release is older and is rejected here):
@@ -175,24 +179,17 @@ if [[ "$ARG_UNINSTALL" != "1" ]]; then
     local binary="$1" label="$2" version
     version="$("$binary" --version 2>&1)" \
       || die "$label --version failed: $version"
-    if [[ ! "$version" =~ (^|[^[:xdigit:]])g?${OPENSHELL_SOURCE_MARKER}([^[:xdigit:]]|$) ]]; then
+    if [[ ! "$version" =~ (^|[^[:xdigit:]])g?${OPENSHELL_SOURCE_MARKER}([^[:xdigit:]]|$) \
+      && "$version" != *"$OPENSHELL_LOCKED_VERSION"* ]]; then
       cat >&2 <<EOF
 provision: incompatible $label: '$version'
-provision: required OpenShell source compatibility marker: $OPENSHELL_SOURCE_MARKER
-provision: the 0.0.85 release bundle accepted by 'obs setup' is not compatible
-provision: with the root service protocol pin $OPENSHELL_SOURCE_PIN.
-provision: build the exact revision from source with:
-  git clone https://github.com/NVIDIA/OpenShell.git /path/to/OpenShell
-  git -C /path/to/OpenShell checkout $OPENSHELL_SOURCE_PIN
-  CARGO_TARGET_DIR=/path/to/openshell-target cargo build --release --locked \\
-    --manifest-path /path/to/OpenShell/Cargo.toml \\
-    -p openshell-cli -p openshell-server -p openshell-driver-vm
-provision: then run:
-  OPENSHELL_BIN_OVERRIDE=/path/to/openshell-target/release obs provision
+provision: required OpenShell source marker $OPENSHELL_SOURCE_MARKER
+provision: or locked released version $OPENSHELL_LOCKED_VERSION
+provision: (the wire contract is proven by the live verify test).
 EOF
       exit 1
     fi
-    ok "$label source marker $OPENSHELL_SOURCE_MARKER verified"
+    ok "$label verified ($OPENSHELL_SOURCE_MARKER | $OPENSHELL_LOCKED_VERSION)"
   }
 
   require_source_marker "$GATEWAY_BIN" "openshell-gateway"

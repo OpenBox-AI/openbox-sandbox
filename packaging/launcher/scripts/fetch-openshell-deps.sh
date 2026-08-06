@@ -163,7 +163,13 @@ verify_and_extract() {
   command -v curl >/dev/null 2>&1 || { echo "error: curl is required" >&2; exit 1; }
   curl -fsSL "${url}" -o "${dst}"
   local got
-  got="$(shasum -a 256 "${dst}" | awk '{print $1}')"
+  if command -v sha256sum >/dev/null 2>&1; then
+    got="$(sha256sum "${dst}" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    got="$(shasum -a 256 "${dst}" | awk '{print $1}')"
+  else
+    echo "error: neither sha256sum nor shasum is available" >&2; exit 1
+  fi
   if [[ "${got}" != "${expected}" ]]; then
     echo "error: sha256 mismatch for ${asset}" >&2
     echo "  expected ${expected}" >&2

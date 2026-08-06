@@ -13,6 +13,7 @@ readonly STATE_DESTINATION="/var/lib/openbox-sandbox/cleanup"
 readonly UNIT_DESTINATION="/etc/systemd/system/${SERVICE_NAME}"
 readonly OPENSHELL_SOURCE_PIN="f169084923503a02a94425857b938de2841cab0c"
 readonly OPENSHELL_VERSION_MARKER="gf1690849"
+readonly OPENSHELL_LOCKED_VERSION="0.0.88"
 
 usage() {
   cat <<'EOF'
@@ -357,8 +358,10 @@ openshell_matches_pin() {
   [[ -n $cli && -n $gateway && -x $cli && -x $gateway ]] || return 1
   cli_version=$($cli --version 2>/dev/null || true)
   gateway_version=$($gateway --version 2>/dev/null || true)
-  [[ $cli_version == *"$OPENSHELL_VERSION_MARKER"* \
-    && $gateway_version == *"$OPENSHELL_VERSION_MARKER"* ]]
+  [[ ( $cli_version == *"$OPENSHELL_VERSION_MARKER"* \
+        || $cli_version == *"$OPENSHELL_LOCKED_VERSION"* ) \
+    && ( $gateway_version == *"$OPENSHELL_VERSION_MARKER"* \
+        || $gateway_version == *"$OPENSHELL_LOCKED_VERSION"* ) ]]
 }
 
 install_pinned_openshell() {

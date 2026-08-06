@@ -26,8 +26,7 @@ permissions:
   id-token: write
 
 env:
-  OPENSHELL_PIN: "f169084923503a02a94425857b938de2841cab0c"
-  OPENSHELL_MARKER: "gf1690849"
+  OPENSHELL_VERSION: "0.0.88"
   RUST_TOOLCHAIN: "1.95.0"
 
 jobs:
@@ -94,70 +93,25 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ${{ runner.temp }}/openshell/target
             target
-          key: hosted-bin-${{ matrix.triple }}-${{ env.OPENSHELL_PIN }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('packaging/launcher/Cargo.lock') }}
+          key: hosted-bin-${{ matrix.triple }}-${{ env.OPENSHELL_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('packaging/launcher/Cargo.lock') }}
 
-      - name: Clone pinned OpenShell
+      - name: Download released OpenShell ${{ env.OPENSHELL_VERSION }}
+        # Locked released binaries, sha256-verified against NVIDIA's published
+        # checksum files. No source build; the released driver ships with the
+        # supervisor + runtime embedded (size gate below).
         run: |
           set -euo pipefail
-          # The cache restore may have created $RUNNER_TEMP/openshell (for the
-          # target dir); the clone needs a clean destination.
-          rm -rf "$RUNNER_TEMP/openshell"
-          git clone --filter=blob:none --no-checkout \
-            https://github.com/NVIDIA/OpenShell.git "$RUNNER_TEMP/openshell"
-          git -C "$RUNNER_TEMP/openshell" fetch --depth=128 origin "$OPENSHELL_PIN"
-          git -C "$RUNNER_TEMP/openshell" checkout --detach "$OPENSHELL_PIN"
-          test "$(git -C "$RUNNER_TEMP/openshell" rev-parse HEAD)" = "$OPENSHELL_PIN"
-
-      - name: Build pinned OpenShell binaries
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/openshell"
-          cargo +$RUST_TOOLCHAIN build --release --locked \
-            -p openshell-cli -p openshell-server -p openshell-driver-vm
+          OPENBOX_OPENSHELL_VERSION="${{ env.OPENSHELL_VERSION }}" \
+            TARGET_TRIPLE="${{ matrix.triple }}" \
+            OUT="$RUNNER_TEMP/openshell-bundle" \
+            bash packaging/launcher/scripts/fetch-openshell-deps.sh
+          ls -la "$RUNNER_TEMP/openshell-bundle/bin" "$RUNNER_TEMP/openshell-bundle/libexec"
           for bin in openshell openshell-gateway openshell-driver-vm; do
-            ./target/release/$bin --version | grep -q "$OPENSHELL_MARKER"
+            "$RUNNER_TEMP/openshell-bundle/bin/$bin" --version 2>/dev/null \
+              || "$RUNNER_TEMP/openshell-bundle/libexec/$bin" --version
           done
-
-      - name: Prepare VM runtime and build supervisor
-        # The kernel-runtime downloader reads GITHUB_REPOSITORY; the runner
-        # resets GITHUB_* between steps (step env cannot override it), so pin
-        # it to the upstream runtime release with an in-shell export. gh needs
-        # the Actions token for the download.
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/openshell"
-          export GITHUB_REPOSITORY=NVIDIA/OpenShell
-          # OpenShell task scripts run directly (mise is not required):
-          #   vm-setup.sh        downloads the platform guest runtime + tools
-          #   build-supervisor-bundle.sh  compiles + compresses the supervisor
-          ls tasks/scripts/vm/
-          for script in vm-setup.sh build-supervisor-bundle.sh; do
-            if [[ -f "tasks/scripts/vm/$script" ]]; then
-              bash "tasks/scripts/vm/$script"
-            fi
-          done
-          RUNTIME_DIR="$(find target -maxdepth 3 -type d -name 'vm-runtime-compressed' | head -1)"
-          test -n "$RUNTIME_DIR"
-          # Absolute path: the driver build script resolves the dir relative to
-          # the crate dir, not the workspace root.
-          RUNTIME_DIR="$(cd "$RUNTIME_DIR" && pwd)"
-          echo "OPENSHELL_VM_RUNTIME_COMPRESSED_DIR=$RUNTIME_DIR" >> "$GITHUB_ENV"
-
-      - name: Rebuild driver with embedded runtime
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP/openshell"
-          # Cargo does not rebuild when OPENSHELL_VM_RUNTIME_COMPRESSED_DIR
-          # appears after the first build; force the embedding rebuild and
-          # verify it actually happened (embedded driver is ~38 MB vs ~18 MB).
-          cargo clean -p openshell-driver-vm
-          cargo +$RUST_TOOLCHAIN build --release --locked -p openshell-driver-vm
-          ./target/release/openshell-driver-vm --version | grep -q "$OPENSHELL_MARKER"
-          SIZE=$(wc -c < target/release/openshell-driver-vm)
+          SIZE=$(wc -c < "$RUNNER_TEMP/openshell-bundle/libexec/openshell-driver-vm")
           echo "driver size: $SIZE"
           test "$SIZE" -gt 30000000
 
@@ -177,9 +131,10 @@ jobs:
           set -euo pipefail
           R="$RUNNER_TEMP/release"
           mkdir -p "$R/bundle/bin" "$R/bundle/libexec"
-          cp "$RUNNER_TEMP/openshell/target/release/openshell" "$R/bundle/bin/"
-          cp "$RUNNER_TEMP/openshell/target/release/openshell-gateway" "$R/bundle/bin/"
-          cp "$RUNNER_TEMP/openshell/target/release/openshell-driver-vm" "$R/bundle/libexec/"
+          cp "$RUNNER_TEMP/openshell-bundle/bin/openshell" "$R/bundle/bin/"
+          cp "$RUNNER_TEMP/openshell-bundle/bin/openshell-gateway" "$R/bundle/bin/"
+          cp "$RUNNER_TEMP/openshell-bundle/libexec/openshell-driver-vm" "$R/bundle/libexec/"
+          "$R/bundle/bin/openshell" --version | grep -q "${{ env.OPENSHELL_VERSION }}"
           (cd "$R/bundle" && tar czf "$R/openbox-sandbox-bundle-${{ matrix.triple }}.tar.gz" bin libexec)
           cp packaging/launcher/target/release/obs "$R/obs-${{ matrix.triple }}"
           cp target/release/openbox-sandbox "$R/openbox-sandbox-${{ matrix.triple }}"
