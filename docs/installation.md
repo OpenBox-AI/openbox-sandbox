@@ -1,6 +1,14 @@
-# Installation details
+# Linux sandbox-service installation details
 
-The supported installation command is always:
+This document describes the deployment-specific Linux payload for the root
+`openbox-sandbox` mTLS service. It does not describe the cross-platform `obs`
+launcher artifacts, whose retained download names are
+`openbox-sandbox-<platform>`; see
+[`../packaging/launcher/README.md`](../packaging/launcher/README.md). The two
+release tracks are not interchangeable, and OpenShell remains an external
+runtime dependency in both.
+
+The supported service installation command is always:
 
 ```sh
 ./install.sh
@@ -10,9 +18,12 @@ The installer starts as the current non-root user, determines the installation m
 
 ## Automatic mode selection
 
-### Verified release mode
+### Verified service-release mode
 
-If an adjacent `release/` directory exists, the installer treats it as a published release payload. It performs no source build and never substitutes newer artifacts.
+If an adjacent `release/` directory exists, the installer treats it as a
+published, deployment-specific sandbox-service payload. It performs no source
+build and never substitutes newer artifacts. This layout is not the GitHub
+launcher-asset directory.
 
 The bundle layout is:
 

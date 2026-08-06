@@ -1,5 +1,12 @@
 /target/
 /.openbox-local/
+/.dogfood/
+/openbox-sandbox-bundle/
+/packaging/launcher/openbox-sandbox-bundle/
+/packaging/launcher/openbox-sandbox-darwin-arm64
+/packaging/launcher/openbox-sandbox-linux-amd64
+/packaging/launcher/openbox-sandbox-linux-arm64
+/packaging/launcher/sbom-output/
 .DS_Store
 *.log
 *.pid

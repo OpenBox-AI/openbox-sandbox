@@ -1,262 +1,123 @@
-# OpenBox Sandbox — macOS distribution as thin client
+# `obs` cross-platform launcher release design
 
-## Architecture
+This filename is retained for existing links. The implemented scope now covers
+macOS and Linux launcher artifacts; it is not the Linux sandbox-service
+installer design.
 
-OpenBox Sandbox is a **thin communication / service client**, not a
-self-contained runtime. It connects to an operator-installed OpenShell gateway
-over mTLS:
+## Module seam
 
-```
-OpenBox Sandbox → mTLS/API → operator-installed OpenShell gateway → driver/runtime
-```
-
-OpenBox Sandbox does NOT embed, extract, or ship:
-- The OpenShell gateway, CLI, or VM driver
-- Any VM runtime assets (libkrun, guest kernel, etc.)
-- Sandbox OCI images
-- Hypervisor entitlements
-
-All of those are the **environment owner's responsibility** to install and
-maintain. This removes the OpenBox packaging responsibility for the OpenShell
-VM driver and avoids maintaining a self-extracting universal macOS binary.
-
-## Why thin client
-
-- OpenBox Sandbox does not create microVMs directly — the OpenShell gateway does.
-- Therefore OpenBox Sandbox needs no `com.apple.security.hypervisor` entitlement.
-- No embedded helper extraction, no nested executable signing, no runtime re-signing.
-- Removes the huge payload from the OpenBox binary distribution.
-- OpenBox Sandbox connects only to a **configured / known** OpenShell gateway.
-
-## macOS distribution posture
-
-- First release does **not** require Apple Developer ID.
-- A downloaded OpenBox Sandbox executable may receive one Gatekeeper "unverified
-  developer" approval after internet download.
-- Once approved, it runs normally.
-- Do not attempt to bypass Gatekeeper or silently accept untrusted replacement binaries.
-- Developer ID + notarization can be added later for smooth public distribution.
-
-## Dependency pinning
-
-OpenShell is pinned to an exact tested release (currently **0.0.85**). This is
-fail-closed: a version drift can break the sandbox-name / hook contracts.
-
-### Startup version guard — `src/pin.rs`
-
-The launcher runs `<gateway> --version` and **refuses to run** unless it reports
-`REQUIRED_VERSION`. Override for local testing with
-`OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION`.
-
-Operator-pinned binary sha256 (opt-in): set `OPENBOX_SANDBOX_GATEWAY_SHA256` /
-`OPENBOX_SANDBOX_DRIVER_SHA256` to pin exact on-disk bytes (air-gapped deploys).
-`--skip-hash` / `OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH=1` disables even that.
-
-### Operator installation tooling — `scripts/fetch-openshell-deps.sh`
-
-The existing fetcher is **operator installation tooling**, not part of an OpenBox
-payload. It:
-
-- Detects macOS/Linux architecture.
-- Downloads OpenShell `0.0.85` release tarballs.
-- Parses NVIDIA published checksum files.
-- Verifies each tarball before extraction.
-- Emits a ready-to-use bundle directory.
-
-```
-./packaging/launcher/scripts/fetch-openshell-deps.sh   # → ./openbox-sandbox-bundle
-OPENBOX_BUNDLE_DIR=./openbox-sandbox-bundle cargo run -- --dry-run
+```text
+client → mTLS → openbox-sandbox service → external OpenShell gateway → runtime
 ```
 
-Homebrew can remain an optional install path (`brew install openshell`), but
-launcher compatibility requires the **exact** pinned version, not "latest".
+- `openbox-sandbox` is the root production-intent mTLS sandbox service.
+- `obs` is the dependency-free operator/developer launcher.
+- OpenShell is external. It is not linked, embedded, or shipped inside `obs`.
 
-A pin bump is **one edit in two files**: `REQUIRED_VERSION` in `src/pin.rs` and
-`OPENSHELL_VERSION` in the fetch script.
+The launcher may locate and start a local external gateway. Source-checkout
+`provision`, `status`, `verify`, and `uninstall` commands support dogfood; they
+do not turn the launcher into the service.
 
-## `--verify-runtime` flag
+## Two release tracks
 
-Reports the runtime environment without starting anything:
+### Cross-platform launcher
 
-- Configured gateway endpoint.
-- Local gateway detection and version.
-- mTLS readiness.
-- Compatibility result (pass / fail against pinned version).
-- VM driver presence (informational).
-- CONSTRAIN fail-closed posture reminder.
+`.github/workflows/build.yml` builds `packaging/launcher` and preserves the
+existing public artifact names:
 
-No secrets are exposed.
+- `openbox-sandbox-darwin-arm64`
+- `openbox-sandbox-linux-amd64`
+- `openbox-sandbox-linux-arm64`
 
-## Fail-closed behavior
+Each file is the `obs` executable. These are portable launcher downloads and do
+not contain OpenShell or the root service installer payload.
 
-If the gateway is unavailable, incompatible, unauthenticated, or sandbox
-execution fails:
+### Linux sandbox-service deployment
 
-- The governed `CONSTRAIN` activity **fails**.
-- There is **no host fallback**.
-- This is the same behavior as the Core governance layer: CONSTRAIN is
-  fail-closed by design.
+The root [`../../install.sh`](../../install.sh) consumes a deployment-specific
+`release/` directory containing the `openbox-sandbox` service binary,
+configuration, mTLS material, systemd unit context, checksums, and an approved
+OpenShell package/source attestation. Its exact layout and rollback behavior are
+documented in [`../../docs/installation.md`](../../docs/installation.md).
 
-## Evidence telemetry (unchanged)
+The two release directories are not interchangeable.
 
-- `ActivityStarted` hook-attached flat sandbox span.
-- Canonical `hook_type=sandbox_execution`.
-- Core derives/stores `span_type=sandbox_execution`.
-- Lifecycle `ActivityCompleted` remains span-free.
+## Compatibility pins
 
-## SBOM / provenance
+The launcher artifact track verifies OpenShell release version `0.0.85` and
+optional operator-provided binary hashes. The fetch script verifies the upstream
+release tarball checksums before extraction.
 
-### What the SBOM covers
+The root service adapter has a separate, exact source protocol pin:
 
-The SBOM is generated from the **launcher binary** (thin client) using
-[Syft](https://github.com/anchore/syft). It covers:
-
-- The launcher crate itself (proprietary, not published)
-- Rust standard library
-- Minimal transitive dependencies
-
-The launcher has very few dependencies — it locates and pins externally-installed
-artifacts, it does not bundle them.
-
-### What is NOT in the SBOM
-
-OpenShell is an **external runtime dependency** — not embedded in the binary.
-It is documented separately:
-
-- Required version: `0.0.85`
-- Source/release URL: `https://github.com/NVIDIA/OpenShell`
-- Installation verification: `scripts/fetch-openshell-deps.sh` verifies tarball
-  SHA-256 against NVIDIA's published checksums
-- Version pin enforced at startup by `src/pin.rs`
-
-### Dual SBOM format
-
-Matching the `krnl-labs/kontrol-plane` pattern, each release produces:
-
-| Format | File | Purpose |
-|--------|------|---------|
-| SPDX 2.3 | `<binary>.spdx.json` | Primary — machine-readable, standard |
-| CycloneDX | `<binary>.cyclonedx.json` | Secondary — compatibility with CycloneDX tools |
-
-### SBOM signing (cosign keyless)
-
-Matching the `OpenBox-AI/common-pipeline` pattern, each SBOM is signed using
-[cosign keyless signing](https://docs.sigstore.dev/cosign/key_management/signing_with_self-managed_keys/) with GitHub OIDC:
-
-```
-cosign sign-blob \
-  --bundle <binary>.spdx.json.sbom.bundle.json \
-  --yes \
-  <binary>.spdx.json
+```text
+f169084923503a02a94425857b938de2841cab0c
 ```
 
-No private keys are managed. The signing identity is the GitHub Actions workflow:
+The 0.0.85 release predates that protocol. `obs provision` therefore fails
+closed unless the gateway, CLI, and VM driver report the exact `f1690849`
+source marker. Its error gives source-build commands and the
+`OPENSHELL_BIN_OVERRIDE` path needed to select those binaries. There is no
+compatibility bypass in the dogfood provisioning path.
 
-```
-https://github.com/OpenBox-AI/openbox-sandbox/.github/workflows/build.yml@refs/tags/v*
-```
+## Honest verification levels
 
-### Release asset manifest
+`obs --verify-runtime` is offline/local compatibility checking only. It verifies
+resolved artifacts, their exact launcher release version, and configured
+operator hashes. `obs --verify-runtime --skip-hash` is the explicit development
+form that skips operator hashes while retaining version checks. Neither form
+connects to a gateway, inspects mTLS, boots a VM, or executes a command.
 
-Each release includes an `asset-manifest.json` (matching the
-`openbox-sandbox-poc` evidence pattern) with SHA-256 tracked fields:
+After `obs provision`, `obs verify` first requires the recorded root service
+binary SHA-256 to match the provisioned adapter identity, then runs the opt-in
+root test `live_service_create_exec_delete`. That is the live proof over mTLS:
+create → ready → exec → delete → terminal absence. A normal `cargo test` run is
+not equivalent because the live test skips when no endpoint environment exists.
 
-```json
-{
-  "schema_version": 1,
-  "product": "openbox-sandbox",
-  "version": "v0.1.0",
-  "supply_chain": {
-    "sbom": { "format": "SPDX-2.3", "package_count": 12, "sha256": "..." },
-    "signature": { "method": "cosign-keyless-oidc", "verified": true }
-  },
-  "binaries": {
-    "openbox-sandbox-darwin-arm64": { "sha256": "...", "sbom_sha256": "..." },
-    "openbox-sandbox-linux-amd64": { "sha256": "...", "sbom_sha256": "..." },
-    "openbox-sandbox-linux-arm64": { "sha256": "...", "sbom_sha256": "..." }
-  }
-}
-```
+## SBOM and provenance
 
-### CI pipeline
+The launcher `Cargo.toml` has no third-party dependencies. Syft scans the final
+standalone binary, so the generated document generally describes the launcher
+file and discoverable binary metadata; it does not claim a dependency graph
+that does not exist. The Rust standard library is statically incorporated by the
+Rust build but is not necessarily represented by Syft as a separate package.
+External OpenShell artifacts are outside this SBOM.
 
-The GitHub Actions workflow (`.github/workflows/build.yml`) runs on every push
-to `main` and on PRs:
+The existing workflow emits two formats per launcher artifact:
 
-1. **cargo-deny** — license, advisory, and source audit
-2. **Build matrix** — macOS aarch64, Linux amd64, Linux arm64 (cross-compiled)
-3. **SBOM generation** — syft dual-format (SPDX + CycloneDX) per binary
-4. **SBOM signing** — cosign keyless with GitHub OIDC
-5. **Security scan** — Trivy filesystem scan + credential scan
-6. **Manifest** (tag pushes) — SHA256SUMS + asset-manifest.json + GitHub Release
-7. **Verify** (tag pushes) — download, checksum, SBOM compare, smoke test
+| Format | File |
+|---|---|
+| SPDX 2.3 | `<artifact>.spdx.json` |
+| CycloneDX | `<artifact>.cyclonedx.json` |
 
-### Operator verification
+The SPDX document is signed with cosign keyless GitHub OIDC and uploaded with
+`<artifact>.spdx.json.sbom.bundle.json`. `SHA256SUMS` covers the launcher and
+release sidecars. `asset-manifest.json` records binary, SPDX, and cosign-bundle
+hashes.
 
-```bash
-# Download from GitHub Release
-curl -LO https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1.0/SHA256SUMS
-curl -LO https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1.0/openbox-sandbox-darwin-arm64
+Local generation requires a preinstalled Syft v1.20.0 (or explicit
+`SYFT_BIN`); the generator never installs tools or escalates privileges:
 
-# Verify checksum
-shasum -a 256 -c SHA256SUMS
-
-# Verify cosign signature (optional)
-cosign verify-blob \
-  --bundle openbox-sandbox-darwin-arm64.spdx.json.sbom.bundle.json \
-  --certificate-identity-regexp "https://github.com/OpenBox-AI/openbox-sandbox/.github/workflows/build.yml@refs/tags/.*" \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  openbox-sandbox-darwin-arm64.spdx.json
-
-# Inspect SBOM
-syft openbox-sandbox-darwin-arm64 -o spdx-json=local-check.spdx.json
-diff local-check.spdx.json openbox-sandbox-darwin-arm64.spdx.json
-
-# Run
-./openbox-sandbox-darwin-arm64 --verify-runtime
+```sh
+packaging/launcher/scripts/generate-sbom.sh \
+  packaging/launcher/target/release/obs packaging/launcher/sbom-output
 ```
 
-### Why no code signing (yet)
+Local verification of downloaded assets:
 
-- First release does not require Apple Developer ID.
-- A downloaded binary may receive one Gatekeeper "unverified developer" approval.
-- Developer ID + notarization can be added later for smooth public distribution.
-- The SHA256SUMS manifest + cosign keyless signature provide verification without
-  code signing.
+```sh
+packaging/launcher/scripts/verify-release.sh /path/to/launcher-release
+```
 
-## Local deployment model
+The verifier checks the checksum manifest and requires both SBOM formats. When
+cosign is installed, it verifies the SPDX bundle against the tagged
+`build.yml` GitHub Actions identity. These checks establish artifact integrity
+and provenance, not runtime behavior; use `obs verify` for the live proof.
 
-For the "gateway on this host" deployment:
+## macOS posture
 
-1. Operator fetches the pinned OpenShell release (fetch script or Homebrew).
-2. OpenBox Sandbox launcher detects the local gateway via `bundle.rs`.
-3. Version pin is verified against the local binary.
-4. Launcher execs the gateway in the foreground.
-
-## Remote-client deployment model
-
-For connecting to a remote gateway:
-
-1. Configure the gateway endpoint (env or config file).
-2. `--verify-runtime` validates compatibility.
-3. OpenBox Sandbox connects over mTLS.
-4. No local OpenShell installation required.
-
-## Platform matrix
-
-| | macOS | Linux native | WSL2 |
-|---|---|---|---|
-| Preferred driver | `vm` (libkrun + Hypervisor.framework) | `podman`/`docker` (strict Landlock if kernel has it) | `podman`/`docker` (best-effort Landlock) |
-| Entitlement / signing | OpenShell handles hypervisor entitlement; OpenBox has none | none | none |
-| Landlock | best_effort (guest kernel lacks it) | strict on kernels with `CONFIG_SECURITY_LANDLOCK` | best_effort |
-| Fetcher triple | `*-apple-darwin` | `*-unknown-linux-gnu` | same as Linux |
-
-## Definition of done
-
-Operator installs OpenShell, then:
-1. Download the OpenBox Sandbox launcher binary.
-2. Approve Gatekeeper once (macOS).
-3. Run `openbox-sandbox --verify-runtime` — reports compatible.
-4. Run `openbox-sandbox` — connects to the gateway, CONSTRAIN works.
-5. `CONSTRAIN` sandbox execution runs in a real microVM (or container).
-6. No host fallback on sandbox failure.
+OpenShell's VM driver, not `obs` or the root service, needs the hypervisor
+entitlement. The dogfood provisioning script ad-hoc signs a source-built driver
+with that entitlement. Public Developer ID signing/notarization remains a
+separate distribution decision; checksum and keyless SBOM verification do not
+replace Gatekeeper policy.

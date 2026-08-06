@@ -6,11 +6,21 @@ OpenBox Sandbox is the standalone, production-intent, framework-neutral sandbox 
 
 The host that runs OpenShell and this service must run on a Linux kernel, and Linux is the preferred and supported platform for production. Isolation is enforced by Linux kernel features — Landlock, namespaces, cgroups, and seccomp — that have no macOS or Windows equivalent, and the runtime installs as a rootless-Podman, systemd-managed deployment. The sandboxes it runs are Podman containers created on that Linux host. macOS and Windows cannot host it natively; use a Linux VM to provide the kernel, which is also the recommended path for local development on those hosts.
 
-## Repository boundary
+## Repository and binary boundary
 
 Integration PoC/showcase material belongs exclusively to the separate `OpenBox-AI/openbox-sandbox-poc` repository and is not a dependency.
 
-## Install
+This repository has three deliberately separate modules:
+
+- root `openbox-sandbox`: the production-intent mTLS sandbox service;
+- `packaging/launcher` / `obs`: a dependency-free operator/developer launcher;
+- OpenShell: the external gateway/driver runtime, pinned but not maintained here.
+
+The existing cross-platform download names `openbox-sandbox-<platform>` contain
+the `obs` launcher for compatibility. They are not the Linux service installer
+payload. See [`packaging/launcher/README.md`](packaging/launcher/README.md).
+
+## Linux sandbox-service install
 
 From the repository or an OpenBox release bundle, run:
 
@@ -38,7 +48,10 @@ Useful options:
 --local                     Force local-development mode
 ```
 
-For release layout, security checks, generated local credentials, rollback behavior, and automation options, see [Installation details](docs/installation.md).
+For the deployment-specific Linux service payload layout, security checks,
+generated local credentials, rollback behavior, and automation options, see
+[Installation details](docs/installation.md). This `release/` payload is distinct
+from cross-platform `obs` launcher release assets.
 
 ## What it does
 
@@ -81,6 +94,14 @@ cargo test --all-features
 cargo test
 cargo doc --all-features --no-deps
 cargo deny check
-bash -n install.sh scripts/check-language.sh scripts/local-bootstrap.sh scripts/test-check-language.sh
-shellcheck -x install.sh scripts/check-language.sh scripts/local-bootstrap.sh scripts/test-check-language.sh
+bash -n install.sh scripts/check-language.sh scripts/local-bootstrap.sh scripts/test-check-language.sh \
+  packaging/launcher/scripts/*.sh
+shellcheck -x install.sh scripts/check-language.sh scripts/local-bootstrap.sh scripts/test-check-language.sh \
+  packaging/launcher/scripts/*.sh
+cargo fmt --manifest-path packaging/launcher/Cargo.toml -- --check
+cargo clippy --manifest-path packaging/launcher/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path packaging/launcher/Cargo.toml
+packaging/launcher/scripts/test-provision-local-sandbox.sh
+packaging/launcher/scripts/test-generate-sbom.sh
+packaging/launcher/scripts/test-verify-release.sh
 ```

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Scan for credential files that must not be included in releases.
-# Matches the pattern from openbox-sandbox-poc/package-gate3-service.sh.
+# Applies the repository's release-candidate credential gate pattern.
 #
 # Usage: ./scan-credentials.sh <directory>
 #
