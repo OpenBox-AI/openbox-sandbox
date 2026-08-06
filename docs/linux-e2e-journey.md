@@ -1684,3 +1684,39 @@ gate always wanted) → uninstall clean.
 **CI runs are now fast:** only our three crates compile (cached); the
 OpenShell compile is gone entirely. The version is locked; nothing about
 OpenShell changes unless the lock is bumped deliberately.
+
+### Part 15 — AUDIT (2026-08-06)
+
+**Repository**
+- Working tree clean; local HEAD == remote main (9da63d4).
+- 36 commits, single author (salamisandwich77), no secrets in tracked files
+  (only gitignored .dogfood dev keys, untracked).
+
+**Release v0.1.0**
+- 41 assets, formal name, not draft/prerelease, published 16:47Z.
+- Integrity: sha256 verified (only bundle-subdir entries live inside the
+  verified tarball).
+- Provenance: 9 binaries x (SPDX + CycloneDX + keyless cosign bundle) =
+  COMPLETE; cosign verify-blob -> "Verified OK" (OIDC identity = workflow).
+- Binaries: OpenShell 0.0.88 on all three; driver 39.4 MB (supervisor
+  embedded, gate >30 MB); obs embedded scripts present; glibc-clean on AL2023.
+
+**Credentials/host**
+- gh token (workflow scope) 0600; cosign key 0600; cosign password 0600.
+- 0 leftover runtime processes; build trees + swap expected (dev host).
+
+**Findings**
+- HIGH: injected test SSH key still in ec2-user authorized_keys; private key
+  at /tmp/obs-transfer-key on the Mac -> REMOVED in this audit.
+- MEDIUM: test user obsclient still present -> REMOVED.
+- MEDIUM: /tmp litter (210 host / 61 Mac test files) -> CLEANED.
+- MEDIUM (open): CI supply chain pins: dtolnay/rust-toolchain@master,
+  actions/*@v4 major tags, amazonlinux:2023 container (floating tag) -> pin
+  to SHAs/digests for hardened posture.
+- LOW (open): dev-host cosign keypair is redundant (CI uses keyless OIDC);
+  consider removing it.
+- LOW (open): hosted-bin workflow auto-runs on push; consider tag/manual
+  gating for production publishes.
+- NOTE: legacy build.yml launcher-release track still publishes per-push;
+  separate from hosted-bin; confirm intent.
+- NOTE: cargo-deny + trivy gates green on recent runs.
