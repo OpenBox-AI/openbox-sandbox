@@ -110,8 +110,10 @@ embedded) and assembled with our binaries into GitHub release assets.
 Consumers never install a toolchain, never build, and never need the source
 tree:
 
-1. `curl` the release assets (stable URLs once public):
-   `https://github.com/OpenBox-AI/openbox-sandbox/releases/download/<tag>/<asset>`
+1. `curl` the release assets (stable URLs once public; versioned tags like
+   `v0.1.0`, and `releases/latest/download/` always points at the current
+   release):
+   `https://github.com/OpenBox-AI/openbox-sandbox/releases/latest/download/<asset>`
    — obs (single binary with the operational scripts EMBEDDED), the
    `openbox-sandbox` service, the prebuilt verify harness, the OpenShell
    bundle tarball, the sandbox policy, `SHA256SUMS`, and Syft SBOMs.

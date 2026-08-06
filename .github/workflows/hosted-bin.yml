@@ -212,15 +212,19 @@ jobs:
           ```
 
           Consumption: obs provision with OPENBOX_OPENSHELL_BUNDLE_URL (see packaging/launcher/README.md).'
+          # One-time cleanup of the legacy floating tag, if it still exists.
           gh release delete hosted-bin --yes --cleanup-tag 2>/dev/null || true
+          # Proper versioned tag; replace-on-republish keeps a single slot.
+          TAG="v${{ env.RELEASE_VERSION }}"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
           FILES=$(find . -maxdepth 1 -type f | sort)
-          gh release create hosted-bin $FILES \
+          gh release create "$TAG" $FILES \
             --repo "$GITHUB_REPOSITORY" \
             --title "OpenBox Sandbox ${{ env.RELEASE_VERSION }}" \
             --notes "$NOTES" \
             >/dev/null
-          COUNT=$(gh release view hosted-bin --repo "$GITHUB_REPOSITORY" --json assets -q '.assets|length')
-          echo "published $COUNT assets"
+          COUNT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets|length')
+          echo "published $COUNT assets as $TAG"
           test "$COUNT" -gt 0
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
