@@ -55,6 +55,84 @@ TRIPLE="$(detect_triple)"
 # gateway and driver-vm use -gnu. Allow overriding the suffix per artifact.
 musl_triple="${TRIPLE%-gnu}-musl"
 
+# ── Hosted-bin mode: fetch a prebuilt pinned bundle ─────────────────────────
+# When OPENBOX_OPENSHELL_BUNDLE_URL is set, fetch the operator-hosted bundle
+# (openbox-sandbox-bundle-<TRIPLE>.tar.gz + SHA256SUMS served from the
+# "hosted bin" release server) instead of GitHub release tarballs. This is
+# the toolchain-free flow: the tarball contains the source-built, pin-verified,
+# supervisor-embedded binaries (bin/openshell, bin/openshell-gateway,
+# libexec/openshell-driver-vm).
+BUNDLE_URL="${OPENBOX_OPENSHELL_BUNDLE_URL:-}"
+if [[ -n "$BUNDLE_URL" ]]; then
+  # Private-release support: when GH_TOKEN is set (e.g. from `gh auth token`),
+  # requests carry the bearer token; public releases need no auth. For
+  # github.com bases the fetch goes through the API's octet-stream endpoint:
+  # plain curl loses the Authorization header on the cross-host redirect and
+  # the direct /releases/download/ URL now 404s even with a valid token.
+  AUTH_HEADER=()
+  if [[ -n "${GH_TOKEN:-}" ]]; then
+    AUTH_HEADER=(-H "Authorization: Bearer $GH_TOKEN")
+  fi
+  BUNDLE_ARCHIVE="openbox-sandbox-bundle-${TRIPLE}.tar.gz"
+  work="$(mktemp -d)"
+  trap 'rm -rf "${work}"' EXIT
+  echo "==> fetching hosted bundle ${BUNDLE_URL}/${BUNDLE_ARCHIVE}"
+  mkdir -p "${OUT}/bin" "${OUT}/libexec"
+  fetch_asset() {
+    local name="$1" out="$2" id=""
+    if [[ "$BUNDLE_URL" == https://github.com/* || "$BUNDLE_URL" == http://github.com/* ]] \
+      && command -v python3 >/dev/null 2>&1; then
+      local rel owner rest repo tag
+      rel="${BUNDLE_URL#https://github.com/}"
+      rel="${rel#http://github.com/}"
+      owner="${rel%%/*}"
+      rest="${rel#*/}"
+      repo="${rest%%/*}"
+      tag="${rest#*/}"
+      tag="${tag#releases/download/}"
+      tag="${tag%/}"
+      id="$(curl -fsSL "${AUTH_HEADER[@]}" \
+        "https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}" \
+        | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((a['id'] for a in d['assets'] if a['name']=='${name}'), ''))" 2>/dev/null || true)"
+      if [[ -n "$id" ]]; then
+        curl -fsSL "${AUTH_HEADER[@]}" -H "Accept: application/octet-stream" \
+          "https://api.github.com/repos/${owner}/${repo}/releases/assets/${id}" -o "$out"
+        return 0
+      fi
+    fi
+    # Fallback: plain release-asset URL (public repos, or local hosted server).
+    curl -fsSL "${AUTH_HEADER[@]}" "${BUNDLE_URL}/${name}" -o "$out"
+  }
+  fetch_asset "$BUNDLE_ARCHIVE" "${work}/${BUNDLE_ARCHIVE}"
+  fetch_asset "SHA256SUMS" "${work}/SHA256SUMS"
+  expected="$(awk -v a="$BUNDLE_ARCHIVE" '$2==a {print $1}' "${work}/SHA256SUMS")"
+  [[ -n "$expected" ]] || { echo "error: SHA256SUMS missing entry for ${BUNDLE_ARCHIVE}" >&2; exit 1; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    got="$(sha256sum "${work}/${BUNDLE_ARCHIVE}" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    got="$(shasum -a 256 "${work}/${BUNDLE_ARCHIVE}" | awk '{print $1}')"
+  else
+    echo "error: neither sha256sum nor shasum is available" >&2; exit 1
+  fi
+  if [[ "$got" != "$expected" ]]; then
+    echo "error: sha256 mismatch for ${BUNDLE_ARCHIVE}" >&2
+    echo "  expected ${expected}" >&2
+    echo "  found    ${got}" >&2
+    exit 1
+  fi
+  echo "  sha256 verified (${expected:0:12}…)"
+  tar -xzf "${work}/${BUNDLE_ARCHIVE}" -C "${work}"
+  install -d "${OUT}/bin" "${OUT}/libexec"
+  install -m 0755 "${work}/bin/openshell" "${OUT}/bin/openshell"
+  install -m 0755 "${work}/bin/openshell-gateway" "${OUT}/bin/openshell-gateway"
+  install -m 0755 "${work}/libexec/openshell-driver-vm" "${OUT}/libexec/openshell-driver-vm"
+  echo "==> bundle ready: ${OUT}"
+  echo "    gateway : ${OUT}/bin/openshell-gateway"
+  echo "    driver  : ${OUT}/libexec/openshell-driver-vm"
+  echo "    cli     : ${OUT}/bin/openshell"
+  exit 0
+fi
+
 echo "==> fetching OpenShell v${OPENSHELL_VERSION} for ${TRIPLE} into ${OUT}"
 
 mkdir -p "${OUT}/bin" "${OUT}/libexec"
