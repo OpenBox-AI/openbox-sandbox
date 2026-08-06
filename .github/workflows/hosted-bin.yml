@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x packaging/launcher/scripts/scan-credentials.sh
-          packaging/launcher/scripts/scan-credentials.sh packaging/launcher src
+          packaging/launcher/scripts/scan-credentials.sh .
 
   build:
     name: build ${{ matrix.triple }}
