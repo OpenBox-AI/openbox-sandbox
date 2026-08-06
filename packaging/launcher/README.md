@@ -1,62 +1,138 @@
-# openbox-sandbox single-binary launcher
+# `obs` cross-platform launcher
 
-One launcher binary per OS/arch. It detects the available OpenShell **compute
-driver**, resolves the real gateway/CLI/policy artifacts, and starts the
-OpenShell gateway. Override the driver with `--driver`; preview without starting
-anything with `--dry-run`.
+`obs` is the dependency-free operator/developer launcher in
+`packaging/launcher`. It is not the production sandbox service:
 
-## Drivers
+- root `openbox-sandbox` binary: mTLS sandbox service and durable lifecycle owner;
+- `obs`: artifact discovery, external gateway launch, and source-checkout dogfood commands;
+- OpenShell: external gateway/driver runtime, never embedded in either artifact.
 
-| Driver (`--driver`) | Needs | Notes |
-|---|---|---|
-| `podman` | Podman | Rootless container; preferred container path. |
-| `docker` | Docker | Container with a root daemon (bigger privileged surface). |
-| `kubernetes` | `kubectl` + a cluster | Sandboxes delegated to the cluster. |
-| `vm` | A hypervisor only | **libkrun microVM** — KVM on Linux, Hypervisor.framework on macOS. Self-contained: embeds its runtime + guest kernel, needs **no container runtime**. |
+The launcher release keeps the existing download names for compatibility:
 
-So the only hard dependency is **one of**: Podman, Docker, a Kubernetes cluster, or a
-hypervisor (for the microVM driver).
+- `openbox-sandbox-darwin-arm64`
+- `openbox-sandbox-linux-amd64`
+- `openbox-sandbox-linux-arm64`
 
-## Platform behavior
+Those files contain the `obs` executable. This cross-platform launcher track is
+distinct from the deployment-specific Linux service installer payload described
+in [`../../docs/installation.md`](../../docs/installation.md).
 
-| Platform | Result |
-|---|---|
-| Linux | Any driver. Container path uses Landlock (**strict**) or **best_effort** when the kernel lacks it. microVM needs `/dev/kvm`. |
-| macOS | The **microVM (`vm`) driver is the real target** (Apple Hypervisor.framework, own guest kernel). Container drivers only run **degraded** inside the runtime's VM and require `--allow-degraded`. |
-| Windows | Unsupported directly; run inside **WSL2**. |
-
-The container-degraded tier maps to the `allow_degraded_landlock` service flag and
-`policy-deny-network-dev.yaml` (`best_effort`); namespaces, cgroups, and seccomp still
-apply, only the Landlock layer is absent.
-
-## Artifact resolution
-
-For each artifact (`openshell-gateway`, `openshell`, `policy-deny-network.yaml`,
-`policy-deny-network-dev.yaml`) the launcher probes, in order:
-
-1. `$OPENBOX_BUNDLE_DIR/<name>` — an operator-provided bundle directory.
-2. A platform install prefix (`/opt/homebrew/opt/openshell`, `/usr/local`, ...).
-3. `PATH` (for the two binaries).
-4. The in-repo build/deploy tree, so `cargo run` works from a source checkout.
-
-A future self-extracting build can populate `$OPENBOX_BUNDLE_DIR` from an
-appended payload before resolution; nothing else changes. See `src/bundle.rs`.
-
-## Build / run
+## Build and basic use
 
 ```sh
 cd packaging/launcher
-cargo run -- --dry-run             # detect, resolve artifacts, print the plan
-cargo run -- --driver vm           # start the OpenShell gateway with the vm driver
-cargo run -- --driver podman --allow-degraded
+cargo build --release
 cargo run -- --help
+cargo run -- --dry-run
+cargo run -- --driver vm
 ```
 
-`--dry-run` resolves everything and prints the plan without starting a process.
-Without it, the launcher execs the resolved gateway in the foreground and exits
-with the gateway's status.
+The launcher resolves an operator-provided OpenShell installation from
+`OPENBOX_BUNDLE_DIR`, well-known prefixes, or `PATH`. `obs setup` can fetch the
+launcher-compatible OpenShell 0.0.85 release bundle. OpenShell remains external.
 
-Driver detection/selection, posture, artifact resolution, and gateway launch
-pass `clippy -D warnings` + `fmt`. A single binary cannot bundle the Linux
-kernel or a container runtime; the microVM driver avoids that dependency by
-using libkrun.
+`obs setup` no longer exists: bundle acquisition + verification is part of
+`obs provision` (auto-fetch via `OPENBOX_OPENSHELL_BUNDLE_URL`). The external
+gateway is managed as a per-user process by `obs provision`.
+
+`obs --verify-runtime` verifies only local artifact presence, exact release
+version, and any operator-supplied hashes. For development, append
+`--skip-hash` to skip those operator hashes while retaining version checks. It
+does **not** connect to a gateway, validate mTLS, create a sandbox, or prove
+execution.
+
+## Drivers
+
+| Driver | Requirement | Posture |
+|---|---|---|
+| `podman` | Podman | Preferred Linux container path. |
+| `docker` | Docker | Container path with a root daemon. |
+| `kubernetes` | `kubectl` and a cluster | Isolation delegated to the cluster. |
+| `vm` | KVM or Hypervisor.framework | OpenShell libkrun microVM path. |
+
+macOS prefers `vm`; container drivers there require `--allow-degraded`. Windows
+is unsupported directly; use WSL2.
+
+## Source-checkout dogfood proof
+
+The root service protocol is pinned to OpenShell source commit
+`f169084923503a02a94425857b938de2841cab0c` (`f1690849`). That pin is newer than
+the 0.0.85 launcher bundle. To prevent a false proof, `obs provision` rejects
+0.0.85 and requires all three source-built OpenShell binaries to report the
+exact `f1690849` compatibility marker.
+
+Build that exact OpenShell revision as directed by the provisioning error, then:
+
+```sh
+cargo build --release --locked --bin openbox-sandbox
+cargo build --release --manifest-path packaging/launcher/Cargo.toml
+OPENSHELL_BIN_OVERRIDE=/path/to/openshell-target/release \
+  packaging/launcher/target/release/obs provision
+packaging/launcher/target/release/obs verify
+packaging/launcher/target/release/obs uninstall
+```
+
+`obs verify` first hashes the exact root service binary recorded in `agent.env`
+and requires it to match the provisioned adapter identity. It then runs the
+actual live proof: client → mTLS root service → external OpenShell gateway →
+create → ready → exec → delete → terminal absence. It needs a provisioned source
+checkout and a working host VM/OpenShell runtime. Teardown signals only
+PID-file processes whose command identity matches the wizard; unrelated port
+listeners and VM drivers are reported and left untouched.
+
+## Release and SBOM verification
+
+The launcher crate has no third-party Cargo dependencies. Syft scans each final
+binary as built; it commonly reports the launcher as a file component rather
+than reconstructing a Cargo dependency graph. OpenShell is not included because
+it is not embedded.
+
+Each launcher artifact has:
+
+- SPDX 2.3: `<artifact>.spdx.json`
+- CycloneDX: `<artifact>.cyclonedx.json`
+- keyless cosign bundle for the SPDX file:
+  `<artifact>.spdx.json.sbom.bundle.json`
+
+Generate both local formats with `scripts/generate-sbom.sh`. It requires a
+preinstalled Syft v1.20.0 (or an explicit `SYFT_BIN`) and never downloads tools
+or invokes `sudo`. Verify a downloaded release directory with
+`scripts/verify-release.sh`; checksums and both SBOM files are required, and an
+available `cosign` installation verifies the SPDX bundle.
+See [`SINGLE_BIN_MACOS_PLAN.md`](SINGLE_BIN_MACOS_PLAN.md) for the retained
+release design record.
+
+## Hosted-bin (toolchain-free) flow
+
+Binaries are built once on a build host (source-built OpenShell at the root
+protocol pin `f1690849`, VM driver with the embedded guest supervisor) and
+published as GitHub release assets. Consumers never install a toolchain,
+never build, and never need the source tree:
+
+1. `curl` the release assets (stable URLs once public):
+   `https://github.com/OpenBox-AI/openbox-sandbox/releases/download/<tag>/<asset>`
+   — obs (single binary with the operational scripts EMBEDDED), the
+   `openbox-sandbox` service, the prebuilt verify harness, the OpenShell
+   bundle tarball, the sandbox policy, `SHA256SUMS`, and Syft SBOMs.
+2. Verify checksums (`sha256sum -c SHA256SUMS`) and scan with Syft v1.20.0.
+3. `obs provision` with `OPENBOX_OPENSHELL_BUNDLE_URL=<release base>`
+   (private repos additionally need `GH_TOKEN`), `OPENBOX_SANDBOX_BIN`
+   (absolute), and `OPENBOX_POLICY_FILE` (absolute — the policy is a release
+   asset, not a repo file) auto-fetches + verifies the bundle, starts the
+   stack, and warms the VM driver image cache by default (one create→ready→
+   delete cycle; `OPENBOX_WARM_CACHE=0` skips).
+5. `obs verify` with `OPENBOX_VERIFY_BIN=<prebuilt-harness>` runs the live
+   lifecycle proof without cargo.
+6. `obs uninstall` tears the stack down cleanly. Pass the **same**
+   `OPENBOX_SANDBOX_BIN`/`OPENSHELL_BUNDLE_DIR`/`OPENBOX_POLICY_FILE` env used
+   for provision: the wizard's teardown safety check compares the running
+   service's command line against the resolved binary path and refuses to
+   signal mismatches.
+
+Publish a release dir (checksums → replace floating tag `hosted-bin` →
+upload assets) with `scripts/publish-release.sh`; it requires `gh auth login`
+on the build host.
+
+`mise` and the `gh` CLI are **not** required anywhere in this flow: the
+OpenShell `tasks/scripts/vm/*` build scripts run directly, and the vm-runtime
+tarball is publicly downloadable with `curl`.
