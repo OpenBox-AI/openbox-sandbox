@@ -1,18 +1,17 @@
-//! openbox-sandbox thin client / launcher.
+//! `obs` operator/developer launcher.
 //!
-//! A thin communication and service client that connects to an
-//! operator-installed OpenShell gateway over mTLS. OpenBox Sandbox does NOT
-//! embed, extract, or ship the OpenShell gateway, CLI, VM driver, or any VM
-//! assets — all of those are the environment owner's responsibility.
+//! This dependency-free launcher locates an operator-installed `OpenShell`
+//! gateway, verifies its launcher release pin, and can start that external
+//! gateway. It is distinct from the root `openbox-sandbox` binary, which is the
+//! production-intent mTLS sandbox service. `OpenShell` remains an external
+//! runtime dependency; the launcher does not embed it.
 //!
 //! Architecture:
-//!   OpenBox Sandbox → mTLS/API → operator-installed OpenShell gateway → driver/runtime
+//!   client → mTLS → openbox-sandbox service → OpenShell gateway → driver/runtime
 //!
-//! The launcher locates a local OpenShell installation (for the "gateway on
-//! this host" deployment model), verifies its version against a pinned
-//! release, and execs the gateway in the foreground. In pure remote-client
-//! mode the gateway endpoint is configured externally and --verify-runtime
-//! validates compatibility without needing a local gateway binary.
+//! `--verify-runtime` only checks local artifact/version compatibility. It does
+//! not connect to a gateway or prove sandbox execution. From a source checkout,
+//! `obs verify` drives the live mTLS create→ready→exec→delete proof.
 //!
 //! OpenShell supports four drivers; the operator's gateway selects one:
 //!   - podman: rootless container runtime (preferred container path).
@@ -30,9 +29,10 @@ use std::process::{Command, ExitCode};
 
 mod bundle;
 mod deps;
+mod dogfood;
+mod publish;
 mod pin;
-mod service;
-mod setup;
+mod scripts;
 
 /// One OpenShell compute driver the launcher can detect.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -94,24 +94,144 @@ enum Posture {
     Cluster,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum CommandLine {
+    Help,
+    Provision {
+        clean_rerun: bool,
+        keep_pki: bool,
+    },
+    Uninstall {
+        keep_pki: bool,
+    },
+    Verify,
+    Status,
+    VerifyRuntime {
+        skip_hash: bool,
+    },
+    Publish {
+        release_dir: String,
+        tag: String,
+    },
+    Launch,
+}
+
+fn parse_command(args: &[String]) -> Result<CommandLine, String> {
+    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
+        return Ok(CommandLine::Help);
+    }
+    let Some(command) = args.first().map(String::as_str) else {
+        return Ok(CommandLine::Launch);
+    };
+    match command {
+        "provision" => {
+            ensure_options(&args[1..], &["--clean-rerun", "--keep-pki"])?;
+            let clean_rerun = args[1..].iter().any(|arg| arg == "--clean-rerun");
+            let keep_pki = args[1..].iter().any(|arg| arg == "--keep-pki");
+            if keep_pki && !clean_rerun {
+                return Err("--keep-pki requires `obs provision --clean-rerun`".to_owned());
+            }
+            Ok(CommandLine::Provision {
+                clean_rerun,
+                keep_pki,
+            })
+        }
+        "uninstall" => {
+            ensure_options(&args[1..], &["--keep-pki"])?;
+            Ok(CommandLine::Uninstall {
+                keep_pki: args[1..].iter().any(|arg| arg == "--keep-pki"),
+            })
+        }
+        "verify" => {
+            ensure_options(&args[1..], &[])?;
+            Ok(CommandLine::Verify)
+        }
+        "status" => {
+            ensure_options(&args[1..], &[])?;
+            Ok(CommandLine::Status)
+        }
+        "publish" => {
+            if args.len() < 2 {
+                return Err("usage: obs publish <release-dir> [tag]".to_owned());
+            }
+            let release_dir = args[1].clone();
+            let tag = args.get(2).cloned().unwrap_or_default();
+            Ok(CommandLine::Publish { release_dir, tag })
+        }
+        value if !value.starts_with('-') => Err(format!("unknown subcommand: {value}")),
+        _ => {
+            validate_launch_options(args)?;
+            if args.iter().any(|arg| arg == "--verify-runtime") {
+                let verify_count = args
+                    .iter()
+                    .filter(|arg| arg.as_str() == "--verify-runtime")
+                    .count();
+                if verify_count != 1
+                    || args
+                        .iter()
+                        .any(|arg| !matches!(arg.as_str(), "--verify-runtime" | "--skip-hash"))
+                {
+                    return Err("--verify-runtime may be combined only with --skip-hash".to_owned());
+                }
+                Ok(CommandLine::VerifyRuntime {
+                    skip_hash: args.iter().any(|arg| arg == "--skip-hash"),
+                })
+            } else {
+                Ok(CommandLine::Launch)
+            }
+        }
+    }
+}
+
+fn ensure_options(args: &[String], allowed: &[&str]) -> Result<(), String> {
+    if let Some(arg) = args.iter().find(|arg| !allowed.contains(&arg.as_str())) {
+        return Err(format!("unsupported option: {arg}"));
+    }
+    Ok(())
+}
+
+fn validate_launch_options(args: &[String]) -> Result<(), String> {
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        match arg.as_str() {
+            "--allow-degraded" | "--dry-run" | "--skip-hash" | "--verify-runtime" => {}
+            "--driver" => {
+                index += 1;
+                if args.get(index).is_none_or(|value| value.starts_with('-')) {
+                    return Err("--driver requires a value".to_owned());
+                }
+            }
+            value if value.starts_with("--driver=") && value.len() > "--driver=".len() => {}
+            _ => return Err(format!("unsupported option: {arg}")),
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|arg| arg == "-h" || arg == "--help") {
-        print_help();
-        return ExitCode::SUCCESS;
-    }
-
-    // ── Subcommands ─────────────────────────────────────────────────────
-    if args.iter().any(|a| a == "setup") {
-        let skip_deps = args.iter().any(|a| a == "--skip-deps");
-        let skip_service = args.iter().any(|a| a == "--skip-service");
-        let no_start = args.iter().any(|a| a == "--no-start");
-        return setup::run(skip_deps, skip_service, no_start);
-    }
-
-    // ── Info-only flags ──────────────────────────────────────────────────
-    if args.iter().any(|a| a == "--verify-runtime") {
-        return verify_runtime();
+    match parse_command(&args) {
+        Ok(CommandLine::Help) => {
+            print_help();
+            return ExitCode::SUCCESS;
+        }
+        Ok(CommandLine::Provision {
+            clean_rerun,
+            keep_pki,
+        }) => return dogfood::run_provision(clean_rerun, keep_pki),
+        Ok(CommandLine::Uninstall { keep_pki }) => return dogfood::run_uninstall(keep_pki),
+        Ok(CommandLine::Verify) => return dogfood::run_verify(),
+        Ok(CommandLine::Status) => return dogfood::run_status(),
+        Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
+        Ok(CommandLine::Publish { release_dir, tag }) => return publish::run(&release_dir, &tag),
+        Ok(CommandLine::Launch) => {}
+        Err(message) => {
+            err(&message);
+            info("run `obs --help` for usage");
+            return ExitCode::FAILURE;
+        }
     }
 
     let allow_degraded = args.iter().any(|arg| arg == "--allow-degraded");
@@ -202,62 +322,42 @@ fn main() -> ExitCode {
     launch(chosen, posture, &artifacts)
 }
 
-/// Verify the runtime environment: check gateway compatibility, report
-/// configured endpoint, mTLS readiness, and detected OpenShell version.
-/// Does not start anything; intended for `--verify-runtime` / diagnostics.
-fn verify_runtime() -> ExitCode {
+/// Verify local launcher artifacts and their exact release version.
+///
+/// This does not connect to the gateway, inspect mTLS, or execute a sandbox.
+/// Use `obs verify` from a provisioned source checkout for that live proof.
+fn verify_runtime(skip_hash: bool) -> ExitCode {
     banner();
     let (os, arch) = platform();
     info(&format!("{os}/{arch}"));
 
-    match bundle::resolve() {
-        Ok(artifacts) => {
-            info(&format!("gateway: {}", artifacts.gateway.display()));
-            match pin::extract_version_from(&artifacts.gateway) {
-                Ok(version) => {
-                    info(&format!("version: {version}"));
-                    if version == pin::REQUIRED_VERSION {
-                        ok("pinned version matches");
-                    } else {
-                        err(&format!(
-                            "version mismatch — required {}, found {}",
-                            pin::REQUIRED_VERSION,
-                            version
-                        ));
-                        info("install the pinned release");
-                        return ExitCode::FAILURE;
-                    }
-                }
-                Err(e) => {
-                    err(&format!("cannot determine version: {e}"));
-                    return ExitCode::FAILURE;
-                }
-            }
-            if artifacts.driver_vm.is_some() {
-                info("vm driver: present");
-            } else {
-                info("vm driver: not found (needed for microVM)");
-            }
-        }
+    let artifacts = match bundle::resolve() {
+        Ok(artifacts) => artifacts,
         Err(missing) => {
-            err(&format!("gateway not found ({missing})"));
-            info("No local OpenShell gateway detected. In pure remote-client");
-            info("mode, configure the gateway endpoint externally.");
-            info("To install: run packaging/launcher/scripts/fetch-openshell-deps.sh");
+            err(&format!("local artifact not found ({missing})"));
+            info("install the external OpenShell artifacts or set OPENBOX_BUNDLE_DIR");
             return ExitCode::FAILURE;
         }
+    };
+    report_artifacts(&artifacts);
+    let skip_hash =
+        skip_hash || std::env::var("OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH").as_deref() == Ok("1");
+    if let Err(error) = pin::verify(&artifacts, !skip_hash) {
+        err(&format!("{}: {}", error.artifact, error.reason));
+        return ExitCode::FAILURE;
     }
-
-    info(&format!("pin: {}", pin::REQUIRED_VERSION));
-    if let Ok(endpoint) = std::env::var("OPENBOX_GATEWAY_ENDPOINT") {
-        info(&format!("endpoint: {endpoint}"));
+    ok(&format!(
+        "launcher artifact/version pin {} matches",
+        pin::REQUIRED_VERSION
+    ));
+    if artifacts.driver_vm.is_some() {
+        info("vm driver: present");
     } else {
-        info("endpoint: local (exec gateway binary)");
+        info("vm driver: not found (needed only for microVM runs)");
     }
-
     println!();
-    info("CONSTRAIN is fail-closed: if the sandbox runtime is unavailable,");
-    info("the governed activity fails. There is no host fallback.");
+    warn("artifact compatibility only: no gateway connection or sandbox was attempted");
+    info("`obs verify` is the live mTLS create→ready→exec→delete proof");
     ExitCode::SUCCESS
 }
 
@@ -481,35 +581,49 @@ fn runtime_summary(available: &[Runtime]) -> String {
 
 fn print_help() {
     println!(
-        "openbox-sandbox — thin client / launcher\n\n\
+        "obs — OpenBox operator/developer launcher\n\n\
          USAGE:\n  \
-         openbox-sandbox setup [OPTIONS]     Run first-time setup.\n  \
-         openbox-sandbox [OPTIONS]           Start the sandbox service.\n\n\
-         Thin client that connects to an operator-installed OpenShell gateway.\n\
-         OpenBox Sandbox does NOT embed OpenShell; the environment owner must\n\
-         install the pinned OpenShell release separately.\n\n\
-         SETUP SUBCOMMAND:\n\
-         \x20 setup               Full first-run: deps, OpenShell, service.\n\
-         \x20   --skip-deps       Skip dependency installation.\n\
-         \x20   --skip-service    Skip service setup.\n\
-         \x20   --no-start        Set up but don't start the service.\n\n\
-         START OPTIONS:\n\
+
+         obs provision [OPTIONS]      Teardown stale state, then provision dogfood.\n  \
+         obs uninstall [--keep-pki]   Teardown and delete wizard-owned state.\n  \
+         obs verify                   Prove mTLS create→ready→exec→delete live.\n  \
+         obs status                   Report local dogfood ports/PIDs/artifacts.\n  \
+         obs publish <dir> [tag]      Publish a release dir to GitHub Releases.\n  \
+         obs [OPTIONS]                Start the external OpenShell gateway.\n\n\
+         MODULES:\n\
+         \x20 openbox-sandbox   Production-intent mTLS sandbox service (root crate).\n\
+         \x20 obs               Operator/developer launcher (this binary).\n\
+         \x20 OpenShell         External gateway/driver runtime; never embedded.\n\n\
+         DOGFOOD LOOP (source checkout only):\n  \
+         cargo build --release --bin openbox-sandbox\n  \
+         cargo build --release --manifest-path packaging/launcher/Cargo.toml\n  \
+         OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision\n  \
+         obs verify && obs uninstall\n\n\
+         SETUP OPTIONS:\n\
+         \x20 --skip-deps          Skip dependency installation.\n\
+
+         \x20 --no-start           Configure external gateway but do not start it.\n\n\
+         PROVISION OPTIONS:\n\
+         \x20 --clean-rerun        Also remove wizard-owned state before provisioning.\n\
+         \x20 --keep-pki           Preserve PKI (with --clean-rerun or uninstall).\n\n\
+         LAUNCHER OPTIONS:\n\
          \x20 --driver <name>      Force a driver (podman|docker|kubernetes|vm).\n\
          \x20 --allow-degraded     Accept reduced isolation (container w/o Landlock).\n\
          \x20 --dry-run            Resolve artifacts and print the plan; start nothing.\n\
-         \x20 --verify-runtime     Check gateway compatibility and report status.\n\
-         \x20 --skip-hash          Skip the pinned-artifact sha256 check (dev only).\n\
+         \x20 --verify-runtime     Verify local artifact/version compatibility only.\n\
+         \x20                      It does not connect or prove sandbox execution.\n\
+         \x20 --skip-hash          Skip operator-supplied hashes (dev only); may be\n\
+         \x20                      combined with --verify-runtime.\n\
          \x20 -h, --help           Show this help.\n\n\
-         INSTALLATION:\n\
-         \x20 Run packaging/launcher/scripts/fetch-openshell-deps.sh to install\n\
-         \x20 the pinned OpenShell release, or: brew install openshell\n"
+         `obs provision` requires OpenShell built from root protocol pin f1690849;\n\
+         the 0.0.85 release bundle is not dogfood-compatible.\n"
     );
 }
 
 // ── Output helpers ──────────────────────────────────────────────────────
 
 pub(crate) fn banner() {
-    println!("openbox-sandbox\n");
+    println!("obs\n");
 }
 
 pub(crate) fn step(msg: &str) {
@@ -530,4 +644,66 @@ pub(crate) fn warn(msg: &str) {
 
 pub(crate) fn err(msg: &str) {
     eprintln!("  ✗ {msg}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_command, CommandLine};
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn subcommand_name_used_as_driver_value_does_not_dispatch() {
+        let parsed = parse_command(&args(&["--driver", "provision"]));
+        assert_eq!(parsed, Ok(CommandLine::Launch));
+    }
+
+    #[test]
+    fn provision_options_are_validated() {
+        assert_eq!(
+            parse_command(&args(&["provision", "--clean-rerun", "--keep-pki"])),
+            Ok(CommandLine::Provision {
+                clean_rerun: true,
+                keep_pki: true,
+            })
+        );
+        assert_eq!(
+            parse_command(&args(&["provision", "--keep-pki"])),
+            Err("--keep-pki requires `obs provision --clean-rerun`".to_owned())
+        );
+    }
+
+    #[test]
+    fn driver_requires_a_value() {
+        assert_eq!(
+            parse_command(&args(&["--driver"])),
+            Err("--driver requires a value".to_owned())
+        );
+        assert_eq!(
+            parse_command(&args(&["--driver="])),
+            Err("unsupported option: --driver=".to_owned())
+        );
+    }
+
+    #[test]
+    fn verify_runtime_accepts_only_skip_hash() {
+        assert_eq!(
+            parse_command(&args(&["--verify-runtime"])),
+            Ok(CommandLine::VerifyRuntime { skip_hash: false })
+        );
+        assert_eq!(
+            parse_command(&args(&["--verify-runtime", "--skip-hash"])),
+            Ok(CommandLine::VerifyRuntime { skip_hash: true })
+        );
+        assert_eq!(
+            parse_command(&args(&["--skip-hash", "--verify-runtime"])),
+            Ok(CommandLine::VerifyRuntime { skip_hash: true })
+        );
+        assert_eq!(
+            parse_command(&args(&["--verify-runtime", "--dry-run"])),
+            Err("--verify-runtime may be combined only with --skip-hash".to_owned())
+        );
+    }
 }

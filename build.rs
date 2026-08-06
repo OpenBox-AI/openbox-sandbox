@@ -9,11 +9,13 @@ fn main() {
     let lock_path = root.join("Cargo.lock");
     let installer_path = root.join("install.sh");
     let local_bootstrap_path = root.join("scripts/local-bootstrap.sh");
+    let dogfood_provision_path = root.join("packaging/launcher/scripts/provision-local-sandbox.sh");
     for path in [
         &manifest_path,
         &lock_path,
         &installer_path,
         &local_bootstrap_path,
+        &dogfood_provision_path,
     ] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -47,6 +49,14 @@ fn main() {
     assert!(
         local_bootstrap.contains(&installer_pin),
         "local bootstrap OpenShell source pin must match the compiled adapter"
+    );
+    let dogfood_provision = std::fs::read_to_string(dogfood_provision_path)
+        .expect("dogfood provision script must be readable");
+    let dogfood_pin = format!("OPENSHELL_SOURCE_PIN=\"{OPENSHELL_SOURCE_PIN}\"");
+    let dogfood_marker = format!("OPENSHELL_SOURCE_MARKER=\"{}\"", &OPENSHELL_SOURCE_PIN[..8]);
+    assert!(
+        dogfood_provision.contains(&dogfood_pin) && dogfood_provision.contains(&dogfood_marker),
+        "dogfood OpenShell source pin and marker must match the compiled adapter"
     );
 
     println!("cargo:rustc-env=OPENBOX_OPENSHELL_SOURCE_PIN={OPENSHELL_SOURCE_PIN}");

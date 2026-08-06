@@ -1,7 +1,7 @@
 //! Artifact discovery.
 //!
-//! OpenBox Sandbox is a thin client. Artifacts (the OpenShell gateway, CLI,
-//! driver, and policies) are resolved from an operator-installed location.
+//! `obs` is a thin launcher. Artifacts (the external `OpenShell` gateway,
+//! CLI, driver, and OpenBox policies) resolve from operator-installed paths.
 //! Resolution order:
 //!   1. `$OPENBOX_BUNDLE_DIR` — an operator-provided release bundle. Binaries
 //!      may use either its conventional `bin/` and `libexec/` layout (as emitted
