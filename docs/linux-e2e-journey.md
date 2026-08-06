@@ -1720,3 +1720,15 @@ OpenShell changes unless the lock is bumped deliberately.
 - NOTE: legacy build.yml launcher-release track still publishes per-push;
   separate from hosted-bin; confirm intent.
 - NOTE: cargo-deny + trivy gates green on recent runs.
+
+### Part 16 — Hardening + legacy removal (user-directed)
+
+- hosted-bin.yml: workflow_dispatch ONLY (manual publish); all actions pinned
+  to commit SHAs (checkout/cache/upload/download-artifact, rust-toolchain,
+  trivy-action); containers digest-pinned (amazonlinux:2023@sha256 per arch);
+  new `scan` job (Trivy fs HIGH,CRITICAL + credential scan) folded in.
+- build.yml (legacy per-push launcher release track) DELETED — hosted-bin is
+  the single release pipeline.
+- Dev-host cosign keypair + password + cosign binary removed (CI signs
+  keyless via OIDC; the pair was redundant).
+- Audit remediation from Part 15 already applied (SSH key, obsclient, /tmp).
