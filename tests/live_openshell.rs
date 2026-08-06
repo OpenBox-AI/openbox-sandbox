@@ -64,13 +64,22 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 /// Shared connection helper for the real-gateway tests below.
-async fn connect_from_env() -> Option<(OpenShellRuntime, Vec<u8>, String, PolicyIdentity, TemplateIdentity)> {
+async fn connect_from_env() -> Option<(
+    OpenShellRuntime,
+    Vec<u8>,
+    String,
+    PolicyIdentity,
+    TemplateIdentity,
+)> {
     let endpoint = env_optional("OPENBOX_LIVE_OPENSHELL_ENDPOINT")?;
     let image = env_optional("OPENBOX_LIVE_OPENSHELL_IMAGE")
         .expect("OPENBOX_LIVE_OPENSHELL_IMAGE required when endpoint is set");
     let policy_file = env_optional("OPENBOX_LIVE_OPENSHELL_POLICY_FILE")
         .expect("OPENBOX_LIVE_OPENSHELL_POLICY_FILE required when endpoint is set");
-    let policy_id = env_or("OPENBOX_LIVE_OPENSHELL_POLICY_ID", "openbox-deny-network-dev");
+    let policy_id = env_or(
+        "OPENBOX_LIVE_OPENSHELL_POLICY_ID",
+        "openbox-deny-network-dev",
+    );
     let policy_version: u64 = env_or("OPENBOX_LIVE_OPENSHELL_POLICY_VERSION", "1")
         .parse()
         .expect("policy version integer");
@@ -350,7 +359,10 @@ async fn live_openshell_floor_rejects_mismatched_policy() {
         TemplateIdentity::new(image).expect("template"),
         PolicyDocument::new("application/yaml", policy_bytes).expect("policy document"),
         PolicyIdentity::new(
-            env_or("OPENBOX_LIVE_OPENSHELL_POLICY_ID", "openbox-deny-network-dev"),
+            env_or(
+                "OPENBOX_LIVE_OPENSHELL_POLICY_ID",
+                "openbox-deny-network-dev",
+            ),
             env_or("OPENBOX_LIVE_OPENSHELL_POLICY_VERSION", "1")
                 .parse()
                 .expect("policy version integer"),
@@ -362,9 +374,7 @@ async fn live_openshell_floor_rejects_mismatched_policy() {
     match result {
         Ok(created) => {
             // Shouldn't happen: floor should have rejected before submission.
-            let _ = runtime
-                .delete(created.cleanup_target(), ctx(60))
-                .await;
+            let _ = runtime.delete(created.cleanup_target(), ctx(60)).await;
             panic!("floor MUST reject best_effort policy without with_degraded_landlock(true)");
         }
         Err(failure) => {
