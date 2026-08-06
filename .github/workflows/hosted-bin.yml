@@ -27,6 +27,7 @@ permissions:
 
 env:
   OPENSHELL_VERSION: "0.0.88"
+  RELEASE_VERSION: "0.1.0"
   RUST_TOOLCHAIN: "1.95.0"
 
 jobs:
@@ -190,12 +191,33 @@ jobs:
         run: |
           set -euo pipefail
           cd release
+          NOTES='## OpenBox Sandbox ${{ env.RELEASE_VERSION }} — hosted-bin release
+
+          Pinned components:
+          - openbox-sandbox service + obs launcher: commit `${{ github.sha }}`
+          - OpenShell: locked release **0.0.88** (upstream sha256-verified tarballs)
+
+          Platforms: linux x86_64, linux aarch64, macOS arm64
+
+          Assets: per-platform obs, openbox-sandbox, openbox-sandbox-verify and the
+          OpenShell bundle tarball, plus the sandbox policy, SHA256SUMS, SPDX +
+          CycloneDX SBOMs and keyless cosign bundles.
+
+          Verification:
+          ```
+          sha256sum -c SHA256SUMS
+          cosign verify-blob --bundle <asset>.spdx.json.sbom.bundle.json \
+            --certificate-identity-regexp 'https://github.com/${{ github.repository }}' \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com <asset>.spdx.json
+          ```
+
+          Consumption: obs provision with OPENBOX_OPENSHELL_BUNDLE_URL (see packaging/launcher/README.md).'
           gh release delete hosted-bin --yes --cleanup-tag 2>/dev/null || true
           FILES=$(find . -maxdepth 1 -type f | sort)
           gh release create hosted-bin $FILES \
             --repo "$GITHUB_REPOSITORY" \
-            --title "OpenBox Sandbox hosted bin (hosted-bin)" \
-            --notes "CI-built pinned release (source pin ${{ env.OPENSHELL_PIN }}). Verify: sha256sum -c SHA256SUMS; cosign verify-blob --bundle <asset>.spdx.json.sbom.bundle.json --certificate-identity-regexp 'https://github.com/${{ github.repository }}' --certificate-oidc-issuer https://token.actions.githubusercontent.com <asset>.spdx.json" \
+            --title "OpenBox Sandbox ${{ env.RELEASE_VERSION }} (hosted-bin)" \
+            --notes "$NOTES" \
             >/dev/null
           COUNT=$(gh release view hosted-bin --repo "$GITHUB_REPOSITORY" --json assets -q '.assets|length')
           echo "published $COUNT assets"
