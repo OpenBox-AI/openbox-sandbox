@@ -1,7 +1,7 @@
 //! OpenShell dependency pinning + startup verification.
 //!
-//! OpenBox Sandbox is a thin client that connects to an operator-installed
-//! OpenShell gateway. The launcher verifies the local gateway installation
+//! `obs` is a thin operator/developer launcher for an operator-installed
+//! `OpenShell` gateway. It verifies the local gateway installation
 //! against a pinned release to prevent contract drift (the 40-char → 19-char
 //! MAX_ROUTABLE_NAME_LEN mismatch after a pin bump already bit this project).
 //!
@@ -142,11 +142,16 @@ pub fn extract_version_from(binary: &Path) -> Result<String, String> {
         .to_string())
 }
 
-/// Exact version match. We pin an exact OpenShell release, not a range, because
-/// the wire contract (sandbox name length, hook shape) can change between
-/// minor releases and the launcher must fail closed on drift.
+/// Exact version match, or the root-service protocol source marker. The
+/// launcher pins an exact OpenShell release (0.0.85) for its own artifact
+/// track, but the hosted-bin flow ships source-built OpenShell at the root
+/// protocol pin f1690849, which reports `0.0.88-dev.11+gf1690849`. Both are
+/// accepted; anything else fails closed because the wire contract (sandbox
+/// name length, hook shape) can change between releases.
+pub const ROOT_PROTOCOL_MARKER: &str = "gf1690849";
+
 fn version_satisfies(found: &str, required: &str) -> bool {
-    found == required
+    found == required || found.contains(ROOT_PROTOCOL_MARKER)
 }
 
 /// sha256 of a file. Uses `shasum` on macOS (coreutil) and `sha256sum` on
