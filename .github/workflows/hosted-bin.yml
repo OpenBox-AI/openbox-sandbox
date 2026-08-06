@@ -1,0 +1,249 @@
+name: hosted-bin release
+
+# Build the full pinned release in CI (root service, verify harness, obs
+# launcher, source-pinned OpenShell with embedded supervisor) for linux
+# x86_64 + aarch64 and darwin arm64, and publish it to the floating
+# `hosted-bin` release tag that the hosted-bin consumer flow downloads from.
+#
+# Trigger: workflow_dispatch (manual) or push to main touching launcher,
+# service, lockfile, or this workflow. Consumers (dev machines, EC2) only
+# download + verify + run; nothing is built outside CI.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/launcher/**'
+      - 'src/**'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'deploy/**'
+      - '.github/workflows/hosted-bin.yml'
+
+permissions:
+  contents: write
+  id-token: write
+
+env:
+  OPENSHELL_PIN: "f169084923503a02a94425857b938de2841cab0c"
+  OPENSHELL_MARKER: "gf1690849"
+  RUST_TOOLCHAIN: "1.95.0"
+
+jobs:
+  build:
+    name: build ${{ matrix.triple }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds run inside an Amazon Linux 2023 container so the
+          # binaries link the same glibc (2.34) as the target hosts; an
+          # ubuntu-built binary requires GLIBC_2.39 and dies on AL2023.
+          - triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            container: amazonlinux:2023
+          - triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+            container: amazonlinux:2023
+          - triple: aarch64-apple-darwin
+            runner: macos-14
+    steps:
+      # actions/checkout needs git inside the container before it runs.
+      - name: Install git (container)
+        if: runner.os == 'Linux'
+        run: dnf install -y git
+
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install build dependencies
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            # Amazon Linux 2023 (dnf) — mirrors the dev build host recipe.
+            dnf install -y protobuf-compiler openssl-devel clang clang-devel \
+              z3-devel z3-libs pkg-config zstd gcc gcc-c++ make tar gzip xz
+            # AL2023 z3-devel puts the header at z3/z3.h; bindgen wants z3.h.
+            ln -sf /usr/include/z3/z3.h /usr/include/z3.h
+            echo "LIBCLANG_PATH=/usr/lib64" >> "$GITHUB_ENV"
+            # gh is not in AL2023 repos; the OpenShell vm-runtime downloader
+            # needs it (runners preinstall gh, containers do not).
+            case "$(uname -m)" in
+              aarch64) GH_ARCH=arm64 ;;
+              *)       GH_ARCH=amd64 ;;
+            esac
+            curl -fsSL -o /tmp/gh.rpm \
+              "https://github.com/cli/cli/releases/download/v2.74.0/gh_2.74.0_linux_${GH_ARCH}.rpm"
+            dnf install -y /tmp/gh.rpm
+          else
+            brew install protobuf z3 llvm zstd cargo-zigbuild
+            echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
+            # The guest supervisor is a Linux binary even on macOS hosts.
+            rustup target add aarch64-unknown-linux-gnu
+          fi
+
+      - name: Cache cargo + OpenShell target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/openshell/target
+            target
+          key: hosted-bin-${{ matrix.triple }}-${{ env.OPENSHELL_PIN }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('packaging/launcher/Cargo.lock') }}
+
+      - name: Clone pinned OpenShell
+        run: |
+          set -euo pipefail
+          # The cache restore may have created $RUNNER_TEMP/openshell (for the
+          # target dir); the clone needs a clean destination.
+          rm -rf "$RUNNER_TEMP/openshell"
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/NVIDIA/OpenShell.git "$RUNNER_TEMP/openshell"
+          git -C "$RUNNER_TEMP/openshell" fetch --depth=128 origin "$OPENSHELL_PIN"
+          git -C "$RUNNER_TEMP/openshell" checkout --detach "$OPENSHELL_PIN"
+          test "$(git -C "$RUNNER_TEMP/openshell" rev-parse HEAD)" = "$OPENSHELL_PIN"
+
+      - name: Build pinned OpenShell binaries
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/openshell"
+          cargo +$RUST_TOOLCHAIN build --release --locked \
+            -p openshell-cli -p openshell-server -p openshell-driver-vm
+          for bin in openshell openshell-gateway openshell-driver-vm; do
+            ./target/release/$bin --version | grep -q "$OPENSHELL_MARKER"
+          done
+
+      - name: Prepare VM runtime and build supervisor
+        # The kernel-runtime downloader reads GITHUB_REPOSITORY; the runner
+        # resets GITHUB_* between steps (step env cannot override it), so pin
+        # it to the upstream runtime release with an in-shell export. gh needs
+        # the Actions token for the download.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/openshell"
+          export GITHUB_REPOSITORY=NVIDIA/OpenShell
+          # OpenShell task scripts run directly (mise is not required):
+          #   vm-setup.sh        downloads the platform guest runtime + tools
+          #   build-supervisor-bundle.sh  compiles + compresses the supervisor
+          ls tasks/scripts/vm/
+          for script in vm-setup.sh build-supervisor-bundle.sh; do
+            if [[ -f "tasks/scripts/vm/$script" ]]; then
+              bash "tasks/scripts/vm/$script"
+            fi
+          done
+          RUNTIME_DIR="$(find target -maxdepth 3 -type d -name 'vm-runtime-compressed' | head -1)"
+          test -n "$RUNTIME_DIR"
+          # Absolute path: the driver build script resolves the dir relative to
+          # the crate dir, not the workspace root.
+          RUNTIME_DIR="$(cd "$RUNTIME_DIR" && pwd)"
+          echo "OPENSHELL_VM_RUNTIME_COMPRESSED_DIR=$RUNTIME_DIR" >> "$GITHUB_ENV"
+
+      - name: Rebuild driver with embedded runtime
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/openshell"
+          # Cargo does not rebuild when OPENSHELL_VM_RUNTIME_COMPRESSED_DIR
+          # appears after the first build; force the embedding rebuild and
+          # verify it actually happened (embedded driver is ~38 MB vs ~18 MB).
+          cargo clean -p openshell-driver-vm
+          cargo +$RUST_TOOLCHAIN build --release --locked -p openshell-driver-vm
+          ./target/release/openshell-driver-vm --version | grep -q "$OPENSHELL_MARKER"
+          SIZE=$(wc -c < target/release/openshell-driver-vm)
+          echo "driver size: $SIZE"
+          test "$SIZE" -gt 30000000
+
+      - name: Build root service, launcher, verify harness
+        run: |
+          set -euo pipefail
+          cargo +$RUST_TOOLCHAIN build --release --locked --bin openbox-sandbox
+          cargo +$RUST_TOOLCHAIN build --release --locked \
+            --manifest-path packaging/launcher/Cargo.toml
+          cargo +$RUST_TOOLCHAIN test --release --lib --no-run
+          HARNESS=$(ls -t target/release/deps/openbox_sandbox-* | grep -v '\.d$' | head -1)
+          test -x "$HARNESS"
+          echo "HARNESS=$HARNESS" >> "$GITHUB_ENV"
+
+      - name: Assemble release dir
+        run: |
+          set -euo pipefail
+          R="$RUNNER_TEMP/release"
+          mkdir -p "$R/bundle/bin" "$R/bundle/libexec"
+          cp "$RUNNER_TEMP/openshell/target/release/openshell" "$R/bundle/bin/"
+          cp "$RUNNER_TEMP/openshell/target/release/openshell-gateway" "$R/bundle/bin/"
+          cp "$RUNNER_TEMP/openshell/target/release/openshell-driver-vm" "$R/bundle/libexec/"
+          (cd "$R/bundle" && tar czf "$R/openbox-sandbox-bundle-${{ matrix.triple }}.tar.gz" bin libexec)
+          cp packaging/launcher/target/release/obs "$R/obs-${{ matrix.triple }}"
+          cp target/release/openbox-sandbox "$R/openbox-sandbox-${{ matrix.triple }}"
+          cp "$HARNESS" "$R/openbox-sandbox-verify-${{ matrix.triple }}"
+          cp deploy/policies/policy-deny-network-dev.yaml "$R/policy-deny-network-dev.yaml"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hosted-bin-${{ matrix.triple }}
+          path: ${{ runner.temp }}/release/
+
+  publish:
+    name: publish hosted-bin
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hosted-bin-*
+          path: release
+          merge-multiple: true
+
+      - name: Install syft and cosign
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/v1.20.0/install.sh \
+            | sudo sh -s -- -b /usr/local/bin v1.20.0
+          curl -fsSL -o /usr/local/bin/cosign \
+            https://github.com/sigstore/cosign/releases/download/v2.5.3/cosign-linux-amd64
+          chmod +x /usr/local/bin/cosign
+
+      - name: Generate, sign, and checksum SBOMs
+        run: |
+          set -euo pipefail
+          cd release
+          for f in obs-* openbox-sandbox-*; do
+            [[ -f "$f" ]] || continue
+            [[ "$f" == *.json ]] && continue
+            [[ "$f" == *.tar.gz ]] && continue
+            [[ "$f" == *.yaml ]] && continue
+            syft scan "$f" -q -o spdx-json="$f.spdx.json"
+            syft scan "$f" -q -o cyclonedx-json="$f.cyclonedx.json"
+            # Keyless OIDC bundle (sig + cert), matching verify-release.sh.
+            cosign sign-blob --yes --bundle "$f.spdx.json.sbom.bundle.json" "$f.spdx.json"
+          done
+          find . -type f ! -name SHA256SUMS -printf '%P\n' | sort \
+            | while IFS= read -r f; do sha256sum "$f"; done > SHA256SUMS
+          sha256sum -c SHA256SUMS
+
+      - name: Publish floating tag
+        run: |
+          set -euo pipefail
+          cd release
+          gh release delete hosted-bin --yes --cleanup-tag 2>/dev/null || true
+          FILES=$(find . -maxdepth 1 -type f | sort)
+          gh release create hosted-bin $FILES \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "OpenBox Sandbox hosted bin (hosted-bin)" \
+            --notes "CI-built pinned release (source pin ${{ env.OPENSHELL_PIN }}). Verify: sha256sum -c SHA256SUMS; cosign verify-blob --bundle <asset>.spdx.json.sbom.bundle.json --certificate-identity-regexp 'https://github.com/${{ github.repository }}' --certificate-oidc-issuer https://token.actions.githubusercontent.com <asset>.spdx.json" \
+            >/dev/null
+          COUNT=$(gh release view hosted-bin --repo "$GITHUB_REPOSITORY" --json assets -q '.assets|length')
+          echo "published $COUNT assets"
+          test "$COUNT" -gt 0
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
