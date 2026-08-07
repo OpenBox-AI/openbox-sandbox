@@ -28,4 +28,4 @@ network_policies:
       - host: host.containers.internal
         port: 7233
     binaries:
-      - path: /usr/bin/python3.11
+      - path: /usr/bin/python3.12
