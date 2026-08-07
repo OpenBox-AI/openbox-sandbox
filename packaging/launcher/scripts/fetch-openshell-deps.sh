@@ -91,8 +91,16 @@ if [[ -n "$BUNDLE_URL" ]]; then
       tag="${rest#*/}"
       tag="${tag#releases/download/}"
       tag="${tag%/}"
+      # The "latest" alias has no tags/<tag> API endpoint; resolve it via
+      # releases/latest instead.
+      local api_path
+      if [[ "$tag" == "latest" ]]; then
+        api_path="releases/latest"
+      else
+        api_path="releases/tags/${tag}"
+      fi
       id="$(curl -fsSL "${AUTH_HEADER[@]}" \
-        "https://api.github.com/repos/${owner}/${repo}/releases/tags/${tag}" \
+        "https://api.github.com/repos/${owner}/${repo}/${api_path}" \
         | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((a['id'] for a in d['assets'] if a['name']=='${name}'), ''))" 2>/dev/null || true)"
       if [[ -n "$id" ]]; then
         curl -fsSL "${AUTH_HEADER[@]}" -H "Accept: application/octet-stream" \
