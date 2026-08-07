@@ -215,6 +215,7 @@ pub fn run_verify() -> ExitCode {
         }
         Err(error) => {
             err(&format!("could not run cargo: {error}"));
+            info("set OPENBOX_VERIFY_BIN to the prebuilt verify harness (toolchain-free flow)");
             ExitCode::FAILURE
         }
     }

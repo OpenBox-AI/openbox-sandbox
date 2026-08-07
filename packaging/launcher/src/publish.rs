@@ -84,7 +84,7 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     let notes = notes_markdown(tag);
     let mut create = Command::new(&gh);
     create.args([
-        "release", "create", &staging, "--repo", REPO,
+        "release", "create", &staging, "--repo", REPO, "--draft",
         "--title", &title,
         "--notes", &notes,
     ]);
@@ -148,6 +148,22 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+    // Un-draft so the release becomes visible (and "latest" eligible).
+    let publish = Command::new(&gh)
+        .args([
+            "api", "--method", "PATCH",
+            &format!("repos/{REPO}/releases/{staging_id}"),
+            "-f", "draft=false",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status();
+    if !matches!(publish, Ok(s) if s.success()) {
+        err(&format!(
+            "release retagged to '{tag}' but could not be published (still draft at {staging})"
+        ));
+        return ExitCode::FAILURE;
+    }
     ok(&format!("release '{tag}' published ({count} assets)"));
 
     // ── Report ────────────────────────────────────────────────────────────
