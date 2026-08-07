@@ -124,6 +124,20 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
         Ok(id) => id,
         Err(code) => return code,
     };
+    // The new release is fully uploaded; only now remove the old one so the
+    // final tag is free for the retag.
+    let old_exists = Command::new(&gh)
+        .args(["release", "view", tag, "--repo", REPO])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if matches!(old_exists, Ok(s) if s.success()) {
+        let _ = Command::new(&gh)
+            .args(["release", "delete", tag, "--yes", "--cleanup-tag", "--repo", REPO])
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .status();
+    }
     let retag = Command::new(&gh)
         .args([
             "api", "--method", "PATCH",
