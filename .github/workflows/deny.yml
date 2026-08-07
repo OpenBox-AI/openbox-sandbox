@@ -18,6 +18,10 @@ jobs:
       - name: Run launcher script tests
         run: |
           set -euo pipefail
+          # test-provision-local-sandbox.sh compiles a C fixture for the
+          # gateway-ownership checks; ubuntu runners have no compiler by default.
+          sudo apt-get update
+          sudo apt-get install -y gcc
           for t in test-generate-sbom.sh test-verify-release.sh test-provision-local-sandbox.sh; do
             bash "packaging/launcher/scripts/$t"
           done
@@ -31,4 +35,6 @@ jobs:
         with:
           tool: cargo-deny
       - name: Check licenses, advisories, and sources
-        run: cargo deny --config deny.toml check licenses advisories sources
+        # deny.toml is auto-discovered from the repo root; --config placement
+        # differs across cargo-deny CLI generations, so it is omitted.
+        run: cargo deny check licenses advisories sources
