@@ -4,3 +4,7 @@
 # operator-supplied policy YAML at provision time, not by sandbox workloads.
 # Revisit when the OpenShell lock bumps (see deny.toml for the matching allow).
 GHSA-gfxp-f68g-8x78
+# GHSA-hhw4-xg65-fp2x: serde_yml 0.0.12 unsound + unmaintained. Same locked
+# upstream openshell-policy chain as the libyml finding above; no replacement
+# available at the locked revision. Revisit on OpenShell lock bump.
+GHSA-hhw4-xg65-fp2x

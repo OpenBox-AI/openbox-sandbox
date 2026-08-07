@@ -11,6 +11,7 @@ yanked = "deny"
 # workloads. Revisit when the OpenShell lock bumps.
 ignore = [
   { id = "GHSA-gfxp-f68g-8x78", reason = "locked upstream openshell-policy dep; no patched release; operator-controlled input only" },
+  { id = "GHSA-hhw4-xg65-fp2x", reason = "serde_yml 0.0.12 unsound/unmaintained; locked upstream openshell-policy dep; operator-controlled input only; revisit on lock bump" },
 ]
 
 [licenses]
