@@ -1,0 +1,31 @@
+# Policy for a Temporal SDK Activity Worker inside the sandbox.
+# Only the image-installed Python worker may reach the host Temporal endpoint
+# (host.containers.internal resolves to the gateway host on the VM driver
+# stack; host.docker.internal is the Docker-era alias).
+version: 1
+filesystem_policy:
+  include_workdir: false
+  read_only:
+    - /usr
+    - /lib
+    - /etc
+    - /proc
+    - /opt
+    - /var/log
+    - /dev/urandom
+    - /tmp
+  read_write:
+    - /sandbox
+landlock:
+  compatibility: hard_requirement
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+network_policies:
+  temporal_activity_worker:
+    name: temporal-activity-worker
+    endpoints:
+      - host: host.containers.internal
+        port: 7233
+    binaries:
+      - path: /usr/bin/python3.11

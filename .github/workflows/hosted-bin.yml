@@ -213,10 +213,10 @@ jobs:
           cp packaging/launcher/target/release/obs "$R/obs-${{ matrix.triple }}"
           cp target/release/openbox-sandbox "$R/openbox-sandbox-${{ matrix.triple }}"
           cp "$HARNESS" "$R/openbox-sandbox-verify-${{ matrix.triple }}"
-          # Both policies: the launcher's artifact resolution requires the
-          # strict policy name as well as the dev one.
-          cp deploy/policies/policy-deny-network.yaml "$R/policy-deny-network.yaml"
-          cp deploy/policies/policy-deny-network-dev.yaml "$R/policy-deny-network-dev.yaml"
+          # All shipped policy templates (the launcher's artifact resolution
+          # requires the strict deny-network name; the rest are SDK-selectable
+          # templates, e.g. the Temporal activity-worker network policy).
+          cp deploy/policies/*.yaml "$R/"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
