@@ -23,7 +23,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc
           for t in test-generate-sbom.sh test-verify-release.sh test-provision-local-sandbox.sh; do
-            bash "packaging/launcher/scripts/$t"
+            echo "=== running $t"
+            bash -x "packaging/launcher/scripts/$t"
           done
 
   deny:

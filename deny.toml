@@ -1,6 +1,3 @@
-[graph]
-all-features = true
-
 [advisories]
 version = 2
 yanked = "deny"
