@@ -1891,3 +1891,25 @@ worker = Worker(
 - Matrix green: behavioral CONSTRAIN sandbox, ALLOW host, gpt-4o CONSTRAIN
   sandbox, external Temporal dev server sandbox; POC 204 + SDK 1086 +
   dispatcher 49 tests passing.
+
+## Part 12 — Released-surface alignment (PASS)
+
+The local SDK fork was aligned to the released v1.4.0 surface and behavior:
+
+- The five released modules (core_adapter, governance_state, multi_agent, patch,
+  patch_coordinator) are restored and WIRED, not just importable: the workflow
+  interceptor is the released version (patch markers + coordinator +
+  Continue-As-New), BLOCK-with-patch raises a restart request, the plugin and
+  wrapper carry `max_patch_restarts`, and the base SDK gained the strict patch
+  envelope (Patch/PatchDirective/handle_patch + JS-safe new_input validation).
+  The upstream patch/multi-agent/replay test suites are ported and green —
+  the CAN replay test proves a BLOCK-with-patch at workflow start restarts the
+  run with the patched input.
+- Workflow-level governance events (WorkflowStarted/Completed) now flow
+  end-to-end (no skip_workflow_types) and the runner replays with the SDK's
+  GovernanceInterceptor so the versioned markers replay cleanly.
+- Single-client convergence: the governed command is evaluated at activity time
+  by the plugin's governance client (one shared Core runtime transport); the
+  dispatcher executes the verdict without a second client.
+- Matrix green: behavioral sandbox, ALLOW host, gpt-4o, external Temporal.
+  Suites: temporal SDK 1186, base 454, POC 204, dispatcher 49.
