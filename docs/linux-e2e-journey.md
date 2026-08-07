@@ -1812,3 +1812,17 @@ The remaining audit items, all closed:
 - obs verify hints at OPENBOX_VERIFY_BIN when cargo is absent.
 - Final state: v0.1.0 published, 42 assets, both policies, sole release;
   all 5 pipeline jobs green (scan incl. MEDIUM gate, 3 builds, publish).
+
+### Part 21 — Small-things pass complete (push gate green)
+
+- obs status reads gateway/service ports from wizard metadata (port overrides
+  now reported correctly).
+- deny.yml gains a `launcher-tests` job (the repo's own test scripts run on
+  every push — the wizard regression gate). gcc installed for the C fixture;
+  bash -x tracing kept for instant diagnosis.
+- cargo-deny made version-portable: `--config` dropped (auto-discovery) and
+  the legacy `[graph]` section removed — both CLI generations now pass.
+- CI run 31148379785: cargo deny -> success, launcher tests -> success.
+- Host lean-out: swap, Docker, Rust toolchain removed (3.8 GB used). Mac
+  .dogfood removed. Release deferred per user (no dispatch since the last
+  green publish; the pipeline remains dispatch-only).
