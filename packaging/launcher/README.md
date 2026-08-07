@@ -28,8 +28,8 @@ cargo run -- --driver vm
 ```
 
 The launcher resolves an operator-provided OpenShell installation from
-`OPENBOX_BUNDLE_DIR`, well-known prefixes, or `PATH`. `obs setup` can fetch the
-launcher-compatible OpenShell 0.0.85 release bundle. OpenShell remains external.
+`OPENBOX_BUNDLE_DIR`, well-known prefixes, or `PATH`. OpenShell remains
+external.
 
 `obs setup` no longer exists: bundle acquisition + verification is part of
 `obs provision` (auto-fetch via `OPENBOX_OPENSHELL_BUNDLE_URL`). The external
@@ -53,15 +53,15 @@ execution.
 macOS prefers `vm`; container drivers there require `--allow-degraded`. Windows
 is unsupported directly; use WSL2.
 
-## Source-checkout dogfood proof
+## Version gate
 
-The root service protocol is pinned to OpenShell source commit
-`f169084923503a02a94425857b938de2841cab0c` (`f1690849`). That pin is newer than
-the 0.0.85 launcher bundle. To prevent a false proof, `obs provision` rejects
-0.0.85 and requires all three source-built OpenShell binaries to report the
-exact `f1690849` compatibility marker.
+The root service protocol was pinned to OpenShell source commit
+`f169084923503a02a94425857b938de2841cab0c` (`f1690849`). The hosted-bin flow
+locks the released version **0.0.88** instead of building from source; the
+wizard accepts either the `gf1690849` source marker or the locked release, and
+the live verify test proves the wire contract at runtime.
 
-Build that exact OpenShell revision as directed by the provisioning error, then:
+For source builds at the exact pin, use:
 
 ```sh
 cargo build --release --locked --bin openbox-sandbox

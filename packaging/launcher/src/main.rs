@@ -615,8 +615,8 @@ fn print_help() {
          \x20 --skip-hash          Skip operator-supplied hashes (dev only); may be\n\
          \x20                      combined with --verify-runtime.\n\
          \x20 -h, --help           Show this help.\n\n\
-         `obs provision` requires OpenShell built from root protocol pin f1690849;\n\
-         the 0.0.85 release bundle is not dogfood-compatible.\n"
+         `obs provision` requires OpenShell 0.0.88 (locked release)\n\
+         or the root protocol marker f1690849.\n"
     );
 }
 
