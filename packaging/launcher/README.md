@@ -133,9 +133,11 @@ tree:
    service's command line against the resolved binary path and refuses to
    signal mismatches.
 
-Publish a release dir (checksums → replace floating tag `hosted-bin` →
-upload assets) with `scripts/publish-release.sh`; it requires `gh auth login`
-on the build host.
+Publish immutable versioned releases with the manual `hosted-bin release`
+GitHub Actions workflow on `main`. Supply a new semantic version for each run;
+the workflow rejects existing release tags, verifies checksums, creates and
+validates a draft, then publishes it. If a run fails after creating its draft,
+delete that unpublished draft before retrying the same version.
 
 `mise` and the `gh` CLI are **not** required anywhere in this flow: the
 OpenShell `tasks/scripts/vm/*` build scripts run directly, and the vm-runtime

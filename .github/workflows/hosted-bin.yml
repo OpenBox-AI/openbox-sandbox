@@ -1,29 +1,80 @@
 name: hosted-bin release
 
-# Build the full pinned release in CI (root service, verify harness, obs
-# launcher, source-pinned OpenShell with embedded supervisor) for linux
-# x86_64 + aarch64 and darwin arm64, and publish it to the floating
-# `hosted-bin` release tag that the hosted-bin consumer flow downloads from.
+# Build our root service, verify harness, and obs launcher in CI; download the
+# checksum-verified pinned OpenShell release for linux x86_64 + aarch64 and
+# darwin arm64; then publish an immutable versioned release.
 #
-# Trigger: workflow_dispatch (manual) or push to main touching launcher,
-# service, lockfile, or this workflow. Consumers (dev machines, EC2) only
-# download + verify + run; nothing is built outside CI.
+# Trigger: workflow_dispatch (manual) from main only; supply release_version.
+# Consumers (dev machines, EC2) only download + verify + run; nothing is
+# built outside CI.
 
 on:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version (semver-ish, e.g. 1.2.3)"
+        required: true
+        default: "0.1.1"
+        type: string
+
+concurrency:
+  group: hosted-bin-release
+  cancel-in-progress: false
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 env:
   OPENSHELL_VERSION: "0.0.88"
-  RELEASE_VERSION: "0.1.0"
+  RELEASE_VERSION: ${{ inputs.release_version }}
   RUST_TOOLCHAIN: "1.95.0"
 
 jobs:
+  validate:
+    name: validate release inputs
+    runs-on: ubuntu-latest
+    # GitHub exposes draft releases only to tokens with push access. This job
+    # does not mutate contents, but needs write scope to reject stale drafts.
+    permissions:
+      contents: write
+    steps:
+      - name: Reject non-main ref
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Release must run on main; got $GITHUB_REF"
+            exit 1
+          fi
+
+      - name: Validate semver-ish version
+        run: |
+          set -euo pipefail
+          if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9._-]+)?(\+[a-zA-Z0-9._-]+)?$ ]]; then
+            echo "::error::release_version must be semver-ish (e.g. 1.2.3 or 1.2.3-rc.1); got '$RELEASE_VERSION'"
+            exit 1
+          fi
+
+      - name: Reject existing tag or release
+        run: |
+          set -euo pipefail
+          TAG="v$RELEASE_VERSION"
+          EXISTING=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name==\"$TAG\") | .id")
+          if [[ -n "$EXISTING" ]]; then
+            echo "::error::A release (draft or published) for $TAG already exists — releases are immutable; bump the version"
+            exit 1
+          fi
+          if gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag $TAG already exists on remote — releases are immutable; bump the version"
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   scan:
     name: security scan
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -45,6 +96,7 @@ jobs:
 
   build:
     name: build ${{ matrix.triple }}
+    needs: validate
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }}
     strategy:
@@ -101,13 +153,14 @@ jobs:
             rustup target add aarch64-unknown-linux-gnu
           fi
 
-      - name: Cache cargo + OpenShell target
+      - name: Cache cargo registry and build targets
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
+            packaging/launcher/target
           key: hosted-bin-${{ matrix.triple }}-${{ env.OPENSHELL_VERSION }}-${{ hashFiles('Cargo.lock') }}-${{ hashFiles('packaging/launcher/Cargo.lock') }}
 
       - name: Download released OpenShell ${{ env.OPENSHELL_VERSION }}
@@ -132,11 +185,17 @@ jobs:
       - name: Build root service, launcher, verify harness
         run: |
           set -euo pipefail
-          cargo +$RUST_TOOLCHAIN build --release --locked --bin openbox-sandbox
-          cargo +$RUST_TOOLCHAIN build --release --locked \
+          cargo "+$RUST_TOOLCHAIN" build --release --locked --bin openbox-sandbox
+          cargo "+$RUST_TOOLCHAIN" build --release --locked \
             --manifest-path packaging/launcher/Cargo.toml
-          cargo +$RUST_TOOLCHAIN test --release --lib --no-run
-          HARNESS=$(ls -t target/release/deps/openbox_sandbox-* | grep -v '\.d$' | head -1)
+          cargo "+$RUST_TOOLCHAIN" test --release --lib --no-run
+          HARNESS=""
+          for candidate in target/release/deps/openbox_sandbox-*; do
+            if [[ "$candidate" != *.d && -x "$candidate" ]] \
+              && [[ -z "$HARNESS" || "$candidate" -nt "$HARNESS" ]]; then
+              HARNESS="$candidate"
+            fi
+          done
           test -x "$HARNESS"
           echo "HARNESS=$HARNESS" >> "$GITHUB_ENV"
 
@@ -150,6 +209,7 @@ jobs:
           cp "$RUNNER_TEMP/openshell-bundle/libexec/openshell-driver-vm" "$R/bundle/libexec/"
           "$R/bundle/bin/openshell" --version | grep -q "${{ env.OPENSHELL_VERSION }}"
           (cd "$R/bundle" && tar czf "$R/openbox-sandbox-bundle-${{ matrix.triple }}.tar.gz" bin libexec)
+          rm -rf "$R/bundle"
           cp packaging/launcher/target/release/obs "$R/obs-${{ matrix.triple }}"
           cp target/release/openbox-sandbox "$R/openbox-sandbox-${{ matrix.triple }}"
           cp "$HARNESS" "$R/openbox-sandbox-verify-${{ matrix.triple }}"
@@ -162,11 +222,17 @@ jobs:
         with:
           name: hosted-bin-${{ matrix.triple }}
           path: ${{ runner.temp }}/release/
+          # Keeps failed publish jobs retryable without retaining large build
+          # artifacts for the normal 90-day default.
+          retention-days: 3
 
   publish:
     name: publish hosted-bin
-    needs: build
+    needs: [scan, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
@@ -199,19 +265,25 @@ jobs:
             # Keyless OIDC bundle (sig + cert), matching verify-release.sh.
             cosign sign-blob --yes --bundle "$f.spdx.json.sbom.bundle.json" "$f.spdx.json"
           done
-          find . -type f ! -name SHA256SUMS -printf '%P\n' | sort \
-            | while IFS= read -r f; do sha256sum "$f"; done > SHA256SUMS
+          MANIFEST="$RUNNER_TEMP/SHA256SUMS"
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort \
+            | while IFS= read -r f; do sha256sum "$f"; done > "$MANIFEST"
+          mv "$MANIFEST" SHA256SUMS
           sha256sum -c SHA256SUMS
 
-      - name: Publish floating tag
+      - name: Publish release
         run: |
           set -euo pipefail
           cd release
-          NOTES='## OpenBox Sandbox ${{ env.RELEASE_VERSION }} — hosted-bin release
+          TAG="v$RELEASE_VERSION"
+          python3 - <<'PY' > /tmp/release-notes.md
+          import os
+
+          print(f'''## OpenBox Sandbox {os.environ["RELEASE_VERSION"]} — hosted-bin release
 
           Pinned components:
-          - openbox-sandbox service + obs launcher: commit `${{ github.sha }}`
-          - OpenShell: locked release **0.0.88** (upstream sha256-verified tarballs)
+          - openbox-sandbox service + obs launcher: commit `{os.environ["GITHUB_SHA"]}`
+          - OpenShell: locked release **{os.environ["OPENSHELL_VERSION"]}** (upstream sha256-verified tarballs)
 
           Platforms: linux x86_64, linux aarch64, macOS arm64
 
@@ -222,46 +294,32 @@ jobs:
           Verification:
           ```
           sha256sum -c SHA256SUMS
-          cosign verify-blob --bundle <asset>.spdx.json.sbom.bundle.json \
-            --certificate-identity-regexp 'https://github.com/${{ github.repository }}' \
+          cosign verify-blob --bundle <asset>.spdx.json.sbom.bundle.json \\
+            --certificate-identity-regexp 'https://github.com/{os.environ["GITHUB_REPOSITORY"]}' \\
             --certificate-oidc-issuer https://token.actions.githubusercontent.com <asset>.spdx.json
           ```
 
-          Consumption: obs provision with OPENBOX_OPENSHELL_BUNDLE_URL (see packaging/launcher/README.md).'
-          # One-time cleanup of the legacy floating tag, if it still exists.
-          gh release delete hosted-bin --yes --cleanup-tag 2>/dev/null || true
-          # Atomic replace: upload under a DRAFT staging tag first (so a
-          # failed upload leaves the current release untouched and the
-          # staging release can never flash as "latest"), then retag and
-          # publish. Clean stale drafts left by any previous failed run.
-          TAG="v${{ env.RELEASE_VERSION }}"
-          STAGING="${TAG}-staging-${{ github.run_id }}"
-          for stale in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 \
-            --json tagName,isDraft -q '.[] | select(.isDraft==true) | .tagName'); do
-            gh release delete "$stale" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" \
-              >/dev/null 2>&1 || true
-          done
-          FILES=$(find . -maxdepth 1 -type f | sort)
-          gh release create "$STAGING" $FILES \
-            --repo "$GITHUB_REPOSITORY" --draft \
-            --title "OpenBox Sandbox ${{ env.RELEASE_VERSION }}" \
-            --notes "$NOTES" \
-            >/dev/null
-          # releases/tags/<tag> hides drafts; the list endpoint includes them.
-          STAGING_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
-            --jq ".[] | select(.tag_name==\"$STAGING\") | .id" | head -1)
-          # The new release is fully uploaded; only now remove the old one so
-          # the final tag is free for the retag.
-          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          Consumption: obs provision with OPENBOX_OPENSHELL_BUNDLE_URL (see packaging/launcher/README.md).''')
+          PY
+          mapfile -d '' -t FILES < <(find . -maxdepth 1 -type f -print0 | sort -z)
+          EXPECTED_COUNT=${#FILES[@]}
+          test "$EXPECTED_COUNT" -gt 0
+          gh release create "$TAG" "${FILES[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --draft \
+            --title "OpenBox Sandbox $RELEASE_VERSION" \
+            --notes-file /tmp/release-notes.md
+          RELEASE_ID=$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name==\"$TAG\" and .draft==true) | .id")
+          test -n "$RELEASE_ID"
+          COUNT=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq 'length')
+          echo "uploaded $COUNT of $EXPECTED_COUNT assets as draft $TAG"
+          test "$COUNT" -eq "$EXPECTED_COUNT"
           gh api --method PATCH \
-            "repos/$GITHUB_REPOSITORY/releases/$STAGING_ID" \
-            -f "tag_name=$TAG" >/dev/null
-          gh api --method PATCH \
-            "repos/$GITHUB_REPOSITORY/releases/$STAGING_ID" \
-            -f "draft=false" >/dev/null
-          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$STAGING" >/dev/null 2>&1 || true
-          COUNT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets|length')
-          echo "published $COUNT assets as $TAG"
-          test "$COUNT" -gt 0
+            "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false >/dev/null
+          echo "published $TAG with $COUNT assets"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
