@@ -1744,3 +1744,27 @@ OpenShell changes unless the lock is bumped deliberately.
   the fully pinned pipeline (SHA-pinned actions, digest-pinned containers,
   manual dispatch, formal name + v0.1.0 tag) is validated end-to-end in CI.
 - v0.1.0 re-published by CI with the formal notes.
+
+### Part 18 — Consumer re-validation vs v0.1.0 + darwin test (BOTH PASS)
+
+**1. AWS consumer flow vs the final release (v0.1.0):** download -> checksums ->
+`obs provision` (auto-fetch, gates verified 0.0.88) -> warm -> `obs verify`
+69/69 in 2.54s -> uninstall clean, 0 processes. One transient ghcr.io layer
+download error on the first attempt (network, retried fine).
+
+**2. Mac darwin consumer test (the last untested claim):** darwin arm64 assets
+from v0.1.0 -> checksums (Mach-O arm64) -> `obs provision` on macOS: wizard
+codesign path OK, gateway + service up (port 17671 — the user's Homebrew
+gateway occupies 17670; `OPENSHELL_SERVER_PORT` override works) -> `obs verify`
+**69/69 in 1.79s** -> uninstall clean. Pre-existing brew gateway untouched.
+
+**Bugs found + fixed:**
+- auto-fetch second-run bug: when the bundle already exists, auto-fetch
+  skipped WITHOUT pinning OPENSHELL_BUNDLE_DIR, so the wizard fell back to the
+  project-root default and died. Fixed in dogfood.rs (commit 429a847); released
+  obs predates the fix, so explicit OPENSHELL_BUNDLE_DIR remains the documented
+  primary flow.
+- The darwin warm step warns "did not reach ready in time" on the Mac (cold
+  Hypervisor VM boot vs the 10-min poll); the image cache is still warmed
+  (verify ran in 1.79s), so the warning is cosmetic on darwin. The ready-grep
+  may not match the darwin CLI status format.
