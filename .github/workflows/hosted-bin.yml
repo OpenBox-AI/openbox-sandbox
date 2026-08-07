@@ -242,7 +242,9 @@ jobs:
             --title "OpenBox Sandbox ${{ env.RELEASE_VERSION }}" \
             --notes "$NOTES" \
             >/dev/null
-          STAGING_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$STAGING" --jq .id)
+          # releases/tags/<tag> hides drafts; the list endpoint includes them.
+          STAGING_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases" \
+            --jq ".[] | select(.tag_name==\"$STAGING\") | .id" | head -1)
           gh api --method PATCH \
             "repos/$GITHUB_REPOSITORY/releases/$STAGING_ID" \
             -f "tag_name=$TAG" >/dev/null

@@ -182,11 +182,12 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
 }
 
 fn staging_release_id(gh: &std::path::Path, staging: &str) -> Result<String, ExitCode> {
+    // releases/tags/<tag> hides drafts; the list endpoint includes them.
     let output = Command::new(gh)
         .args([
             "api",
-            &format!("repos/{REPO}/releases/tags/{staging}"),
-            "--jq", ".id",
+            &format!("repos/{REPO}/releases"),
+            "--jq", &format!(".[] | select(.tag_name==\"{staging}\") | .id"),
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
