@@ -1826,3 +1826,13 @@ The remaining audit items, all closed:
 - Host lean-out: swap, Docker, Rust toolchain removed (3.8 GB used). Mac
   .dogfood removed. Release deferred per user (no dispatch since the last
   green publish; the pipeline remains dispatch-only).
+
+### Part 22 — Darwin warm warning: FIXED + validated on macOS
+
+The lifecycle-aware warm fix (reaped warm sandbox = success; Deleting
+accepted) was re-validated on the Mac with the current-code obs:
+- provision on port 17671 (brew gateway holds 17670): gates verified,
+  gateway + service up, warm -> **"[ok] cache warmed: w1786082895"** (the old
+  "did not reach ready in time" warning is gone).
+- verify: 69/69 in 3.84s; uninstall clean, port free.
+The same code is staged for the next release bump (0.1.1).
