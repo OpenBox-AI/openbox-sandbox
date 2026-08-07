@@ -1732,3 +1732,15 @@ OpenShell changes unless the lock is bumped deliberately.
 - Dev-host cosign keypair + password + cosign binary removed (CI signs
   keyless via OIDC; the pair was redundant).
 - Audit remediation from Part 15 already applied (SSH key, obsclient, /tmp).
+
+### Part 17 — Hardened pipeline validated green (ALL jobs)
+
+- cargo-deny now gates the ROOT crate (was launcher-only): licenses + advisories
+  + sources — green on push. GHSA-gfxp-f68g-8x78 (libyml <=0.0.5, via the
+  locked openshell-policy/serde_yml chain) has NO patched release; allowed
+  with justification in deny.toml + .trivyignore (operator-controlled policy
+  YAML only; revisit on OpenShell lock bump).
+- hosted-bin run 31137516994: security scan + 3 builds + publish ALL SUCCESS —
+  the fully pinned pipeline (SHA-pinned actions, digest-pinned containers,
+  manual dispatch, formal name + v0.1.0 tag) is validated end-to-end in CI.
+- v0.1.0 re-published by CI with the formal notes.
