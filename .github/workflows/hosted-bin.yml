@@ -233,9 +233,14 @@ jobs:
           # Atomic replace: upload under a DRAFT staging tag first (so a
           # failed upload leaves the current release untouched and the
           # staging release can never flash as "latest"), then retag and
-          # publish.
+          # publish. Clean stale drafts left by any previous failed run.
           TAG="v${{ env.RELEASE_VERSION }}"
           STAGING="${TAG}-staging-${{ github.run_id }}"
+          for stale in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 50 \
+            --json tagName,isDraft -q '.[] | select(.isDraft==true) | .tagName'); do
+            gh release delete "$stale" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" \
+              >/dev/null 2>&1 || true
+          done
           FILES=$(find . -maxdepth 1 -type f | sort)
           gh release create "$STAGING" $FILES \
             --repo "$GITHUB_REPOSITORY" --draft \
