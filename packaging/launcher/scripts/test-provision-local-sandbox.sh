@@ -96,8 +96,8 @@ if run_provision; then
   echo 'expected the 0.0.85 release bundle to be rejected' >&2
   exit 1
 fi
-grep -q 'required OpenShell source compatibility marker: f1690849' "$TMP/stderr"
-grep -q 'OPENSHELL_BIN_OVERRIDE=/path/to/openshell-target/release obs provision' "$TMP/stderr"
+grep -q 'required OpenShell source marker f1690849' "$TMP/stderr"
+grep -q 'or locked released version 0.0.88' "$TMP/stderr"
 test -f "$TMP/state/sentinel"
 
 make_bundle '0.0.0-gf16908490'
@@ -105,16 +105,16 @@ if run_provision; then
   echo 'expected a longer, non-exact source marker to be rejected' >&2
   exit 1
 fi
-grep -q 'required OpenShell source compatibility marker: f1690849' "$TMP/stderr"
+grep -q 'required OpenShell source marker f1690849' "$TMP/stderr"
 
 make_bundle '0.0.0-gf1690849'
 if run_provision; then
   echo 'expected the missing root service binary to stop the test run' >&2
   exit 1
 fi
-grep -q 'openshell-gateway source marker f1690849 verified' "$TMP/stderr"
-grep -q 'openshell source marker f1690849 verified' "$TMP/stderr"
-grep -q 'openshell-driver-vm source marker f1690849 verified' "$TMP/stderr"
+grep -q 'openshell-gateway verified (f1690849 | 0.0.88)' "$TMP/stderr"
+grep -q 'openshell verified (f1690849 | 0.0.88)' "$TMP/stderr"
+grep -q 'openshell-driver-vm verified (f1690849 | 0.0.88)' "$TMP/stderr"
 grep -q 'openbox-sandbox service not found' "$TMP/stderr"
 
 # An unrelated listener on a configured port must survive teardown. The wizard
