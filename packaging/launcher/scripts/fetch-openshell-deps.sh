@@ -59,8 +59,8 @@ musl_triple="${TRIPLE%-gnu}-musl"
 # When OPENBOX_OPENSHELL_BUNDLE_URL is set, fetch the operator-hosted bundle
 # (openbox-sandbox-bundle-<TRIPLE>.tar.gz + SHA256SUMS served from the
 # "hosted bin" release server) instead of GitHub release tarballs. This is
-# the toolchain-free flow: the tarball contains the source-built, pin-verified,
-# supervisor-embedded binaries (bin/openshell, bin/openshell-gateway,
+# the toolchain-free flow: the tarball contains the locked released
+# OpenShell binaries (bin/openshell, bin/openshell-gateway,
 # libexec/openshell-driver-vm).
 BUNDLE_URL="${OPENBOX_OPENSHELL_BUNDLE_URL:-}"
 if [[ -n "$BUNDLE_URL" ]]; then

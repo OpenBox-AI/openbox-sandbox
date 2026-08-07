@@ -48,6 +48,25 @@ set -Eeuo pipefail
 umask 077
 
 die() { printf 'provision: %s\n' "$*" >&2; exit 1; }
+# Portable sha256 (sha256sum on Linux, shasum on macOS).
+sha256_hex() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    die "neither sha256sum nor shasum is available"
+  fi
+}
+# Portable listen check (lsof preferred, /dev/tcp fallback).
+port_listening() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+  else
+    (echo >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1
+  fi
+}
 info() { printf '  ==> %s\n' "$*" >&2; }
 ok()   { printf '  [ok] %s\n' "$*" >&2; }
 warn() { printf '  [warn] %s\n' "$*" >&2; }
@@ -196,7 +215,7 @@ EOF
   require_source_marker "$CLI_BIN" "openshell"
   require_source_marker "$DRIVER_BIN" "openshell-driver-vm"
   [[ -x "$SANDBOX_BIN" ]] \
-    || die "openbox-sandbox service not found at $SANDBOX_BIN (run cargo build --release --bin openbox-sandbox)"
+    || die "openbox-sandbox service not found at $SANDBOX_BIN (set OPENBOX_SANDBOX_BIN to the downloaded release binary)"
   [[ -f "$POLICY_FILE" ]] || die "policy file not found at $POLICY_FILE"
 fi
 
@@ -556,10 +575,9 @@ cp "$TLS_DIR/client/tls.crt"   "$RUNTIME_MTLS_DIR/tls.crt"
 cp "$TLS_DIR/client/tls.key"    "$RUNTIME_MTLS_DIR/tls.key"
 chmod 600 "$RUNTIME_MTLS_DIR"/*
 
-CALLER_FP="$(openssl x509 -in "$SANDBOX_TLS_DIR/client.crt" -outform DER \
-  | shasum -a 256 | awk '{print $1}')"
-ADAPTER_SHA="$(shasum -a 256 "$SANDBOX_BIN" | awk '{print $1}')"
-POLICY_SHA="$(shasum -a 256 "$POLICY_FILE" | awk '{print $1}')"
+CALLER_FP="$(openssl x509 -in "$SANDBOX_TLS_DIR/client.crt" -outform DER | sha256_hex /dev/stdin)"
+ADAPTER_SHA="$(sha256_hex "$SANDBOX_BIN")"
+POLICY_SHA="$(sha256_hex "$POLICY_FILE")"
 ok "caller fingerprint: $CALLER_FP"
 ok "adapter sha:        $ADAPTER_SHA"
 ok "policy sha:         $POLICY_SHA"
@@ -609,7 +627,7 @@ else
   echo $! >"$SANDBOX_PID_FILE"
   service_ready=0
   for _ in $(seq 1 40); do
-    if lsof -nP -iTCP:"$SANDBOX_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    if port_listening "$SANDBOX_PORT"; then
       ok "service up (pid=$(cat "$SANDBOX_PID_FILE"))"
       service_ready=1
       break

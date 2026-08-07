@@ -73,30 +73,21 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
         }
     }
 
-    // ── Replace the floating tag ──────────────────────────────────────────
+    // ── Atomic replace ────────────────────────────────────────────────────
+    // Upload under a staging tag first so a failed upload leaves the current
+    // release untouched; only after the staging release exists do we delete
+    // the old one and retag the staging release to the final tag.
     step(&format!("Publishing tag '{tag}'"));
-    let exists = Command::new(&gh)
-        .args(["release", "view", tag, "--repo", REPO])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-    if matches!(exists, Ok(s) if s.success()) {
-        info(&format!("replacing existing release '{tag}'"));
-        let replaced = Command::new(&gh)
-            .args(["release", "delete", tag, "--yes", "--cleanup-tag", "--repo", REPO])
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .status();
-        if !matches!(replaced, Ok(s) if s.success()) {
-            err(&format!("could not delete previous release '{tag}'"));
-            return ExitCode::FAILURE;
-        }
-    }
-
-    // ── Upload assets ─────────────────────────────────────────────────────
+    let staging = format!("{tag}-staging-{}", std::process::id());
+    let display = tag.trim_start_matches('v');
+    let title = format!("OpenBox Sandbox {display}");
+    let notes = notes_markdown(tag);
     let mut create = Command::new(&gh);
-    create.args(["release", "create", tag, "--repo", REPO, "--title", &format!("OpenBox Sandbox hosted bin ({tag})"),
-        "--notes", "Single-bin obs (embedded scripts), root service, prebuilt verify harness, pinned OpenShell bundle (source pin f1690849), policy, SBOMs.\n\nVerify: sha256sum -c SHA256SUMS   (then scan with Syft v1.20.0)."]);
+    create.args([
+        "release", "create", &staging, "--repo", REPO,
+        "--title", &title,
+        "--notes", &notes,
+    ]);
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
         Err(e) => {
@@ -117,16 +108,47 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
         .stderr(Stdio::inherit())
         .status();
     match created {
-        Ok(s) if s.success() => ok(&format!("release '{tag}' published ({count} assets)")),
+        Ok(s) if s.success() => ok(&format!("staging release '{staging}' uploaded ({count} assets)")),
         Ok(_) => {
-            err("gh release create failed");
+            err(&format!("gh release create failed; the current '{tag}' release is untouched"));
             return ExitCode::FAILURE;
         }
         Err(e) => {
-            err(&format!("gh release create failed: {e}"));
+            err(&format!("gh release create failed: {e}; the current '{tag}' release is untouched"));
             return ExitCode::FAILURE;
         }
     }
+
+    // Retag the staging release to the final tag, replacing the old one.
+    let staging_id = match staging_release_id(&gh, &staging) {
+        Ok(id) => id,
+        Err(code) => return code,
+    };
+    let retag = Command::new(&gh)
+        .args([
+            "api", "--method", "PATCH",
+            &format!("repos/{REPO}/releases/{staging_id}"),
+            "-f", &format!("tag_name={tag}"),
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .status();
+    match retag {
+        Ok(s) if s.success() => {}
+        _ => {
+            err(&format!(
+                "staging upload succeeded but retagging to '{tag}' failed;                  the previous release is still current (staging tag: {staging})"
+            ));
+            return ExitCode::FAILURE;
+        }
+    }
+    // The previous tag was moved by the retag; delete any leftover tag ref.
+    let _ = Command::new(&gh)
+        .args(["api", "--method", "DELETE", &format!("repos/{REPO}/git/refs/tags/{staging}")])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    ok(&format!("release '{tag}' published ({count} assets)"));
 
     // ── Report ────────────────────────────────────────────────────────────
     info("download base (public when the repo is public):");
@@ -143,7 +165,62 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn staging_release_id(gh: &std::path::Path, staging: &str) -> Result<String, ExitCode> {
+    let output = Command::new(gh)
+        .args([
+            "api",
+            &format!("repos/{REPO}/releases/tags/{staging}"),
+            "--jq", ".id",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output();
+    match output {
+        Ok(o) if o.status.success() => {
+            let id = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if id.is_empty() {
+                err("cannot resolve staging release id");
+                Err(ExitCode::FAILURE)
+            } else {
+                Ok(id)
+            }
+        }
+        _ => {
+            err("cannot resolve staging release id");
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+fn notes_markdown(tag: &str) -> String {
+    format!(
+        "## OpenBox Sandbox {version}
+
+Pinned components:
+- openbox-sandbox service + obs launcher: source-pinned releases (see git history)
+- OpenShell: locked release **0.0.88** (upstream sha256-verified tarballs)
+
+Platforms: linux x86_64, linux aarch64, macOS arm64
+
+Assets: per-platform obs, openbox-sandbox, openbox-sandbox-verify and the
+OpenShell bundle tarball, plus the sandbox policy, SHA256SUMS, SPDX +
+CycloneDX SBOMs and keyless cosign bundles.
+
+Verification:
+```
+sha256sum -c SHA256SUMS
+cosign verify-blob --bundle <asset>.spdx.json.sbom.bundle.json \
+  --certificate-identity-regexp 'https://github.com/{repo}' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com <asset>.spdx.json
+```
+
+Consumption: obs provision with OPENBOX_OPENSHELL_BUNDLE_URL (see packaging/launcher/README.md).",
+        version = tag.trim_start_matches('v'),
+        repo = REPO
+    )
+}
+
 fn banner_publish() {
     crate::banner();
-    crate::info("publish release dir -> GitHub Releases (floating tag)");
+    crate::info("publish release dir -> GitHub Releases (atomic replace)");
 }
