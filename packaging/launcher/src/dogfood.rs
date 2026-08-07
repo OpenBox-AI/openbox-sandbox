@@ -61,6 +61,9 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         .map(PathBuf::from)
         .unwrap_or_else(|_| cwd.join("openbox-sandbox-bundle"));
     if bundle_dir.join("bin/openshell-gateway").is_file() {
+        // The wizard's default bundle path differs (project-root based); pin
+        // the resolved bundle regardless of whether a fetch happened.
+        unsafe { std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir) };
         return Ok(());
     }
     let script = match crate::scripts::resolve("fetch-openshell-deps.sh") {
