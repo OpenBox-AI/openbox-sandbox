@@ -14,7 +14,7 @@ jobs:
     name: launcher tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - name: Run launcher script tests
         run: |
           set -euo pipefail
@@ -31,10 +31,10 @@ jobs:
     name: cargo deny (licenses · advisories · sources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: taiki-e/install-action@899b013517f9e7774591216672bf75a46bb9a481
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: taiki-e/install-action@2ce5577e7dcdd7504d849e3cd211c18c81fa3ab1
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
       - name: Check licenses, advisories, and sources
         # deny.toml is auto-discovered from the repo root; --config placement
         # differs across cargo-deny CLI generations, so it is omitted.
