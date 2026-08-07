@@ -4,7 +4,14 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+# GHSA-gfxp-f68g-8x78 (libyml <=0.0.5, yaml_string_extend unsound): transitive
+# via the LOCKED upstream openshell-policy crate (serde_yml 0.0.12); no
+# patched libyml exists and the pin cannot be changed here. Reachable only by
+# parsing operator-supplied policy YAML at provision time — not by sandbox
+# workloads. Revisit when the OpenShell lock bumps.
+ignore = [
+  { id = "GHSA-gfxp-f68g-8x78", reason = "locked upstream openshell-policy dep; no patched release; operator-controlled input only" },
+]
 
 [licenses]
 version = 2

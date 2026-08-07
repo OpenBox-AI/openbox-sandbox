@@ -17,8 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@cargo-deny
       - name: Check licenses
-        working-directory: packaging/launcher
-        run: cargo deny --config ../../deny.toml check licenses
+        run: cargo deny --config deny.toml check licenses
 
   advisories:
     name: Advisory audit
@@ -27,8 +26,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@cargo-deny
       - name: Check advisories
-        working-directory: packaging/launcher
-        run: cargo deny --config ../../deny.toml check advisories
+        run: cargo deny --config deny.toml check advisories
 
   sources:
     name: Source audit
@@ -37,5 +35,4 @@ jobs:
       - uses: actions/checkout@v4
       - uses: taiki-e/install-action@cargo-deny
       - name: Check sources
-        working-directory: packaging/launcher
-        run: cargo deny --config ../../deny.toml check sources
+        run: cargo deny --config deny.toml check sources

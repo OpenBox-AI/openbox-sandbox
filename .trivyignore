@@ -1,0 +1,6 @@
+# GHSA-gfxp-f68g-8x78: libyml <=0.0.5 yaml_string_extend unsound. Transitive via the
+# LOCKED upstream openshell-policy crate (serde_yml 0.0.12); no patched libyml release
+# exists and the pin cannot be changed here. Reachable only by parsing
+# operator-supplied policy YAML at provision time, not by sandbox workloads.
+# Revisit when the OpenShell lock bumps (see deny.toml for the matching allow).
+GHSA-gfxp-f68g-8x78
