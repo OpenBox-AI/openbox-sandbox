@@ -10,29 +10,25 @@ permissions:
   contents: read
 
 jobs:
-  licenses:
-    name: License audit
+  launcher-tests:
+    name: launcher tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@cargo-deny
-      - name: Check licenses
-        run: cargo deny --config deny.toml check licenses
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Run launcher script tests
+        run: |
+          set -euo pipefail
+          for t in test-generate-sbom.sh test-verify-release.sh test-provision-local-sandbox.sh; do
+            bash "packaging/launcher/scripts/$t"
+          done
 
-  advisories:
-    name: Advisory audit
+  deny:
+    name: cargo deny (licenses · advisories · sources)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@cargo-deny
-      - name: Check advisories
-        run: cargo deny --config deny.toml check advisories
-
-  sources:
-    name: Source audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: taiki-e/install-action@cargo-deny
-      - name: Check sources
-        run: cargo deny --config deny.toml check sources
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: taiki-e/install-action@899b013517f9e7774591216672bf75a46bb9a481
+        with:
+          tool: cargo-deny
+      - name: Check licenses, advisories, and sources
+        run: cargo deny --config deny.toml check licenses advisories sources

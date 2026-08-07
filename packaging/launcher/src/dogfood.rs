@@ -240,8 +240,14 @@ pub fn run_status() -> ExitCode {
     let gateway_log = state_root.join("gateway/gateway.log");
     let sandbox_log = state_root.join("sandbox-service.log");
 
-    port_phase(17670, "gateway");
-    port_phase(17443, "sandbox service");
+    // The wizard records the actual ports (OPENSHELL_SERVER_PORT and
+    // OPENBOX_SANDBOX_PORT overrides are honored); read them back instead of
+    // assuming the defaults.
+    let gateway_port = read_gateway_port(&home).unwrap_or(17670);
+    let sandbox_port = read_sandbox_port(&service_config).unwrap_or(17443);
+
+    port_phase(gateway_port, "gateway");
+    port_phase(sandbox_port, "sandbox service");
     pid_phase(&gateway_pid_file, "gateway");
     pid_phase(&sandbox_pid_file, "sandbox service");
     artifact_phase(&agent_env, "agent.env");
@@ -251,13 +257,50 @@ pub fn run_status() -> ExitCode {
     info(&format!("gateway log: {}", gateway_log.display()));
     info(&format!("sandbox log: {}", sandbox_log.display()));
 
-    let all_up = port_open(17670) && port_open(17443);
+    let all_up = port_open(gateway_port) && port_open(sandbox_port);
     if all_up {
         ok("stack ready — run `obs verify` to exercise the lifecycle");
     } else {
         warn("stack not fully up — run `obs provision`");
     }
     ExitCode::SUCCESS
+}
+
+/// Read the gateway port from the wizard-written metadata (active gateway).
+/// Dependency-free: the launcher has no JSON crate, and the metadata format
+/// is wizard-owned (`"gateway_port": <n>`), so a bounded string scan suffices.
+fn read_gateway_port(home: &Path) -> Option<u16> {
+    let name = std::fs::read_to_string(home.join(".config/openshell/active_gateway"))
+        .ok()?
+        .trim()
+        .to_string();
+    let meta = home
+        .join(".config/openshell/gateways")
+        .join(if name.is_empty() { "openshell" } else { &name })
+        .join("metadata.json");
+    let body = std::fs::read_to_string(meta).ok()?;
+    let key = "\"gateway_port\"";
+    let start = body.find(key)? + key.len();
+    let rest = &body[start..];
+    let digits: String = rest
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    digits.parse::<u16>().ok()
+}
+
+/// Read the sandbox service port from the generated service.json
+/// (`"bind_address": "127.0.0.1:<port>"`).
+fn read_sandbox_port(service_config: &Path) -> Option<u16> {
+    let body = std::fs::read_to_string(service_config).ok()?;
+    let key = "\"bind_address\"";
+    let start = body.find(key)? + key.len();
+    let rest = &body[start..];
+    let quoted = rest.trim_start().strip_prefix(':')?.trim_start();
+    let value = quoted.strip_prefix('"')?;
+    let end = value.find('"')?;
+    value[..end].rsplit_once(':')?.1.parse::<u16>().ok()
 }
 
 fn banner_phase(name: &str) {

@@ -7,7 +7,8 @@ TMP="$(mktemp -d)"
 PIDS=()
 cleanup() {
   local pid
-  for pid in "${PIDS[@]}"; do
+  # ${arr[@]+...} guard keeps bash 3.2 (macOS) happy with empty arrays.
+  for pid in "${PIDS[@]+"${PIDS[@]}"}"; do
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done
