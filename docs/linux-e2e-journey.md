@@ -1792,3 +1792,23 @@ gateway occupies 17670; `OPENSHELL_SERVER_PORT` override works) -> `obs verify`
 **Verified clean:** teardown ownership/fail-closed logic, agent.env parsing +
 service-binary hash gate, scripts.rs materialization, pin gate, fetch-script
 URL/API/latest handling, main.rs parsing. All 8 launcher tests green.
+
+### Part 20 — Fix-all pass completion (FULLY GREEN run 31145623942)
+
+The remaining audit items, all closed:
+- Warm step: lifecycle-aware (a reaped warm sandbox = success; Deleting
+  accepted; only stuck Provisioning/Error is a miss). Root cause of the
+  darwin warning: the sandbox ran /bin/true and was reaped before the poll.
+- obs status + --verify-runtime exercised: status reports gracefully;
+  --verify-runtime exposed that the release lacked the STRICT policy ->
+  release now ships BOTH policies (42 assets).
+- Atomic publish validated in CI: draft staging -> resolve id via the
+  releases LIST endpoint (tags lookup hides drafts — the 404) -> delete old
+  release only after the new upload (the 422 — tag still held by the old
+  release) -> retag -> publish. The draft-staging race is closed (drafts are
+  never "latest").
+- A failed run's partial state left duplicate-tag drafts; cleaned manually
+  and the workflow now self-cleans stale drafts before publishing.
+- obs verify hints at OPENBOX_VERIFY_BIN when cargo is absent.
+- Final state: v0.1.0 published, 42 assets, both policies, sole release;
+  all 5 pipeline jobs green (scan incl. MEDIUM gate, 3 builds, publish).
