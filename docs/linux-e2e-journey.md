@@ -1836,3 +1836,27 @@ accepted) was re-validated on the Mac with the current-code obs:
   "did not reach ready in time" warning is gone).
 - verify: 69/69 in 3.84s; uninstall clean, port free.
 The same code is staged for the next release bump (0.1.1).
+
+### Part 23 — Current-code testing round (4 uncovered paths)
+
+All tests used CI-artifact/current-code binaries (the release predates several
+fixes; release binaries are NOT representative of current behavior):
+
+1. **Auto-fetch second-run fix — VALIDATED (host, linux):** run 1 with only
+   OPENBOX_OPENSHELL_BUNDLE_URL fetched once -> bundle ready -> warm ->
+   complete. Run 2 (same env, bundle present, cwd correct): **0 fetch
+   attempts**, gates verified, warm, complete. The pin-on-skip fix works.
+   (First run-2 attempt failed only because the test script forgot `cd` — the
+   auto-fetch default is cwd-relative, correctly.)
+2. **obs status port reporting — VALIDATED (macOS, current obs):** NO_START=1
+   provision on 17777/17778, then `obs status` reports
+   "not listening on 17777/17778" (metadata-read) instead of the defaults.
+3. **obs publish (Rust) draft-staging flow — VALIDATED (host):** throwaway
+   tag v0.1.2-test: staging upload (7 assets) -> retag -> published
+   (draft=false) -> deleted. The atomic flow works outside CI's bash version.
+4. **NO_START=1 — VALIDATED:** config written, no processes, warm skipped,
+   uninstall clean.
+
+Cleanup: obsclient removed, test artifacts gone, throwaway release deleted,
+tunnel stopped. Note: CI artifacts from run 31145623942 predate the status
+fix — tests must use current-code binaries (local build or a fresh dispatch).
