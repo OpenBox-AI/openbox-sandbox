@@ -1860,3 +1860,34 @@ fixes; release binaries are NOT representative of current behavior):
 Cleanup: obsclient removed, test artifacts gone, throwaway release deleted,
 tunnel stopped. Note: CI artifacts from run 31145623942 predate the status
 fix — tests must use current-code binaries (local build or a fresh dispatch).
+
+## Part 11 — Canonical native-integration Temporal shape (PASS)
+
+The temporal CONSTRAIN proof was reshaped to the released SDK's canonical
+integration pattern (measured against `OpenBox-AI/openbox-temporal-sdk-python`
+v1.4.0 and `poc-temporal-agent`): a standard Temporal `Worker` composed with
+`OpenBoxPlugin` instead of the `create_openbox_worker` wrapper route.
+
+```python
+worker = Worker(
+    client, task_queue=...,
+    workflows=[GovernedBatchPocWorkflow], activities=[],
+    plugins=[OpenBoxPlugin(openbox_url=..., openbox_api_key=...,
+                           sandbox=TemporalSandboxConfig(...))],
+)
+```
+
+- The workflow is plain Temporal (`workflow.execute_activity`); the governed
+  command is evaluated with Core at activity time inside the plugin's
+  interceptor chain, and the verdict branches execution: CONSTRAIN runs in a
+  sandbox under the verdict-named policy (registry-resolved by id, pinned by
+  sha), ALLOW runs on the host under a controlled minimal environment.
+- The application agent still evaluates with Core before starting the workflow
+  (governance precedes start); evidence records both the pre-workflow decision
+  and the activity-time evaluation.
+- The governed span joins the workflow's W3C trace via the task-header
+  `_tracer-data` payload (the SDK's governed branch decodes it with the default
+  payload converter); the run-time tracing interceptor is a passive component.
+- Matrix green: behavioral CONSTRAIN sandbox, ALLOW host, gpt-4o CONSTRAIN
+  sandbox, external Temporal dev server sandbox; POC 204 + SDK 1086 +
+  dispatcher 49 tests passing.
