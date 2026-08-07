@@ -1768,3 +1768,27 @@ gateway occupies 17670; `OPENSHELL_SERVER_PORT` override works) -> `obs verify`
   Hypervisor VM boot vs the 10-min poll); the image cache is still warmed
   (verify ran in 1.79s), so the warning is cosmetic on darwin. The ready-grep
   may not match the darwin CLI status format.
+
+### Part 19 — Systematic line-by-line audit (2,662 lines) + fix-all pass
+
+**Fixed (committed 453569f + fadbd6f):**
+- HIGH: `obs publish`/CI deleted the old release before uploading -> atomic
+  replace via DRAFT staging tag + retag + publish; a failed upload leaves the
+  current release untouched and staging can never flash as "latest".
+- publish.rs metadata formalized (title OpenBox Sandbox <version>; notes for
+  the locked-0.0.88 era) — previously stale "hosted bin"/"source pin" text.
+- Wizard portability: hardcoded shasum -> sha256_hex() (sha256sum|shasum);
+  hardcoded lsof in the service-ready loop -> port_listening() with /dev/tcp
+  fallback; stale cargo error message -> OPENBOX_SANDBOX_BIN.
+- Warm step lifecycle-aware: a reaped warm sandbox (fast hosts) counts as
+  success; Deleting phase accepted; only stuck Provisioning/Error is a miss.
+  (Root cause of the darwin warning: sandbox already ran /bin/true and was
+  reaped before the poll's first get.)
+- Release now ships BOTH policies (strict + dev): bundle.rs requires both
+  names, exposed by --verify-runtime on the released bundle.
+- obs verify hints at OPENBOX_VERIFY_BIN when cargo is absent.
+- Stale docs aligned (setup removed, version gate wording).
+
+**Verified clean:** teardown ownership/fail-closed logic, agent.env parsing +
+service-binary hash gate, scripts.rs materialization, pin gate, fetch-script
+URL/API/latest handling, main.rs parsing. All 8 launcher tests green.
