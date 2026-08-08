@@ -297,10 +297,6 @@ pub fn run_status() -> ExitCode {
     info(&format!("state root:  {}", state_root.display()));
     info(&format!("gateway log: {}", gateway_log.display()));
     info(&format!("sandbox log: {}", sandbox_log.display()));
-    println!();
-    info("demo prerequisites:");
-    crate::demo::print_status();
-
     let all_up = port_open(gateway_port) && port_open(sandbox_port);
     if all_up {
         ok("stack ready — run `obs verify` to exercise the lifecycle");
