@@ -702,8 +702,9 @@ fn ensure_adapter(
     let stderr = stdout
         .try_clone()
         .map_err(|error| format!("cannot clone adapter log: {error}"))?;
-    let mut child = Command::new("uv")
+    let mut child = Command::new("nohup")
         .current_dir(repo)
+        .arg("uv")
         .args([
             "run",
             "--package",
