@@ -415,6 +415,26 @@ mkdir -p "$TLS_DIR"
   --server-san "host.containers.internal" \
   --server-san "host.docker.internal" >/dev/null 2>&1 || die "generate-certs failed"
 
+# Harden the CA for strict TLS consumers: openshell-gateway generate-certs
+# omits the keyUsage extension, and OpenSSL 3.5+ rejects an issuer whose CA
+# certificate lacks keyCertSign ("CA cert does not include key usage
+# extension"). Re-sign the CA with the same key/subject plus the required
+# extensions so leaves issued below remain verifiable end-to-end.
+CA_SUBJ="$(openssl x509 -in "$TLS_DIR/ca.crt" -noout -subject -nameopt RFC2253)"
+openssl req -new -key "$TLS_DIR/ca.key" -subj "$CA_SUBJ" \
+  -out "$TLS_DIR/ca.csr.tmp" 2>/dev/null || die "CA re-key CSR failed"
+openssl x509 -req -in "$TLS_DIR/ca.csr.tmp" -signkey "$TLS_DIR/ca.key" \
+  -out "$TLS_DIR/ca.crt.tmp" -days 825 \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign,digitalSignature" \
+  -addext "subjectKeyIdentifier=hash" \
+  -addext "authorityKeyIdentifier=keyid,issuer" 2>/dev/null \
+  || die "CA re-sign failed"
+mv "$TLS_DIR/ca.crt.tmp" "$TLS_DIR/ca.crt"
+rm -f "$TLS_DIR/ca.csr.tmp"
+openssl verify -CAfile "$TLS_DIR/ca.crt" "$TLS_DIR/ca.crt" >/dev/null 2>&1 \
+  || die "hardened CA failed self-verify"
+
 mkdir -p "$GATEWAY_MTLS_DIR"
 chmod 700 "$GATEWAY_META_DIR" "$GATEWAY_MTLS_DIR" 2>/dev/null || true
 cp "$TLS_DIR/ca.crt"            "$GATEWAY_MTLS_DIR/ca.crt"
