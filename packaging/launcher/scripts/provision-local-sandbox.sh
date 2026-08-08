@@ -776,47 +776,37 @@ elif [[ "$NO_START" == "1" ]]; then
 elif [[ -x "$CLI_BIN" ]]; then
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
   warm_name="w$(date +%s)"
-  # The very first microVM boot after a cold rootfs build can fail once on
-  # small hosts (kernel/disk provisioning race); a retry reuses the built
-  # rootfs and boots cleanly. Retry before giving up so provision does not
-  # fail the whole stack on a cold-boot flake.
-  warm_created=0
-  for attempt in 1 2 3; do
-    if "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >/dev/null 2>&1; then
-      warm_created=1
+  # The openshell CLI fails its create after a fixed 300s provisioning
+  # timeout, and the cold path (image pull + rootfs build + first microVM
+  # boot) can exceed that on small hosts. The gateway keeps provisioning the
+  # sandbox after the CLI gives up, so a create that exits non-zero is not a
+  # failure: poll the sandbox by name and reap it either way.
+  "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >/dev/null 2>&1 \
+    || warn "warm sandbox create timed out (CLI 300s provisioning limit); polling by name"
+  warmed=0
+  # Cold-cache create can take ~5-6 min (image pull/extract + microVM boot
+  # on small hosts); poll up to 10 min. A sandbox that no longer resolves
+  # has already run to completion and been reaped (fast hosts), which is
+  # also a warm cache; only a stuck Provisioning/Error phase is a miss.
+  for _ in $(seq 1 120); do
+    status="$("$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
+      info "warm sandbox $warm_name already completed"
+      warmed=1
+      break
+    }
+    if printf '%s\n' "$status" | grep -qiE 'ready|running|deleting'; then
+      warmed=1
       break
     fi
-    warn "warm sandbox create failed (attempt $attempt/3); retrying after rootfs build"
-    sleep 10
+    sleep 5
   done
-  if [[ "$warm_created" == "1" ]]; then
-    warmed=0
-    # Cold-cache create can take ~5-6 min (image pull/extract + microVM boot
-    # on small hosts); poll up to 10 min. A sandbox that no longer resolves
-    # has already run to completion and been reaped (fast hosts), which is
-    # also a warm cache; only a stuck Provisioning/Error phase is a miss.
-    for _ in $(seq 1 120); do
-      status="$("$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
-        info "warm sandbox $warm_name already completed"
-        warmed=1
-        break
-      }
-      if printf '%s\n' "$status" | grep -qiE 'ready|running|deleting'; then
-        warmed=1
-        break
-      fi
-      sleep 5
-    done
-    if [[ "$warmed" == "1" ]]; then
-      ok "cache warmed: $warm_name"
-    else
-      warn "warm sandbox did not reach ready in time; first request may be slow"
-    fi
-    "$CLI_BIN" sandbox delete "$warm_name" >/dev/null 2>&1 \
-      || warn "warm sandbox $warm_name delete failed (gateway will reap it)"
+  if [[ "$warmed" == "1" ]]; then
+    ok "cache warmed: $warm_name"
   else
-    die "cache warm failed: sandbox create rejected by gateway; see $GATEWAY_LOG"
+    warn "warm sandbox did not reach ready in time; first request may be slow"
   fi
+  "$CLI_BIN" sandbox delete "$warm_name" >/dev/null 2>&1 \
+    || warn "warm sandbox $warm_name delete failed (gateway will reap it)"
 else
   warn "cache warm skipped (no CLI at $CLI_BIN)"
 fi
