@@ -421,7 +421,8 @@ mkdir -p "$TLS_DIR"
 # extension"). Re-sign the CA with the same key/subject plus the required
 # extensions so leaves issued below remain verifiable end-to-end.
 CA_SUBJ="$(openssl x509 -in "$TLS_DIR/ca.crt" -noout -subject -nameopt RFC2253 \
-  | sed 's/^subject=/\//; s/,/\//g')"
+  | sed 's/^subject=//' \
+  | awk -F, '{for (i = NF; i >= 1; i--) printf "/%s", $i}')"
 cat > "$TLS_DIR/ca.ext" <<'EOF'
 basicConstraints=critical,CA:TRUE
 keyUsage=critical,keyCertSign,cRLSign,digitalSignature
