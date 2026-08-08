@@ -1953,3 +1953,16 @@ closed connections for deadlines > 2 min, surfacing as `sandbox_protocol_failed`
 auto-loads the spec's LLM key, which made gpt (always-CONSTRAIN per its
 instructions) decide the g2 ALLOW case and fail on a missing policy.
 
+
+## Part 15 — Architecture correction: the demo is POC-owned (PASS)
+
+`obs demo up/run/down` and the provision's demo artifacts (demo Core identity,
+demo policy registry) were removed from the sandbox repo — `obs` is again the
+lean sandbox operator (provision/uninstall/verify/status/publish only). The
+demo lifecycle moved into the POC repo as `temporal_constrain_poc.demo_cli`
+(up/run/down/status): scenario matrix (g1–g4), mock-Core identity, demo policy
+registry, run-spec (demo.json), adapter process, temporal CLI ensure, and the
+g2 behavioral-decider pin. The run-spec contract doc moved with it. Verified
+on the EC2: `demo_cli up` → `demo_cli run --scenario all` (g1 constrain→sandbox,
+g2 allow→host, g3 constrain→sandbox, g4 constrain→sandbox — all PASS) →
+`demo_cli down` → `demo_cli up` (idempotent) with no leaked processes.
