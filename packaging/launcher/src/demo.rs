@@ -349,6 +349,12 @@ fn run_one_scenario(
                 .and_then(Value::as_str)
                 .unwrap_or("gpt-4o"),
         );
+    } else {
+        // Behavioral scenarios (g1/g2/g4) must use the fixed guardrail
+        // decider, not the LLM. The runner auto-loads the key from the spec's
+        // llm.api_key_file whenever OPENAI_API_KEY is absent, so pin an empty
+        // key to keep the behavioral Core active for these scenarios.
+        command.env("OPENAI_API_KEY", "");
     }
 
     let status = tee_command(&mut command, &log_path);
