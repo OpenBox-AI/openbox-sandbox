@@ -776,7 +776,20 @@ elif [[ "$NO_START" == "1" ]]; then
 elif [[ -x "$CLI_BIN" ]]; then
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
   warm_name="w$(date +%s)"
-  if "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >/dev/null 2>&1; then
+  # The very first microVM boot after a cold rootfs build can fail once on
+  # small hosts (kernel/disk provisioning race); a retry reuses the built
+  # rootfs and boots cleanly. Retry before giving up so provision does not
+  # fail the whole stack on a cold-boot flake.
+  warm_created=0
+  for attempt in 1 2 3; do
+    if "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >/dev/null 2>&1; then
+      warm_created=1
+      break
+    fi
+    warn "warm sandbox create failed (attempt $attempt/3); retrying after rootfs build"
+    sleep 10
+  done
+  if [[ "$warm_created" == "1" ]]; then
     warmed=0
     # Cold-cache create can take ~5-6 min (image pull/extract + microVM boot
     # on small hosts); poll up to 10 min. A sandbox that no longer resolves
