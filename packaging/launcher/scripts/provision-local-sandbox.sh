@@ -421,18 +421,20 @@ mkdir -p "$TLS_DIR"
 # extension"). Re-sign the CA with the same key/subject plus the required
 # extensions so leaves issued below remain verifiable end-to-end.
 CA_SUBJ="$(openssl x509 -in "$TLS_DIR/ca.crt" -noout -subject -nameopt RFC2253 \
-  | sed 's/^subject=//; s/,/\//g')"
+  | sed 's/^subject=/\//; s/,/\//g')"
+cat > "$TLS_DIR/ca.ext" <<'EOF'
+basicConstraints=critical,CA:TRUE
+keyUsage=critical,keyCertSign,cRLSign,digitalSignature
+subjectKeyIdentifier=hash
+authorityKeyIdentifier=keyid,issuer
+EOF
 openssl req -new -key "$TLS_DIR/ca.key" -subj "$CA_SUBJ" \
   -out "$TLS_DIR/ca.csr.tmp" 2>/dev/null || die "CA re-key CSR failed"
 openssl x509 -req -in "$TLS_DIR/ca.csr.tmp" -signkey "$TLS_DIR/ca.key" \
-  -out "$TLS_DIR/ca.crt.tmp" -days 825 \
-  -addext "basicConstraints=critical,CA:TRUE" \
-  -addext "keyUsage=critical,keyCertSign,cRLSign,digitalSignature" \
-  -addext "subjectKeyIdentifier=hash" \
-  -addext "authorityKeyIdentifier=keyid,issuer" 2>/dev/null \
+  -out "$TLS_DIR/ca.crt.tmp" -days 825 -extfile "$TLS_DIR/ca.ext" 2>/dev/null \
   || die "CA re-sign failed"
 mv "$TLS_DIR/ca.crt.tmp" "$TLS_DIR/ca.crt"
-rm -f "$TLS_DIR/ca.csr.tmp"
+rm -f "$TLS_DIR/ca.csr.tmp" "$TLS_DIR/ca.ext"
 openssl verify -CAfile "$TLS_DIR/ca.crt" "$TLS_DIR/ca.crt" >/dev/null 2>&1 \
   || die "hardened CA failed self-verify"
 
