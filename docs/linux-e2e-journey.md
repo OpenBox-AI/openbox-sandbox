@@ -1913,3 +1913,24 @@ The local SDK fork was aligned to the released v1.4.0 surface and behavior:
   dispatcher executes the verdict without a second client.
 - Matrix green: behavioral sandbox, ALLOW host, gpt-4o, external Temporal.
   Suites: temporal SDK 1186, base 454, POC 204, dispatcher 49.
+
+## Part 13 — Linux EC2 full E2E (PASS)
+
+The complete journey was re-run on a clean AL2023 EC2 instance
+(`i-0f48b03bbf673b454`, ap-southeast-1) with release binaries only on the host:
+
+- `obs provision --clean-rerun` regenerated the PKI, started the mTLS gateway +
+  VM driver + sandbox service, warmed the image cache, and emitted agent.env.
+- The full POC matrix passed on Linux: G1 250k CONSTRAIN → sandbox, G2 50k
+  ALLOW → host, G3 live gpt-4o governance (LLM-backed CONSTRAIN → sandbox),
+  
+ 
+- The in-process Temporal dev server now uses an installed `temporal` CLI when
+  present (`dev_server_existing_path`), with the SDK download as fallback —
+  the runner self-prepares instead of depending on `temporal.download`.
+- Two provision defects fixed on the way: (1) `openshell-gateway generate-certs`
+  emits a CA without `keyUsage`, which strict OpenSSL 3.5+ consumers reject —
+  the provision now re-signs the CA with the required extensions while
+  preserving the exact RDN order (rustls is byte-exact on issuer/subject);
+  (2) the SDK agent-server caches its TLS context at startup and must be
+  restarted after a re-provision.
