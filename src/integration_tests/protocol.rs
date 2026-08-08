@@ -91,7 +91,8 @@ fn response_round_trip_preserves_binary_output_and_real_exit() {
 fn identifiers_deadlines_and_bundle_fields_fail_closed() {
     assert!(OperationId::parse("not-a-v4-uuid").is_err());
     assert!(DeadlineMillis::new(0).is_err());
-    assert!(DeadlineMillis::new(120_001).is_err());
+    assert!(DeadlineMillis::new(1_200_001).is_err());
+    assert!(DeadlineMillis::new(1_200_000).is_ok());
     assert!(
         AssetBundleIdentity::new(
             0,

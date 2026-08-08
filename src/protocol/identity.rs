@@ -90,7 +90,10 @@ pub struct DeadlineMillis(u64);
 
 impl DeadlineMillis {
     pub const MIN: u64 = 1;
-    pub const MAX: u64 = 120_000;
+    // Cold-boot tolerance: a fresh stack's first sandbox create (image pull +
+    // rootfs build + first microVM boot) routinely exceeds 2 minutes, so the
+    // protocol ceiling must cover the full cold path (20 minutes).
+    pub const MAX: u64 = 1_200_000;
 
     pub fn new(value: u64) -> Result<Self, ProtocolValidationError> {
         if !(Self::MIN..=Self::MAX).contains(&value) {
