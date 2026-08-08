@@ -175,6 +175,9 @@ GATEWAY_LOG="$GATEWAY_STATE_DIR/gateway.log"
 GATEWAY_CONFIG="$GATEWAY_STATE_DIR/gateway.toml"
 SANDBOX_PID_FILE="$STATE_ROOT/sandbox-service.pid"
 AGENT_ENV="$CONFIG_ROOT/agent.env"
+DEMO_CORE_IDENTITY_DIR="$STATE_ROOT/demo-core-identity"
+DEMO_REGISTRY_DIR="$STATE_ROOT/demo-registry"
+DEMO_POLICY_FILE="$DEMO_REGISTRY_DIR/policy-temporal-activity-worker-dev.yaml"
 
 VM_HOST_GATEWAY="host.containers.internal"
 GRPC_ENDPOINT="https://${VM_HOST_GATEWAY}:${PORT}"
@@ -641,6 +644,60 @@ cat >"$SERVICE_CONFIG" <<EOF
 EOF
 chmod 600 "$SERVICE_CONFIG"
 ok "service config written"
+
+# ─── 5.5 Demo Core identity and policy registry ─────────────────────────────
+# Reuse the hardened gateway CA's subject shape (including exact RDN order),
+# replacing only its common name. This keeps the demo CA compatible with the
+# same strict OpenSSL consumers without coupling provisioning to one ordering.
+info "Generating demo Core identity -> $DEMO_CORE_IDENTITY_DIR"
+mkdir -p "$DEMO_CORE_IDENTITY_DIR"
+chmod 700 "$DEMO_CORE_IDENTITY_DIR"
+POC_CA_SUBJ="$(printf '%s' "$CA_SUBJ" \
+  | sed -E 's#(^|/)CN=[^/]*#\1CN=openbox-poc-ca#')"
+[[ "$POC_CA_SUBJ" != "$CA_SUBJ" ]] || die "gateway CA subject has no replaceable CN"
+openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
+  -keyout "$DEMO_CORE_IDENTITY_DIR/poc-ca.key.tmp" \
+  -out "$DEMO_CORE_IDENTITY_DIR/poc-ca.crt" \
+  -subj "$POC_CA_SUBJ" \
+  -addext "basicConstraints=critical,CA:TRUE" \
+  -addext "keyUsage=critical,keyCertSign,cRLSign,digitalSignature" \
+  >/dev/null 2>&1 || die "demo POC CA generation failed"
+openssl req -new -newkey rsa:2048 -nodes -sha256 \
+  -keyout "$DEMO_CORE_IDENTITY_DIR/core.key" \
+  -out "$DEMO_CORE_IDENTITY_DIR/core.csr.tmp" \
+  -subj "/CN=openbox-poc-core" >/dev/null 2>&1 \
+  || die "demo Core CSR generation failed"
+cat >"$DEMO_CORE_IDENTITY_DIR/core.ext.tmp" <<'EOF'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:localhost,IP:127.0.0.1
+EOF
+openssl x509 -req -sha256 -days 825 \
+  -in "$DEMO_CORE_IDENTITY_DIR/core.csr.tmp" \
+  -CA "$DEMO_CORE_IDENTITY_DIR/poc-ca.crt" \
+  -CAkey "$DEMO_CORE_IDENTITY_DIR/poc-ca.key.tmp" -CAcreateserial \
+  -extfile "$DEMO_CORE_IDENTITY_DIR/core.ext.tmp" \
+  -out "$DEMO_CORE_IDENTITY_DIR/core.crt" >/dev/null 2>&1 \
+  || die "demo Core certificate sign failed"
+rm -f "$DEMO_CORE_IDENTITY_DIR/poc-ca.key.tmp" \
+  "$DEMO_CORE_IDENTITY_DIR/poc-ca.srl" \
+  "$DEMO_CORE_IDENTITY_DIR/core.csr.tmp" \
+  "$DEMO_CORE_IDENTITY_DIR/core.ext.tmp"
+chmod 644 "$DEMO_CORE_IDENTITY_DIR/poc-ca.crt" "$DEMO_CORE_IDENTITY_DIR/core.crt"
+chmod 600 "$DEMO_CORE_IDENTITY_DIR/core.key"
+openssl verify -CAfile "$DEMO_CORE_IDENTITY_DIR/poc-ca.crt" \
+  "$DEMO_CORE_IDENTITY_DIR/core.crt" >/dev/null 2>&1 \
+  || die "demo Core identity failed strict OpenSSL verify"
+ok "demo Core identity verified"
+
+info "Writing demo policy registry -> $DEMO_REGISTRY_DIR"
+mkdir -p "$DEMO_REGISTRY_DIR"
+chmod 700 "$DEMO_REGISTRY_DIR"
+cp "$POLICY_FILE" "$DEMO_POLICY_FILE"
+chmod 644 "$DEMO_POLICY_FILE"
+DEMO_POLICY_SHA="$(sha256_hex "$DEMO_POLICY_FILE")"
+ok "demo policy sha: $DEMO_POLICY_SHA"
 
 # ─── 6. Start (or restart) the sandbox service ──────────────────────────────
 if [[ "$NO_START" == "1" ]]; then
