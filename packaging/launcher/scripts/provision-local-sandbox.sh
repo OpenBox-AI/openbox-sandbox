@@ -420,7 +420,8 @@ mkdir -p "$TLS_DIR"
 # certificate lacks keyCertSign ("CA cert does not include key usage
 # extension"). Re-sign the CA with the same key/subject plus the required
 # extensions so leaves issued below remain verifiable end-to-end.
-CA_SUBJ="$(openssl x509 -in "$TLS_DIR/ca.crt" -noout -subject -nameopt RFC2253)"
+CA_SUBJ="$(openssl x509 -in "$TLS_DIR/ca.crt" -noout -subject -nameopt RFC2253 \
+  | sed 's/^subject=//; s/,/\//g')"
 openssl req -new -key "$TLS_DIR/ca.key" -subj "$CA_SUBJ" \
   -out "$TLS_DIR/ca.csr.tmp" 2>/dev/null || die "CA re-key CSR failed"
 openssl x509 -req -in "$TLS_DIR/ca.csr.tmp" -signkey "$TLS_DIR/ca.key" \
