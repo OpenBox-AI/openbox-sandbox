@@ -29,7 +29,6 @@ use std::process::{Command, ExitCode};
 
 mod bundle;
 mod deps;
-mod demo;
 mod dogfood;
 mod publish;
 mod pin;
@@ -107,7 +106,6 @@ enum CommandLine {
     },
     Verify,
     Status,
-    Demo(demo::DemoCommand),
     VerifyRuntime {
         skip_hash: bool,
     },
@@ -152,7 +150,6 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
             ensure_options(&args[1..], &[])?;
             Ok(CommandLine::Status)
         }
-        "demo" => Ok(CommandLine::Demo(demo::parse(&args[1..])?)),
         "publish" => {
             if args.len() < 2 {
                 return Err("usage: obs publish <release-dir> [tag]".to_owned());
@@ -227,7 +224,6 @@ fn main() -> ExitCode {
         Ok(CommandLine::Uninstall { keep_pki }) => return dogfood::run_uninstall(keep_pki),
         Ok(CommandLine::Verify) => return dogfood::run_verify(),
         Ok(CommandLine::Status) => return dogfood::run_status(),
-        Ok(CommandLine::Demo(command)) => return demo::run(command),
         Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
         Ok(CommandLine::Publish { release_dir, tag }) => return publish::run(&release_dir, &tag),
         Ok(CommandLine::Launch) => {}
@@ -591,21 +587,9 @@ USAGE:
   obs provision [OPTIONS]      Teardown stale state, then provision dogfood.
   obs uninstall [--keep-pki]   Teardown and delete wizard-owned state.
   obs verify                   Prove mTLS create→ready→exec→delete live.
-  obs status                   Report stack and demo readiness.
-  obs demo up [OPTIONS]        Ensure the stack, adapter, CLI, and demo.json.
-  obs demo run [OPTIONS]       Run the governed demo scenario matrix.
-  obs demo down [--stack]      Stop demo processes (and optionally the stack).
+  obs status                   Report stack readiness.
   obs publish <dir> [tag]      Publish a release dir to GitHub Releases.
   obs [OPTIONS]                Start the external OpenShell gateway.
-
-DEMO OPTIONS:
-  up   --clean                 Reprovision with --clean-rerun before demo setup.
-       --demo-root <path>      Pinned temporal-constrain-poc checkout.
-  run --scenario <name>       Run g1|g2|g3|g4|all (default: all).
-  down --stack                Also stop the provisioned service and gateway.
-
-DEMO REPO PRECEDENCE:
-  OPENBOX_DEMO_REPO, then --demo-root, then ~/openbox-demo/poc.
 
 MODULES:
   openbox-sandbox   Production-intent mTLS sandbox service (root crate).
