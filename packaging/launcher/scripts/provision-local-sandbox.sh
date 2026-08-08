@@ -784,11 +784,12 @@ elif [[ -x "$CLI_BIN" ]]; then
   "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >/dev/null 2>&1 \
     || warn "warm sandbox create timed out (CLI 300s provisioning limit); polling by name"
   warmed=0
-  # Cold-cache create can take ~5-6 min (image pull/extract + microVM boot
-  # on small hosts); poll up to 10 min. A sandbox that no longer resolves
+  # Cold-cache create can take 10-15 min (image pull/extract + rootfs build
+  # + microVM boot on small hosts); poll up to 20 min. A sandbox that no
+  # longer resolves
   # has already run to completion and been reaped (fast hosts), which is
   # also a warm cache; only a stuck Provisioning/Error phase is a miss.
-  for _ in $(seq 1 120); do
+  for _ in $(seq 1 240); do
     status="$("$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
       info "warm sandbox $warm_name already completed"
       warmed=1
