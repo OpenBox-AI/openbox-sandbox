@@ -29,6 +29,7 @@ use std::process::{Command, ExitCode};
 
 mod bundle;
 mod deps;
+mod demo;
 mod dogfood;
 mod publish;
 mod pin;
@@ -106,6 +107,7 @@ enum CommandLine {
     },
     Verify,
     Status,
+    Demo(demo::DemoCommand),
     VerifyRuntime {
         skip_hash: bool,
     },
@@ -150,6 +152,7 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
             ensure_options(&args[1..], &[])?;
             Ok(CommandLine::Status)
         }
+        "demo" => Ok(CommandLine::Demo(demo::parse(&args[1..])?)),
         "publish" => {
             if args.len() < 2 {
                 return Err("usage: obs publish <release-dir> [tag]".to_owned());
@@ -224,6 +227,7 @@ fn main() -> ExitCode {
         Ok(CommandLine::Uninstall { keep_pki }) => return dogfood::run_uninstall(keep_pki),
         Ok(CommandLine::Verify) => return dogfood::run_verify(),
         Ok(CommandLine::Status) => return dogfood::run_status(),
+        Ok(CommandLine::Demo(command)) => return demo::run(command),
         Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
         Ok(CommandLine::Publish { release_dir, tag }) => return publish::run(&release_dir, &tag),
         Ok(CommandLine::Launch) => {}

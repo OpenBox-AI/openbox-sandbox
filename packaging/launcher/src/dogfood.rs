@@ -141,6 +141,47 @@ pub fn run_uninstall(keep_pki: bool) -> ExitCode {
     exec_bash(&script, &args)
 }
 
+/// Stop only the provisioned gateway/service processes, preserving all state.
+pub(crate) fn run_teardown() -> ExitCode {
+    let script = match wizard_script() {
+        Ok(s) => s,
+        Err(reason) => {
+            err(&format!("provision-local-sandbox.sh unavailable: {reason}"));
+            return ExitCode::FAILURE;
+        }
+    };
+    banner_phase("STACK TEARDOWN");
+    let mut command = Command::new("bash");
+    command
+        .arg(&script)
+        .env("OPENBOX_TEARDOWN_ONLY", "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    // The downloaded standalone launcher may not live beside the provisioned
+    // service binary. Recover its exact path from agent.env so the wizard's
+    // fail-closed PID ownership check still recognizes the process it started.
+    if let Ok(body) = std::fs::read_to_string(agent_env_path()) {
+        if let Ok(values) = parse_agent_env(&body) {
+            if let Some(binary) = env_value(&values, "OPENBOX_SANDBOX_BINARY") {
+                command.env("OPENBOX_SANDBOX_BIN", binary);
+            }
+        }
+    }
+    let status = command.status();
+    match status {
+        Ok(s) if s.success() => ExitCode::SUCCESS,
+        Ok(s) => {
+            err(&format!("provision script exit {}", s.code().unwrap_or(-1)));
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            err(&format!("could not run bash script: {error}"));
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `obs verify` — drive a real create→exec→delete against the live stack.
 pub fn run_verify() -> ExitCode {
     banner_phase("VERIFY");

@@ -122,6 +122,7 @@ CONFIG_ROOT="${OPENBOX_CONFIG_ROOT:-$HOME/.config/openbox-sandbox}"
 SANDBOX_PORT="${OPENBOX_SANDBOX_PORT:-17443}"
 LOG_LEVEL="${OPENSHELL_LOG_LEVEL:-info}"
 NO_START="${NO_START:-0}"
+TEARDOWN_ONLY="${OPENBOX_TEARDOWN_ONLY:-0}"
 OPENSHELL_SOURCE_PIN="f169084923503a02a94425857b938de2841cab0c"
 OPENSHELL_SOURCE_MARKER="f1690849"
 # Locked released OpenShell version for the hosted-bin flow (no source build).
@@ -192,7 +193,7 @@ echo "" >&2
 # Provisioning must reject an incompatible runtime before mutating local state.
 # The root adapter is compiled against this source protocol, which is stricter
 # than the launcher's separate 0.0.85 artifact/version pin.
-if [[ "$ARG_UNINSTALL" != "1" ]]; then
+if [[ "$ARG_UNINSTALL" != "1" && "$TEARDOWN_ONLY" != "1" ]]; then
   [[ -x "$GATEWAY_BIN" ]] || die "openshell-gateway not found at $GATEWAY_BIN"
   [[ -x "$CLI_BIN" ]] || die "openshell CLI not found at $CLI_BIN"
   [[ -x "$DRIVER_BIN" ]] || die "openshell-driver-vm not found at $DRIVER_BIN"
@@ -353,6 +354,11 @@ provision_error_cleanup() {
     stop_scoped_vm_drivers
   fi
 }
+if [[ "$TEARDOWN_ONLY" == "1" ]]; then
+  ok "stack teardown complete"
+  exit 0
+fi
+
 if [[ "$ARG_UNINSTALL" != "1" ]]; then
   trap provision_error_cleanup EXIT
 fi

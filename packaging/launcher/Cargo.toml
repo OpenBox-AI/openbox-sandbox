@@ -5,6 +5,9 @@ edition = "2021"
 publish = false
 description = "Launcher that locates, pins, and runs externally-provided OpenBox and OpenShell artifacts."
 
+[dependencies]
+serde_json = "1"
+
 [[bin]]
 name = "obs"
 path = "src/main.rs"

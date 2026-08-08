@@ -117,6 +117,19 @@ grep -q 'openshell verified (f1690849 | 0.0.88)' "$TMP/stderr"
 grep -q 'openshell-driver-vm verified (f1690849 | 0.0.88)' "$TMP/stderr"
 grep -q 'openbox-sandbox service not found' "$TMP/stderr"
 
+# Demo down can invoke teardown without deleting provisioned state or requiring
+# the runtime bundle to still be installed.
+mkdir -p "$TMP/teardown-state" "$TMP/teardown-config"
+printf 'keep-state\n' >"$TMP/teardown-state/sentinel"
+printf 'keep-config\n' >"$TMP/teardown-config/sentinel"
+HOME="$TMP/home" OPENBOX_STATE_ROOT="$TMP/teardown-state" \
+  OPENBOX_CONFIG_ROOT="$TMP/teardown-config" OPENBOX_SANDBOX_PORT="$(free_tcp_port)" \
+  OPENSHELL_SERVER_PORT="$(free_tcp_port)" OPENBOX_TEARDOWN_ONLY=1 \
+  bash "$PROVISION" >"$TMP/stdout" 2>"$TMP/stderr"
+test -f "$TMP/teardown-state/sentinel"
+test -f "$TMP/teardown-config/sentinel"
+grep -q 'stack teardown complete' "$TMP/stderr"
+
 # An unrelated listener on a configured port must survive teardown. The wizard
 # reports the owner and fails instead of signalling it.
 port_file="$TMP/listener.port"
