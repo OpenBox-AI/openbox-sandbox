@@ -1934,3 +1934,22 @@ The complete journey was re-run on a clean AL2023 EC2 instance
   preserving the exact RDN order (rustls is byte-exact on issuer/subject);
   (2) the SDK agent-server caches its TLS context at startup and must be
   restarted after a re-provision.
+
+## Part 14 — Seamless-flow acceptance gate (PASS)
+
+`obs demo up` → `obs demo run --scenario all` → `obs demo down` → `obs demo up`
+→ run again: the entire governed-sandbox demo now runs through `obs` commands
+only. Matrix in one command: g1 constrain→sandbox, g2 allow→host, g3
+constrain→sandbox (gpt-4o), g4 constrain→sandbox (external dev server) — all
+PASS with evidence at `~/.local/state/openbox-sandbox/demo/evidence-g{1..4}.json`.
+Idempotent down/up cycle re-verified with a passing g1.
+
+Fixes landed during the gate: (1) provision warm-up polls the sandbox by name
+instead of failing on the CLI's fixed 300s create timeout; (2) the cold-boot
+deadline chain raised to 20 min across the dispatcher, both runtime clients,
+the agent server, and the service's `DeadlineMillis` protocol cap (the service
+closed connections for deadlines > 2 min, surfacing as `sandbox_protocol_failed`);
+(3) `obs demo run` pins the behavioral decider for g1/g2/g4 — the runner
+auto-loads the spec's LLM key, which made gpt (always-CONSTRAIN per its
+instructions) decide the g2 ALLOW case and fail on a missing policy.
+
