@@ -1,6 +1,6 @@
 //! `obs` operator/developer launcher.
 //!
-//! This dependency-free launcher locates an operator-installed `OpenShell`
+//! This standalone launcher locates an operator-installed `OpenShell`
 //! gateway, verifies its launcher release pin, and can start that external
 //! gateway. It is distinct from the root `openbox-sandbox` binary, which is the
 //! production-intent mTLS sandbox service. `OpenShell` remains an external
@@ -585,42 +585,55 @@ fn runtime_summary(available: &[Runtime]) -> String {
 
 fn print_help() {
     println!(
-        "obs — OpenBox operator/developer launcher\n\n\
-         USAGE:\n  \
+        r#"obs — OpenBox operator/developer launcher
 
-         obs provision [OPTIONS]      Teardown stale state, then provision dogfood.\n  \
-         obs uninstall [--keep-pki]   Teardown and delete wizard-owned state.\n  \
-         obs verify                   Prove mTLS create→ready→exec→delete live.\n  \
-         obs status                   Report local dogfood ports/PIDs/artifacts.\n  \
-         obs publish <dir> [tag]      Publish a release dir to GitHub Releases.\n  \
-         obs [OPTIONS]                Start the external OpenShell gateway.\n\n\
-         MODULES:\n\
-         \x20 openbox-sandbox   Production-intent mTLS sandbox service (root crate).\n\
-         \x20 obs               Operator/developer launcher (this binary).\n\
-         \x20 OpenShell         External gateway/driver runtime; never embedded.\n\n\
-         DOGFOOD LOOP (source checkout only):\n  \
-         cargo build --release --bin openbox-sandbox\n  \
-         cargo build --release --manifest-path packaging/launcher/Cargo.toml\n  \
-         OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision\n  \
-         obs verify && obs uninstall\n\n\
-         SETUP OPTIONS:\n\
-         \x20 --skip-deps          Skip dependency installation.\n\
+USAGE:
+  obs provision [OPTIONS]      Teardown stale state, then provision dogfood.
+  obs uninstall [--keep-pki]   Teardown and delete wizard-owned state.
+  obs verify                   Prove mTLS create→ready→exec→delete live.
+  obs status                   Report stack and demo readiness.
+  obs demo up [OPTIONS]        Ensure the stack, adapter, CLI, and demo.json.
+  obs demo run [OPTIONS]       Run the governed demo scenario matrix.
+  obs demo down [--stack]      Stop demo processes (and optionally the stack).
+  obs publish <dir> [tag]      Publish a release dir to GitHub Releases.
+  obs [OPTIONS]                Start the external OpenShell gateway.
 
-         \x20 --no-start           Configure external gateway but do not start it.\n\n\
-         PROVISION OPTIONS:\n\
-         \x20 --clean-rerun        Also remove wizard-owned state before provisioning.\n\
-         \x20 --keep-pki           Preserve PKI (with --clean-rerun or uninstall).\n\n\
-         LAUNCHER OPTIONS:\n\
-         \x20 --driver <name>      Force a driver (podman|docker|kubernetes|vm).\n\
-         \x20 --allow-degraded     Accept reduced isolation (container w/o Landlock).\n\
-         \x20 --dry-run            Resolve artifacts and print the plan; start nothing.\n\
-         \x20 --verify-runtime     Verify local artifact/version compatibility only.\n\
-         \x20                      It does not connect or prove sandbox execution.\n\
-         \x20 --skip-hash          Skip operator-supplied hashes (dev only); may be\n\
-         \x20                      combined with --verify-runtime.\n\
-         \x20 -h, --help           Show this help.\n\n\
-         `obs provision` requires OpenShell 0.0.88 (locked release)\n\
-         or the root protocol marker f1690849.\n"
+DEMO OPTIONS:
+  up   --clean                 Reprovision with --clean-rerun before demo setup.
+       --demo-root <path>      Pinned temporal-constrain-poc checkout.
+  run --scenario <name>       Run g1|g2|g3|g4|all (default: all).
+  down --stack                Also stop the provisioned service and gateway.
+
+DEMO REPO PRECEDENCE:
+  OPENBOX_DEMO_REPO, then --demo-root, then ~/openbox-demo/poc.
+
+MODULES:
+  openbox-sandbox   Production-intent mTLS sandbox service (root crate).
+  obs               Operator/developer launcher (this binary).
+  OpenShell         External gateway/driver runtime; never embedded.
+
+DOGFOOD LOOP (source checkout only):
+  cargo build --release --bin openbox-sandbox
+  cargo build --release --manifest-path packaging/launcher/Cargo.toml
+  OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision
+  obs verify && obs uninstall
+
+PROVISION OPTIONS:
+  --clean-rerun        Also remove wizard-owned state before provisioning.
+  --keep-pki           Preserve PKI (with --clean-rerun or uninstall).
+
+LAUNCHER OPTIONS:
+  --driver <name>      Force a driver (podman|docker|kubernetes|vm).
+  --allow-degraded     Accept reduced isolation (container w/o Landlock).
+  --dry-run            Resolve artifacts and print the plan; start nothing.
+  --verify-runtime     Verify local artifact/version compatibility only.
+                       It does not connect or prove sandbox execution.
+  --skip-hash          Skip operator-supplied hashes (dev only); may be
+                       combined with --verify-runtime.
+  -h, --help           Show this help.
+
+`obs provision` requires OpenShell 0.0.88 (locked release)
+or the root protocol marker f1690849."#
     );
 }
 

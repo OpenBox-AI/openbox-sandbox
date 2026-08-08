@@ -446,8 +446,11 @@ pub(crate) fn print_status() {
             adapter_socket.display()
         ));
     } else {
+        let pid_status = adapter_pid
+            .map(|pid| format!("{pid} (stale)"))
+            .unwrap_or_else(|| "none".to_owned());
         warn(&format!(
-            "demo adapter: down socket={}",
+            "demo adapter: down pid={pid_status} socket={}",
             adapter_socket.display()
         ));
     }
