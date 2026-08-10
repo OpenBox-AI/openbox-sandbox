@@ -18,3 +18,6 @@
 *.key
 *.p12
 *.pfx
+
+# pi agent local state
+.pi/
