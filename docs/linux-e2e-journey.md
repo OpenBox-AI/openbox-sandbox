@@ -1923,8 +1923,8 @@ The complete journey was re-run on a clean AL2023 EC2 instance
   VM driver + sandbox service, warmed the image cache, and emitted agent.env.
 - The full POC matrix passed on Linux: G1 250k CONSTRAIN → sandbox, G2 50k
   ALLOW → host, G3 live gpt-4o governance (LLM-backed CONSTRAIN → sandbox),
-  
- 
+  G4 external Temporal dev server (separate process). All four scenarios
+  reported `status: passed`.
 - The in-process Temporal dev server now uses an installed `temporal` CLI when
   present (`dev_server_existing_path`), with the SDK download as fallback —
   the runner self-prepares instead of depending on `temporal.download`.
@@ -1952,7 +1952,6 @@ closed connections for deadlines > 2 min, surfacing as `sandbox_protocol_failed`
 (3) `obs demo run` pins the behavioral decider for g1/g2/g4 — the runner
 auto-loads the spec's LLM key, which made gpt (always-CONSTRAIN per its
 instructions) decide the g2 ALLOW case and fail on a missing policy.
-
 
 ## Part 15 — Architecture correction: the demo is POC-owned (PASS)
 
