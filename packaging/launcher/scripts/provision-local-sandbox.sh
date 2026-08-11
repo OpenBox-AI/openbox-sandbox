@@ -429,8 +429,14 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
 </dict>
 </plist>
 EOF
-  codesign --entitlements "$ENTITLEMENTS" --force -s - "$DRIVER_BIN" >/dev/null 2>&1 || \
-    die "codesign failed (Hypervisor framework entitlement requires developer mode)"
+  if codesign --entitlements "$ENTITLEMENTS" --force -s - "$DRIVER_BIN" 2>&1; then
+    ok "driver-vm codesigned"
+  else
+    err "codesign failed (see above) — the Hypervisor entitlement requires Xcode Command Line Tools and developer mode"
+    info "run: xcode-select --install"
+    info "then: DevToolsSecurity -enable"
+    die "cannot sign the VM driver without developer tools"
+  fi
   ok "driver signed"
 fi
 
