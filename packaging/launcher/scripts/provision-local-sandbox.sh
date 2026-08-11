@@ -191,9 +191,21 @@ echo "" >&2
 # The root adapter is compiled against this source protocol, which is stricter
 # than the launcher's separate 0.0.85 artifact/version pin.
 if [[ "$ARG_UNINSTALL" != "1" && "$TEARDOWN_ONLY" != "1" ]]; then
-  [[ -x "$GATEWAY_BIN" ]] || die "openshell-gateway not found at $GATEWAY_BIN"
-  [[ -x "$CLI_BIN" ]] || die "openshell CLI not found at $CLI_BIN"
-  [[ -x "$DRIVER_BIN" ]] || die "openshell-driver-vm not found at $DRIVER_BIN"
+  if [[ ! -x "$GATEWAY_BIN" || ! -x "$CLI_BIN" || ! -x "$DRIVER_BIN" ]]; then
+    # The provision prepares everything — fetch the pinned OpenShell
+    # release into the bundle directory automatically.
+    info "OpenShell binaries missing — fetching the pinned release"
+    FETCH_SCRIPT="$PROJECT_ROOT/packaging/launcher/scripts/fetch-openshell-deps.sh"
+    if [[ -f "$FETCH_SCRIPT" ]]; then
+      (OUT="$BUNDLE_DIR" "$FETCH_SCRIPT") \
+        || die "failed to fetch the pinned OpenShell release into $BUNDLE_DIR"
+    else
+      die "fetch script not found at $FETCH_SCRIPT"
+    fi
+    [[ -x "$GATEWAY_BIN" ]] || die "openshell-gateway not found at $GATEWAY_BIN"
+    [[ -x "$CLI_BIN" ]] || die "openshell CLI not found at $CLI_BIN"
+    [[ -x "$DRIVER_BIN" ]] || die "openshell-driver-vm not found at $DRIVER_BIN"
+  fi
 
   require_source_marker() {
     local binary="$1" label="$2" version
