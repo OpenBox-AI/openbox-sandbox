@@ -74,7 +74,17 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         && bundle_dir.join("bin/openshell").is_file()
         && bundle_dir.join("libexec/openshell-driver-vm").is_file();
     if ready {
-        unsafe { std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir) };
+        let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+            "openbox-sandbox-darwin-arm64"
+        } else {
+            "openbox-sandbox"
+        };
+        let policy_name = "policy-deny-network-dev.yaml";
+        unsafe {
+            std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir);
+            std::env::set_var("OPENBOX_SANDBOX_BIN", &bundle_dir.join(svc_name));
+            std::env::set_var("OPENBOX_POLICY_FILE", &bundle_dir.join(policy_name));
+        }
         return Ok(());
     }
     let script = match crate::scripts::resolve("fetch-openshell-deps.sh") {
