@@ -47,22 +47,33 @@ fn wizard_script() -> Result<PathBuf, String> {
     crate::scripts::resolve("provision-local-sandbox.sh")
 }
 
-/// Auto-acquire the OpenShell bundle when a hosted bundle URL is configured
-/// and the target bundle is missing. Reuses the embedded fetch logic so a
-/// fresh machine needs only `obs provision` (setup stays the explicit
-/// acquire+verify path for operators who want it).
+/// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
+/// machine needs only `obs provision`. Reuses the embedded fetch logic.
 fn auto_fetch_bundle() -> Result<(), ExitCode> {
-    let url = std::env::var("OPENBOX_OPENSHELL_BUNDLE_URL").unwrap_or_default();
-    if url.is_empty() {
-        return Ok(());
-    }
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let bundle_dir = std::env::var("OPENSHELL_BUNDLE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| cwd.join("openbox-sandbox-bundle"));
-    if bundle_dir.join("bin/openshell-gateway").is_file() {
-        // The wizard's default bundle path differs (project-root based); pin
-        // the resolved bundle regardless of whether a fetch happened.
+    let bundle_dir = if let Some(dir) = std::env::var_os("OPENSHELL_BUNDLE_DIR") {
+        PathBuf::from(dir)
+    } else {
+        // Default to the platform-specific per-arch bundle dir (darwin-arm64
+        // on macOS Apple silicon, the flat layout elsewhere).
+        let base = cwd.join("openbox-sandbox-bundle");
+        let darwin_arm = base.join("darwin-arm64");
+        if cfg!(target_os = "macos")
+            && cfg!(target_arch = "aarch64")
+            && darwin_arm.join("bin/openshell-gateway").is_file()
+        {
+            darwin_arm
+        } else if base.join("bin/openshell-gateway").is_file() {
+            base
+        } else {
+            base
+        }
+    };
+    // Already present — pin it and let the wizard proceed.
+    let ready = bundle_dir.join("bin/openshell-gateway").is_file()
+        && bundle_dir.join("bin/openshell").is_file()
+        && bundle_dir.join("libexec/openshell-driver-vm").is_file();
+    if ready {
         unsafe { std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir) };
         return Ok(());
     }
@@ -73,29 +84,77 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
             return Err(ExitCode::FAILURE);
         }
     };
-    info("bundle missing — fetching via OPENBOX_OPENSHELL_BUNDLE_URL");
+    info("OpenShell binaries missing — fetching the pinned release");
     let status = Command::new("bash")
         .arg(&script)
         .env("OUT", &bundle_dir)
+        .env("OPENBOX_OPENSHELL_VERSION", crate::pin::LOCKED_RELEASE_VERSION)
         .current_dir(&cwd)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status();
-    match status {
-        Ok(s) if s.success() => {
-            // The wizard must consume exactly this bundle.
-            unsafe { std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir) };
-            Ok(())
-        }
-        Ok(_) => {
-            err("bundle fetch failed (see output above)");
-            Err(ExitCode::FAILURE)
-        }
-        Err(e) => {
-            err(&format!("bundle fetch failed: {e}"));
-            Err(ExitCode::FAILURE)
+    if !matches!(status, Ok(s) if s.success()) {
+        err("OpenShell fetch failed (see output above)");
+        return Err(ExitCode::FAILURE);
+    }
+    // The sandbox service binary must also be available to the wizard. In a
+    // standalone release it ships as a per-arch release asset alongside the
+    // split bundle dirs; fetch it into the bundle dir when missing.
+    let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "openbox-sandbox-darwin-arm64"
+    } else {
+        "openbox-sandbox"
+    };
+    let svc_bin = bundle_dir.join(svc_name);
+    if !svc_bin.is_file() {
+        if let Some(gh) = which_gh() {
+            info(&format!("sandbox service missing — fetching {svc_name}"));
+            let dl = Command::new(&gh)
+                .args(["release", "download", "hosted-bin"])
+                .args(["--repo", "OpenBox-AI/openbox-sandbox"])
+                .args(["--pattern", &svc_name])
+                .args(["--dir", bundle_dir.to_str().unwrap_or(".")])
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
+            if !matches!(dl, Ok(s) if s.success()) {
+                err(&format!("failed to fetch the sandbox service binary {svc_name}"));
+                return Err(ExitCode::FAILURE);
+            }
+        } else {
+            err("sandbox service binary missing and gh CLI unavailable to fetch it");
+            return Err(ExitCode::FAILURE);
         }
     }
+    if !svc_bin.is_file() {
+        err(&format!(
+            "sandbox service binary not found at {} (set OPENBOX_SANDBOX_BIN)",
+            svc_bin.display()
+        ));
+        return Err(ExitCode::FAILURE);
+    }
+    // The wizard must consume exactly this bundle + service binary.
+    unsafe { std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir) };
+    unsafe { std::env::set_var("OPENBOX_SANDBOX_BIN", &svc_bin) };
+    Ok(())
+}
+
+/// Locate the GitHub CLI (used to fetch the sandbox service binary).
+fn which_gh() -> Option<PathBuf> {
+    for dir in std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .unwrap_or_default()
+    {
+        let candidate = dir.join("gh");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    // PATH not searched with a file check — fall back to process lookup.
+    if std::path::Path::new("gh").exists() {
+        return Some(PathBuf::from("gh"));
+    }
+    None
 }
 
 /// `obs provision` — teardown and provision, optionally cleaning state first.

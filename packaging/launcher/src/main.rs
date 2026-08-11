@@ -29,7 +29,7 @@ use std::process::{Command, ExitCode};
 
 mod bundle;
 mod deps;
-mod dogfood;
+mod provision;
 mod publish;
 mod pin;
 mod scripts;
@@ -220,10 +220,10 @@ fn main() -> ExitCode {
         Ok(CommandLine::Provision {
             clean_rerun,
             keep_pki,
-        }) => return dogfood::run_provision(clean_rerun, keep_pki),
-        Ok(CommandLine::Uninstall { keep_pki }) => return dogfood::run_uninstall(keep_pki),
-        Ok(CommandLine::Verify) => return dogfood::run_verify(),
-        Ok(CommandLine::Status) => return dogfood::run_status(),
+        }) => return provision::run_provision(clean_rerun, keep_pki),
+        Ok(CommandLine::Uninstall { keep_pki }) => return provision::run_uninstall(keep_pki),
+        Ok(CommandLine::Verify) => return provision::run_verify(),
+        Ok(CommandLine::Status) => return provision::run_status(),
         Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
         Ok(CommandLine::Publish { release_dir, tag }) => return publish::run(&release_dir, &tag),
         Ok(CommandLine::Launch) => {}
