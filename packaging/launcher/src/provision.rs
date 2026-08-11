@@ -69,17 +69,22 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
             base
         }
     };
+    let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "openbox-sandbox-darwin-arm64"
+    } else {
+        "openbox-sandbox"
+    };
+    let policy_name = "policy-deny-network-dev.yaml";
     // Already present — pin it and let the wizard proceed.
+    // The service binary and policy are SEPARATE release assets, NOT inside
+    // the OpenShell bundle dir. Do NOT mark the bundle as ready unless both
+    // actually exist on disk.
     let ready = bundle_dir.join("bin/openshell-gateway").is_file()
         && bundle_dir.join("bin/openshell").is_file()
-        && bundle_dir.join("libexec/openshell-driver-vm").is_file();
+        && bundle_dir.join("libexec/openshell-driver-vm").is_file()
+        && bundle_dir.join(svc_name).is_file()
+        && bundle_dir.join(policy_name).is_file();
     if ready {
-        let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-            "openbox-sandbox-darwin-arm64"
-        } else {
-            "openbox-sandbox"
-        };
-        let policy_name = "policy-deny-network-dev.yaml";
         unsafe {
             std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir);
             std::env::set_var("OPENBOX_SANDBOX_BIN", &bundle_dir.join(svc_name));
@@ -110,11 +115,6 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     // The sandbox service binary must also be available to the wizard. In a
     // standalone release it ships as a per-arch release asset alongside the
     // split bundle dirs; fetch it into the bundle dir when missing.
-    let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        "openbox-sandbox-darwin-arm64"
-    } else {
-        "openbox-sandbox"
-    };
     let svc_bin = bundle_dir.join(svc_name);
     if !svc_bin.is_file() {
         if let Some(gh) = which_gh() {
@@ -160,7 +160,6 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     }
     // The sandbox policy file must also be available to the wizard.
     // Fetch it from the same release alongside the service binary.
-    let policy_name = "policy-deny-network-dev.yaml";
     let policy_path = bundle_dir.join(policy_name);
     if !policy_path.is_file() {
         if let Some(gh) = which_gh() {
