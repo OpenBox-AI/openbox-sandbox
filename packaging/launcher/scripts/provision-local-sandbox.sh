@@ -741,6 +741,15 @@ if [[ "${OPENBOX_WARM_CACHE:-1}" == "0" ]]; then
 elif [[ "$NO_START" == "1" ]]; then
   info "cache warm skipped (NO_START=1; stack not started)"
 elif [[ -x "$CLI_BIN" ]]; then
+  # The VM driver pulls sandbox images through a container runtime.
+  # Fail fast with a clear error when no runtime is available.
+  RUNTIME="${CONTAINER_RUNTIME:-docker}"
+  if ! command -v "$RUNTIME" >/dev/null 2>&1; then
+    die "container runtime '$RUNTIME' is required for the sandbox image pull — install Docker or set CONTAINER_RUNTIME (e.g. CONTAINER_RUNTIME=podman)"
+  fi
+  if ! "$RUNTIME" ps >/dev/null 2>&1; then
+    die "container runtime '$RUNTIME' is installed but not running — start Docker Desktop (or your runtime) before provisioning"
+  fi
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
   warm_name="w$(date +%s)"
   # The openshell CLI fails its create after a fixed 300s provisioning
