@@ -50,12 +50,12 @@ fn wizard_script() -> Result<PathBuf, String> {
 /// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
 /// machine needs only `obs provision`. Reuses the embedded fetch logic.
 fn auto_fetch_bundle() -> Result<(), ExitCode> {
+    // Always compute the bundle dir from the CWD — never inherit from
+    // the parent environment (a leaked OPENSHELL_BUNDLE_DIR from a
+    // previous provision or operator setup would route the fetch to a
+    // wrong directory).
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let bundle_dir = if let Some(dir) = std::env::var_os("OPENSHELL_BUNDLE_DIR") {
-        PathBuf::from(dir)
-    } else {
-        // Default to the platform-specific per-arch bundle dir (darwin-arm64
-        // on macOS Apple silicon, the flat layout elsewhere).
+    let bundle_dir = {
         let base = cwd.join("openbox-sandbox-bundle");
         let darwin_arm = base.join("darwin-arm64");
         if cfg!(target_os = "macos")
@@ -148,7 +148,38 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
             }
         } else {
             err("sandbox service binary missing and gh CLI unavailable to fetch it");
-            return Err(ExitCode::FAILURE);
+            // Fall through to the source-tree build below.
+        }
+    }
+    if !svc_bin.is_file() {
+        // Build from the source tree when the download is unavailable.
+        if cwd.join("Cargo.toml").is_file() {
+            info("building sandbox service from the source tree");
+            let cargo = which_cargo().unwrap_or_else(|| PathBuf::from("cargo"));
+            let build = Command::new(&cargo)
+                .args(["build", "--release", "--locked", "--bin", "openbox-sandbox"])
+                .current_dir(&cwd)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
+            if !matches!(build, Ok(s) if s.success()) {
+                err("source-tree build failed (see output above)");
+                return Err(ExitCode::FAILURE);
+            }
+            let built = cwd.join("target").join("release").join("openbox-sandbox");
+            if let Err(e) = std::fs::copy(&built, &svc_bin) {
+                err(&format!("cannot copy built service binary: {e}"));
+                return Err(ExitCode::FAILURE);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = std::fs::metadata(&svc_bin) {
+                    let mut perms = meta.permissions();
+                    perms.set_mode(meta.permissions().mode() | 0o111);
+                    let _ = std::fs::set_permissions(&svc_bin, perms);
+                }
+            }
         }
     }
     if !svc_bin.is_file() {
@@ -179,7 +210,22 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
             }
         } else {
             err("policy file missing and gh CLI unavailable to fetch it");
-            return Err(ExitCode::FAILURE);
+            // Fall through to the source-tree check below.
+        }
+    }
+    if !policy_path.is_file() {
+        // Try the source tree's policy directory.
+        for candidate in &[
+            cwd.join("deploy").join("policies").join(policy_name),
+            cwd.join(policy_name),
+        ] {
+            if candidate.is_file() {
+                if let Err(e) = std::fs::copy(candidate, &policy_path) {
+                    err(&format!("cannot copy policy file: {e}"));
+                    return Err(ExitCode::FAILURE);
+                }
+                break;
+            }
         }
     }
     // The wizard must consume exactly this bundle + service binary + policy.
@@ -190,6 +236,26 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
 }
 
 /// Locate the GitHub CLI (used to fetch the sandbox service binary).
+fn which_cargo() -> Option<PathBuf> {
+    // Honour the CARGO env var when set (e.g. cargo run, rustup overrides).
+    if let Some(cargo) = std::env::var_os("CARGO") {
+        let p = PathBuf::from(cargo);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    for dir in std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .unwrap_or_default()
+    {
+        let candidate = dir.join("cargo");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 fn which_gh() -> Option<PathBuf> {
     for dir in std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
