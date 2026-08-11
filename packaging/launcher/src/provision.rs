@@ -120,7 +120,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         if let Some(gh) = which_gh() {
             info(&format!("sandbox service missing — fetching {svc_name}"));
             let dl = Command::new(&gh)
-                .args(["release", "download", "hosted-bin"])
+                .args(["release", "download", "v0.1.0"])
                 .args(["--repo", "OpenBox-AI/openbox-sandbox"])
                 .args(["--pattern", &svc_name])
                 .args(["--dir", bundle_dir.to_str().unwrap_or(".")])
@@ -165,7 +165,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         if let Some(gh) = which_gh() {
             info(&format!("policy file missing — fetching {policy_name}"));
             let dl = Command::new(&gh)
-                .args(["release", "download", "hosted-bin"])
+                .args(["release", "download", "v0.1.0"])
                 .args(["--repo", "OpenBox-AI/openbox-sandbox"])
                 .args(["--pattern", policy_name])
                 .args(["--dir", bundle_dir.to_str().unwrap_or(".")])
@@ -303,7 +303,7 @@ pub fn run_verify() -> ExitCode {
         return ExitCode::FAILURE;
     }
     info(&format!("loading env from {}", agent_env.display()));
-    // Toolchain-free deployments (hosted-bin flow) ship a prebuilt test
+    // Toolchain-free deployments (the v0.1.0 release) ship a prebuilt test
     // harness; run it directly instead of invoking cargo. Set
     // OPENBOX_VERIFY_BIN=/path/to/harness to select it.
     if let Ok(bin) = std::env::var("OPENBOX_VERIFY_BIN") {
