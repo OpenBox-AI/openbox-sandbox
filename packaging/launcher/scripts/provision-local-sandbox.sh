@@ -99,20 +99,36 @@ PROJECT_ROOT="${OPENBOX_PROJECT_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 if [[ -n "${OPENSHELL_BUNDLE_DIR:-}" && "${OPENSHELL_BUNDLE_DIR}" == /* ]]; then
   BUNDLE_DIR="$OPENSHELL_BUNDLE_DIR"
 else
+  # If OPENSHELL_BUNDLE_DIR is set but relative, resolve it against the
+  # working directory before falling back to the repo-root defaults.
+  if [[ -n "${OPENSHELL_BUNDLE_DIR:-}" ]]; then
+    BUNDLE_DIR="$(cd "$OPENSHELL_BUNDLE_DIR" && pwd)"
+  fi
   # Platform-aware: the bundle carries a per-platform directory
-  # (darwin-arm64 on macOS, the flat layout elsewhere).
+  # (darwin-arm64 on macOS, the flat layout elsewhere). Also try the
+  # working-directory bundle (release binaries run from an empty cwd).
   OS_NAME="$(uname -s)"
   MACHINE="$(uname -m)"
-  if [[ "$OS_NAME" == "Darwin" && "$MACHINE" == "arm64" && -d "$PROJECT_ROOT/openbox-sandbox-bundle/darwin-arm64" ]]; then
-    BUNDLE_DIR="$PROJECT_ROOT/openbox-sandbox-bundle/darwin-arm64"
-  else
-    BUNDLE_DIR="$PROJECT_ROOT/openbox-sandbox-bundle"
+  if [[ "$OS_NAME" == "Darwin" && "$MACHINE" == "arm64" ]]; then
+    for base in "${BUNDLE_DIR:-}" "$PROJECT_ROOT/openbox-sandbox-bundle" "$(pwd)/openbox-sandbox-bundle"; do
+      [[ -n "$base" && -d "$base/darwin-arm64" ]] || continue
+      BUNDLE_DIR="$base/darwin-arm64"
+      break
+    done
   fi
+  BUNDLE_DIR="${BUNDLE_DIR:-$PROJECT_ROOT/openbox-sandbox-bundle}"
 fi
 if [[ -n "${OPENBOX_SANDBOX_BIN:-}" && "${OPENBOX_SANDBOX_BIN}" == /* ]]; then
   SANDBOX_BIN="$OPENBOX_SANDBOX_BIN"
 else
   SANDBOX_BIN="$PROJECT_ROOT/${OPENBOX_SANDBOX_BIN:-target/release/openbox-sandbox}"
+  # The release bundle places the per-platform service binary directly in
+  # the bundle dir; prefer it if it exists.
+  for candidate in "$BUNDLE_DIR/openbox-sandbox-darwin-arm64" "$BUNDLE_DIR/openbox-sandbox"; do
+    [[ -x "$candidate" ]] || continue
+    SANDBOX_BIN="$candidate"
+    break
+  done
 fi
 if [[ -n "${OPENBOX_POLICY_FILE:-}" && "${OPENBOX_POLICY_FILE}" == /* ]]; then
   POLICY_FILE="$OPENBOX_POLICY_FILE"
