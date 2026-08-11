@@ -416,6 +416,12 @@ fi
 
 # ─── 1. Codesign VM driver (macOS) ──────────────────────────────────────────
 if [[ "$(uname -s)" == "Darwin" ]]; then
+  if ! command -v codesign >/dev/null 2>&1; then
+    die "codesign not found — install Xcode Command Line Tools: xcode-select --install"
+  fi
+  if ! DevToolsSecurity -status 2>/dev/null | grep -q enabled; then
+    die "developer mode is disabled — run: sudo DevToolsSecurity -enable"
+  fi
   info "Codesigning openshell-driver-vm with Hypervisor entitlement"
   ENTITLEMENTS="$STATE_ROOT/driver-vm.entitlements.plist"
   mkdir -p "$STATE_ROOT"
