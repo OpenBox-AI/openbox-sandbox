@@ -121,6 +121,21 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
                 err(&format!("failed to fetch the sandbox service binary {svc_name}"));
                 return Err(ExitCode::FAILURE);
             }
+            // gh release download does not preserve the executable bit;
+            // the wizard's `-x` check will fail without it.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(meta) = std::fs::metadata(&svc_bin) {
+                    let mut perms = meta.permissions();
+                    let mode = perms.mode() | 0o111;
+                    perms.set_mode(mode);
+                    if let Err(e) = std::fs::set_permissions(&svc_bin, perms) {
+                        err(&format!("cannot chmod service binary: {e}"));
+                        return Err(ExitCode::FAILURE);
+                    }
+                }
+            }
         } else {
             err("sandbox service binary missing and gh CLI unavailable to fetch it");
             return Err(ExitCode::FAILURE);
@@ -133,9 +148,35 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         ));
         return Err(ExitCode::FAILURE);
     }
-    // The wizard must consume exactly this bundle + service binary.
+    // The sandbox policy file must also be available to the wizard.
+    // Fetch it from the same release alongside the service binary.
+    let policy_name = "policy-deny-network-dev.yaml";
+    let policy_path = bundle_dir.join(policy_name);
+    if !policy_path.is_file() {
+        if let Some(gh) = which_gh() {
+            info(&format!("policy file missing — fetching {policy_name}"));
+            let dl = Command::new(&gh)
+                .args(["release", "download", "hosted-bin"])
+                .args(["--repo", "OpenBox-AI/openbox-sandbox"])
+                .args(["--pattern", policy_name])
+                .args(["--dir", bundle_dir.to_str().unwrap_or(".")])
+                .args(["--clobber"])
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status();
+            if !matches!(dl, Ok(s) if s.success()) {
+                err(&format!("failed to fetch the sandbox policy {policy_name}"));
+                return Err(ExitCode::FAILURE);
+            }
+        } else {
+            err("policy file missing and gh CLI unavailable to fetch it");
+            return Err(ExitCode::FAILURE);
+        }
+    }
+    // The wizard must consume exactly this bundle + service binary + policy.
     unsafe { std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir) };
     unsafe { std::env::set_var("OPENBOX_SANDBOX_BIN", &svc_bin) };
+    unsafe { std::env::set_var("OPENBOX_POLICY_FILE", &policy_path) };
     Ok(())
 }
 
