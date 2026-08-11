@@ -129,6 +129,9 @@ fn verify_running_binary(expected: &str) -> Result<(), ProcessError> {
         write!(encoded, "{byte:02x}").map_err(|_| ProcessError::Configuration)?;
     }
     if encoded != expected {
+        eprintln!(
+            "ERROR: binary hash mismatch: expected {expected} but actual is {encoded}"
+        );
         return Err(ProcessError::Configuration);
     }
     Ok(())

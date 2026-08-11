@@ -11,7 +11,10 @@ const PROXY_TEMP_PATH: &str = "/tmp";
 
 pub fn validate_image(template: &TemplateIdentity) -> Result<String, ()> {
     let image = template.as_str();
-    let (repository, digest) = image.rsplit_once("@sha256:").ok_or(())?;
+    let (repository, digest) = image.rsplit_once("@sha256:").ok_or_else(|| {
+        eprintln!("ERROR: validate_image: missing @sha256: digest in template '{image}'");
+        ()
+    })?;
     if repository.is_empty()
         || image.chars().any(char::is_whitespace)
         || digest.len() != 64
@@ -19,6 +22,7 @@ pub fn validate_image(template: &TemplateIdentity) -> Result<String, ()> {
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
+        eprintln!("ERROR: validate_image: malformed template reference '{image}'");
         return Err(());
     }
     Ok(image.to_owned())
@@ -29,16 +33,57 @@ pub fn parse_and_validate_policy(
     identity: &PolicyIdentity,
     allow_degraded_landlock: bool,
 ) -> Result<SandboxPolicy, ()> {
-    if document.media_type() != "application/yaml"
-        || sha256_hex(document.as_bytes()) != identity.sha256().as_str()
-    {
+    if document.media_type() != "application/yaml" {
+        eprintln!(
+            "ERROR: parse_and_validate_policy: unsupported media type '{}' for policy '{}' v{}",
+            document.media_type(),
+            identity.id(),
+            identity.version()
+        );
         return Err(());
     }
-    let yaml = std::str::from_utf8(document.as_bytes()).map_err(|_| ())?;
-    let policy = openshell_policy::parse_sandbox_policy(yaml).map_err(|_| ())?;
-    if u64::from(policy.version) != identity.version()
-        || !meets_security_floor(&policy, allow_degraded_landlock)
-    {
+    let document_sha = sha256_hex(document.as_bytes());
+    if document_sha != identity.sha256().as_str() {
+        eprintln!(
+            "ERROR: parse_and_validate_policy: SHA mismatch for policy '{}' v{} (expected {} got {})",
+            identity.id(),
+            identity.version(),
+            identity.sha256().as_str(),
+            document_sha
+        );
+        return Err(());
+    }
+    let yaml = std::str::from_utf8(document.as_bytes()).map_err(|_| {
+        eprintln!(
+            "ERROR: parse_and_validate_policy: invalid UTF-8 in policy document for '{}' v{}",
+            identity.id(),
+            identity.version()
+        );
+        ()
+    })?;
+    let policy = openshell_policy::parse_sandbox_policy(yaml).map_err(|_| {
+        eprintln!(
+            "ERROR: parse_and_validate_policy: YAML parse failed for policy '{}' v{}",
+            identity.id(),
+            identity.version()
+        );
+        ()
+    })?;
+    if u64::from(policy.version) != identity.version() {
+        eprintln!(
+            "ERROR: parse_and_validate_policy: version mismatch for policy '{}' (expected v{} got v{})",
+            identity.id(),
+            identity.version(),
+            policy.version
+        );
+        return Err(());
+    }
+    if !meets_security_floor(&policy, allow_degraded_landlock) {
+        eprintln!(
+            "ERROR: parse_and_validate_policy: security floor not met for policy '{}' v{}",
+            identity.id(),
+            identity.version()
+        );
         return Err(());
     }
     Ok(policy)

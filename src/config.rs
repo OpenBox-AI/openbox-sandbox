@@ -82,35 +82,88 @@ pub fn load(path: &Path) -> Result<ProcessConfig, ConfigError> {
 }
 
 fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
-    if !config.bind_address.ip().is_loopback()
-        || config.bind_address.port() == 0
-        || config.authorized_callers.is_empty()
-        || config.authorized_callers.len() > 1024
-        || config.maximum_connections == 0
-        || config.maximum_connections > 65_536
-        || !valid_loopback_https_endpoint(&config.runtime_endpoint)
-        || config.runtime_mtls_directory.as_os_str().is_empty()
-        || [
-            config.runtime_connect_timeout_ms,
-            config.runtime_poll_interval_ms,
-            config.reconcile_delete_deadline_ms,
-            config.reconcile_wait_deadline_ms,
-            config.drain_timeout_ms,
-        ]
-        .contains(&0)
-        || config.runtime_connect_timeout_ms > 120_000
-        || config.runtime_poll_interval_ms > 60_000
-        || config.reconcile_delete_deadline_ms > 120_000
-        || config.reconcile_wait_deadline_ms > 120_000
-        || config.drain_timeout_ms > 120_000
-    {
+    if !config.bind_address.ip().is_loopback() {
+        eprintln!("ERROR: config validation failed: bind_address is not loopback");
         return Err(ConfigError);
     }
-    validate_owner_file(&config.server_certificate_path, false)?;
-    validate_owner_file(&config.server_private_key_path, true)?;
-    validate_owner_file(&config.client_ca_path, false)?;
-    validate_owner_directory(&config.state_directory)?;
-    validate_owner_directory(&config.runtime_mtls_directory)?;
+    if config.bind_address.port() == 0 {
+        eprintln!("ERROR: config validation failed: bind_address port is 0");
+        return Err(ConfigError);
+    }
+    if config.authorized_callers.is_empty() {
+        eprintln!("ERROR: config validation failed: authorized_callers is empty");
+        return Err(ConfigError);
+    }
+    if config.authorized_callers.len() > 1024 {
+        eprintln!("ERROR: config validation failed: authorized_callers exceeds 1024 entries");
+        return Err(ConfigError);
+    }
+    if config.maximum_connections == 0 {
+        eprintln!("ERROR: config validation failed: maximum_connections is 0");
+        return Err(ConfigError);
+    }
+    if config.maximum_connections > 65_536 {
+        eprintln!("ERROR: config validation failed: maximum_connections exceeds 65536");
+        return Err(ConfigError);
+    }
+    if !valid_loopback_https_endpoint(&config.runtime_endpoint) {
+        eprintln!("ERROR: config validation failed: runtime_endpoint is not a valid loopback HTTPS endpoint");
+        return Err(ConfigError);
+    }
+    if config.runtime_mtls_directory.as_os_str().is_empty() {
+        eprintln!("ERROR: config validation failed: runtime_mtls_directory is empty");
+        return Err(ConfigError);
+    }
+    if config.runtime_connect_timeout_ms == 0 {
+        eprintln!("ERROR: config validation failed: runtime_connect_timeout_ms is 0");
+        return Err(ConfigError);
+    }
+    if config.runtime_connect_timeout_ms > 120_000 {
+        eprintln!("ERROR: config validation failed: runtime_connect_timeout_ms exceeds 120000");
+        return Err(ConfigError);
+    }
+    if config.runtime_poll_interval_ms == 0 {
+        eprintln!("ERROR: config validation failed: runtime_poll_interval_ms is 0");
+        return Err(ConfigError);
+    }
+    if config.runtime_poll_interval_ms > 60_000 {
+        eprintln!("ERROR: config validation failed: runtime_poll_interval_ms exceeds 60000");
+        return Err(ConfigError);
+    }
+    if config.reconcile_delete_deadline_ms == 0 {
+        eprintln!("ERROR: config validation failed: reconcile_delete_deadline_ms is 0");
+        return Err(ConfigError);
+    }
+    if config.reconcile_delete_deadline_ms > 120_000 {
+        eprintln!("ERROR: config validation failed: reconcile_delete_deadline_ms exceeds 120000");
+        return Err(ConfigError);
+    }
+    if config.reconcile_wait_deadline_ms == 0 {
+        eprintln!("ERROR: config validation failed: reconcile_wait_deadline_ms is 0");
+        return Err(ConfigError);
+    }
+    if config.reconcile_wait_deadline_ms > 120_000 {
+        eprintln!("ERROR: config validation failed: reconcile_wait_deadline_ms exceeds 120000");
+        return Err(ConfigError);
+    }
+    if config.drain_timeout_ms == 0 {
+        eprintln!("ERROR: config validation failed: drain_timeout_ms is 0");
+        return Err(ConfigError);
+    }
+    if config.drain_timeout_ms > 120_000 {
+        eprintln!("ERROR: config validation failed: drain_timeout_ms exceeds 120000");
+        return Err(ConfigError);
+    }
+    validate_owner_file(&config.server_certificate_path, false)
+        .inspect_err(|_| eprintln!("ERROR: config validation failed: server_certificate_path validation failed"))?;
+    validate_owner_file(&config.server_private_key_path, true)
+        .inspect_err(|_| eprintln!("ERROR: config validation failed: server_private_key_path validation failed"))?;
+    validate_owner_file(&config.client_ca_path, false)
+        .inspect_err(|_| eprintln!("ERROR: config validation failed: client_ca_path validation failed"))?;
+    validate_owner_directory(&config.state_directory)
+        .inspect_err(|_| eprintln!("ERROR: config validation failed: state_directory validation failed"))?;
+    validate_owner_directory(&config.runtime_mtls_directory)
+        .inspect_err(|_| eprintln!("ERROR: config validation failed: runtime_mtls_directory validation failed"))?;
     Ok(())
 }
 

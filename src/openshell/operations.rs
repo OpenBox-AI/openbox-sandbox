@@ -29,6 +29,10 @@ pub async fn create(
     let request_id = request.request_id().clone();
     let cleanup_target = CleanupTarget::new(request_id.clone());
     let image = validate_image(request.template()).map_err(|()| {
+        eprintln!(
+            "ERROR: create validation failed: immutable image validation failed for template '{}'",
+            request.template().as_str()
+        );
         CreateFailure::not_created(
             CreateFailureCode::Validation,
             detail("immutable image validation failed"),
@@ -40,32 +44,65 @@ pub async fn create(
         runtime.allow_degraded_landlock(),
     )
     .map_err(|()| {
+        eprintln!(
+            "ERROR: create validation failed: policy validation failed for '{}' v{}",
+            request.expected_policy().id(),
+            request.expected_policy().version()
+        );
         CreateFailure::not_created(
             CreateFailureCode::Validation,
             detail("policy validation failed"),
         )
     })?;
     let budget = OperationBudget::new(context);
-    budget.check().map_err(create_pre_submission_budget)?;
+    budget.check().map_err(|failure| {
+        let f = create_pre_submission_budget(failure);
+        eprintln!(
+            "ERROR: create failed: code={:?} detail={}",
+            f.code(),
+            f.detail()
+        );
+        f
+    })?;
 
     let transport = runtime.transport();
     let preflight = budget
         .run(transport.get_sandbox(build_get_request(request_id.as_str())))
         .await
-        .map_err(create_pre_submission_budget)?;
+        .map_err(|failure| {
+            let f = create_pre_submission_budget(failure);
+            eprintln!(
+                "ERROR: create failed: code={:?} detail={}",
+                f.code(),
+                f.detail()
+            );
+            f
+        })?;
     match preflight {
         Err(status) if status.code() == Code::NotFound => {}
         Err(status) => {
-            return Err(CreateFailure::not_created(
+            let failure = CreateFailure::not_created(
                 create_status_code(&status),
                 detail("request-name preflight failed"),
-            ));
+            );
+            eprintln!(
+                "ERROR: create failed: code={:?} detail={}",
+                failure.code(),
+                failure.detail()
+            );
+            return Err(failure);
         }
         Ok(_) => {
-            return Err(CreateFailure::conflict(
+            let failure = CreateFailure::conflict(
                 CreateFailureCode::Provider,
                 detail("request-owned name already exists"),
-            ));
+            );
+            eprintln!(
+                "ERROR: create failed: code={:?} detail={}",
+                failure.code(),
+                failure.detail()
+            );
+            return Err(failure);
         }
     }
     budget.check().map_err(create_pre_submission_budget)?;
@@ -78,56 +115,106 @@ pub async fn create(
     let response = budget
         .run(transport.create_sandbox(grpc_request))
         .await
-        .map_err(|failure| create_possibly_created_budget(cleanup_target.clone(), failure))?;
+        .map_err(|failure| {
+            let f = create_possibly_created_budget(cleanup_target.clone(), failure);
+            eprintln!(
+                "ERROR: create failed: code={:?} detail={}",
+                f.code(),
+                f.detail()
+            );
+            f
+        })?;
     let response = match response {
         Ok(response) => response,
         Err(CreateTransportError::Conflict) => {
-            return Err(CreateFailure::conflict(
+            let failure = CreateFailure::conflict(
                 CreateFailureCode::Provider,
                 detail("gateway reported an ownership conflict"),
-            ));
+            );
+            eprintln!(
+                "ERROR: create failed: code={:?} detail={}",
+                failure.code(),
+                failure.detail()
+            );
+            return Err(failure);
         }
         Err(CreateTransportError::NotSubmitted(status)) => {
-            return Err(CreateFailure::not_created(
+            let failure = CreateFailure::not_created(
                 create_status_code(&status),
                 detail("create transport failed before submission"),
-            ));
+            );
+            eprintln!(
+                "ERROR: create failed: code={:?} detail={}",
+                failure.code(),
+                failure.detail()
+            );
+            return Err(failure);
         }
         Err(CreateTransportError::PossiblySubmitted(status)) => {
-            return Err(CreateFailure::possibly_created(
+            let failure = CreateFailure::possibly_created(
                 cleanup_target,
                 create_status_code(&status),
                 detail("create failed after possible submission"),
-            ));
+            );
+            eprintln!(
+                "ERROR: create failed: code={:?} detail={}",
+                failure.code(),
+                failure.detail()
+            );
+            return Err(failure);
         }
     };
     let created = response.sandbox.ok_or_else(|| {
-        CreateFailure::possibly_created(
+        let failure = CreateFailure::possibly_created(
             cleanup_target.clone(),
             CreateFailureCode::Protocol,
             detail("create response omitted sandbox"),
-        )
+        );
+        eprintln!(
+            "ERROR: create failed: code={:?} detail={}",
+            failure.code(),
+            failure.detail()
+        );
+        failure
     })?;
     if created.object_name() != request_id.as_str() || created.object_id().is_empty() {
-        return Err(CreateFailure::possibly_created(
+        let failure = CreateFailure::possibly_created(
             cleanup_target,
             CreateFailureCode::Protocol,
             detail("create response identity mismatch"),
-        ));
+        );
+        eprintln!(
+            "ERROR: create failed: code={:?} detail={}",
+            failure.code(),
+            failure.detail()
+        );
+        return Err(failure);
     }
     let returned_spec = created.spec.as_ref().ok_or_else(|| {
-        CreateFailure::possibly_created(
+        let failure = CreateFailure::possibly_created(
             cleanup_target.clone(),
             CreateFailureCode::Protocol,
             detail("create response omitted spec"),
-        )
+        );
+        eprintln!(
+            "ERROR: create failed: code={:?} detail={}",
+            failure.code(),
+            failure.detail()
+        );
+        failure
     })?;
     if returned_spec != &expected_spec {
-        return Err(CreateFailure::possibly_created(
+        let failure = CreateFailure::possibly_created(
             cleanup_target,
             CreateFailureCode::Protocol,
             detail("create response spec differed from request"),
-        ));
+        );
+        eprintln!(
+            "ERROR: create failed: code={:?} detail={}",
+            failure.code(),
+            failure.detail()
+        );
+        return Err(failure);
     }
     let provider_handle = ProviderState {
         sandbox_id: created.object_id().to_owned(),
@@ -135,11 +222,17 @@ pub async fn create(
     }
     .encode()
     .map_err(|_| {
-        CreateFailure::possibly_created(
+        let failure = CreateFailure::possibly_created(
             CleanupTarget::new(request_id.clone()),
             CreateFailureCode::Protocol,
             detail("provider state could not be retained"),
-        )
+        );
+        eprintln!(
+            "ERROR: create failed: code={:?} detail={}",
+            failure.code(),
+            failure.detail()
+        );
+        failure
     })?;
     Ok(CreatedSandbox::from_runtime(
         request_id,
