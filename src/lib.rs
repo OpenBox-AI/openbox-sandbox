@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod docker_sandboxes;
 #[cfg(test)]
 mod integration_tests;
 mod openshell;
@@ -16,6 +17,9 @@ mod test_client;
 #[cfg(test)]
 mod test_support;
 
+pub use docker_sandboxes::{
+    DockerSandboxesConfig, DockerSandboxesRuntime, SbxConnectError, SbxConnectErrorCode,
+};
 pub use openshell::{
     OPENSHELL_SOURCE_PIN, OpenShellConfig, OpenShellConnectError, OpenShellConnectErrorCode,
     OpenShellRuntime,

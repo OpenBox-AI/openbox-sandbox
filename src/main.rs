@@ -8,15 +8,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use openbox_sandbox::{
-    CallerFingerprint, DurableStore, OpenShellConfig, OpenShellRuntime, SandboxRuntime,
-    SandboxServiceBoundary, SandboxTlsServer, TlsServerConfig,
+    Argv, CallerFingerprint, DockerSandboxesConfig, DockerSandboxesRuntime, DurableStore,
+    OpenShellConfig, OpenShellRuntime, SandboxRuntime, SandboxServiceBoundary, SandboxTlsServer,
+    TlsServerConfig,
 };
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
 mod config;
 
-use config::ProcessConfig;
+use config::{ProcessConfig, RuntimeKind};
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -29,6 +30,7 @@ async fn main() -> std::process::ExitCode {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run() -> Result<(), ProcessError> {
     let mode = parse_mode(std::env::args_os().skip(1))?;
     let config_path = std::env::var_os("OPENBOX_SANDBOX_CONFIG")
@@ -53,23 +55,80 @@ async fn run() -> Result<(), ProcessError> {
         return Err(ProcessError::Configuration);
     }
 
-    let runtime_config =
-        OpenShellConfig::new(config.runtime_endpoint, config.runtime_mtls_directory)
-            .map_err(|_| ProcessError::Runtime)?
-            .with_connect_timeout(Duration::from_millis(config.runtime_connect_timeout_ms))
-            .map_err(|_| ProcessError::Runtime)?
-            .with_poll_interval(Duration::from_millis(config.runtime_poll_interval_ms))
-            .map_err(|_| ProcessError::Runtime)?
-            .with_degraded_landlock(config.allow_degraded_landlock);
-    if mode == Mode::CheckConfig {
-        return Ok(());
-    }
-
-    let runtime: Arc<dyn SandboxRuntime> = Arc::new(
-        OpenShellRuntime::connect(runtime_config)
-            .await
-            .map_err(|_| ProcessError::Runtime)?,
-    );
+    let runtime: Arc<dyn SandboxRuntime> = match config.runtime_kind {
+        RuntimeKind::Openshell => {
+            let endpoint = config
+                .runtime_endpoint
+                .as_deref()
+                .ok_or(ProcessError::Configuration)?;
+            let mtls_directory = config
+                .runtime_mtls_directory
+                .as_ref()
+                .ok_or(ProcessError::Configuration)?;
+            let runtime_config = OpenShellConfig::new(endpoint, mtls_directory)
+                .map_err(|_| ProcessError::Runtime)?
+                .with_connect_timeout(Duration::from_millis(config.runtime_connect_timeout_ms))
+                .map_err(|_| ProcessError::Runtime)?
+                .with_poll_interval(Duration::from_millis(config.runtime_poll_interval_ms))
+                .map_err(|_| ProcessError::Runtime)?
+                .with_degraded_landlock(config.allow_degraded_landlock);
+            if mode == Mode::CheckConfig {
+                return Ok(());
+            }
+            Arc::new(
+                OpenShellRuntime::connect(runtime_config)
+                    .await
+                    .map_err(|_| ProcessError::Runtime)?,
+            )
+        }
+        RuntimeKind::DockerSandboxes => {
+            let docker = config
+                .docker_sandboxes
+                .as_ref()
+                .ok_or(ProcessError::Configuration)?;
+            let mut runtime_config =
+                DockerSandboxesConfig::new(&docker.sbx_binary, &docker.workspace)
+                    .map_err(|_| ProcessError::Runtime)?
+                    .with_poll_interval(Duration::from_millis(config.runtime_poll_interval_ms))
+                    .map_err(|_| ProcessError::Runtime)?
+                    .with_connect_timeout(Duration::from_millis(config.runtime_connect_timeout_ms))
+                    .map_err(|_| ProcessError::Runtime)?;
+            if let Some(template) = &docker.template {
+                runtime_config = runtime_config
+                    .with_template(template.clone())
+                    .map_err(|_| ProcessError::Runtime)?;
+            }
+            if let Some(policy) = &docker.policy {
+                runtime_config = runtime_config.with_policy(policy.clone());
+            }
+            if let Some(user) = &docker.exec_profile.user {
+                runtime_config = runtime_config
+                    .with_exec_user(user.clone())
+                    .map_err(|_| ProcessError::Runtime)?;
+            }
+            if let Some(workdir) = &docker.exec_profile.workdir {
+                runtime_config = runtime_config
+                    .with_exec_workdir(workdir.clone())
+                    .map_err(|_| ProcessError::Runtime)?;
+            }
+            let probe = docker
+                .exec_profile
+                .readiness_probe
+                .clone()
+                .map(|argv| Argv::new(argv).expect("validated probe argv is nonempty"));
+            runtime_config = runtime_config
+                .with_readiness_probe(probe)
+                .map_err(|_| ProcessError::Runtime)?;
+            if mode == Mode::CheckConfig {
+                return Ok(());
+            }
+            Arc::new(
+                DockerSandboxesRuntime::connect(runtime_config)
+                    .await
+                    .map_err(|_| ProcessError::Runtime)?,
+            )
+        }
+    };
     let store =
         DurableStore::initialize(config.state_directory).map_err(|_| ProcessError::DurableState)?;
     let boundary = Arc::new(SandboxServiceBoundary::new(

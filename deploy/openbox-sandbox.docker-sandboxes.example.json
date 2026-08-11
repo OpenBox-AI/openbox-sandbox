@@ -23,15 +23,28 @@
       "version": 1,
       "sha256": "REPLACE_WITH_POLICY_SHA256"
     },
-    "compatibility_id": "REPLACE_WITH_APPROVED_COMPATIBILITY_ID"
+    "compatibility_id": "docker-sandboxes-v1"
   },
-  "runtime_kind": "openshell",
-  "runtime_endpoint": "https://127.0.0.1:17670",
-  "runtime_mtls_directory": "/etc/openbox-sandbox/runtime-mtls",
+  "runtime_kind": "docker-sandboxes",
   "runtime_connect_timeout_ms": 10000,
-  "runtime_poll_interval_ms": 250,
+  "runtime_poll_interval_ms": 500,
   "reconcile_delete_deadline_ms": 60000,
   "reconcile_wait_deadline_ms": 60000,
   "maximum_connections": 64,
-  "drain_timeout_ms": 30000
+  "drain_timeout_ms": 30000,
+  "docker_sandboxes": {
+    "sbx_binary": "/usr/local/bin/sbx",
+    "workspace": "/var/lib/openbox-sandbox/workspace",
+    "template": "registry.example/openbox/sandbox@sha256:REPLACE_WITH_IMAGE_SHA256",
+    "policy": {
+      "id": "openbox-deny-network",
+      "version": 1,
+      "sha256": "REPLACE_WITH_POLICY_SHA256"
+    },
+    "exec_profile": {
+      "user": "sandbox",
+      "workdir": "/sandbox",
+      "readiness_probe": ["/bin/true"]
+    }
+  }
 }

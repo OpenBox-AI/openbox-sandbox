@@ -2,10 +2,10 @@ use crate::{ObservedExitCode, ObservedTimeout, OutputByteCounts, OutputLimitKind
 
 use crate::openshell::transport::ExecTransportEvent;
 
-const MAX_STDOUT_BYTES: u64 = 1024 * 1024;
-const MAX_STDERR_BYTES: u64 = 1024 * 1024;
-const MAX_COMBINED_BYTES: u64 = 2 * 1024 * 1024;
-const MAX_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
+pub const MAX_STDOUT_BYTES: u64 = 1024 * 1024;
+pub const MAX_STDERR_BYTES: u64 = 1024 * 1024;
+pub const MAX_COMBINED_BYTES: u64 = 2 * 1024 * 1024;
+pub const MAX_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum CollectionFailure {

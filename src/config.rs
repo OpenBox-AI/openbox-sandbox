@@ -5,13 +5,24 @@ use std::net::SocketAddr;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
-use openbox_sandbox::{AssetBundleIdentity, CallerRole};
+use openbox_sandbox::{AssetBundleIdentity, CallerRole, PolicyIdentity};
 use rustix::fs::{Mode, OFlags, open};
 use rustix::process::geteuid;
 use serde::de::{MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
+
+/// The selectable sandbox execution runtime.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum RuntimeKind {
+    /// The `OpenShell` gateway adapter (the default).
+    #[default]
+    Openshell,
+    /// The Docker Sandboxes `sbx` CLI adapter.
+    DockerSandboxes,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -23,8 +34,14 @@ pub struct ProcessConfig {
     pub authorized_callers: Vec<AuthorizedCaller>,
     pub state_directory: PathBuf,
     pub asset_bundle: AssetBundleIdentity,
-    pub runtime_endpoint: String,
-    pub runtime_mtls_directory: PathBuf,
+    #[serde(default)]
+    pub runtime_kind: RuntimeKind,
+    /// Required for `runtime_kind = "openshell"`; must be absent for
+    /// `"docker-sandboxes"`.
+    pub runtime_endpoint: Option<String>,
+    /// Required for `runtime_kind = "openshell"`; must be absent for
+    /// `"docker-sandboxes"`.
+    pub runtime_mtls_directory: Option<PathBuf>,
     pub runtime_connect_timeout_ms: u64,
     pub runtime_poll_interval_ms: u64,
     pub reconcile_delete_deadline_ms: u64,
@@ -33,6 +50,47 @@ pub struct ProcessConfig {
     pub drain_timeout_ms: u64,
     #[serde(default)]
     pub allow_degraded_landlock: bool,
+    /// Required for `runtime_kind = "docker-sandboxes"`; must be absent for
+    /// `"openshell"`.
+    pub docker_sandboxes: Option<DockerSandboxesServiceConfig>,
+}
+
+/// The Docker Sandboxes runtime section of the service configuration.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockerSandboxesServiceConfig {
+    /// The `sbx` binary: a bare name resolved from `PATH`, or an absolute
+    /// owner-controlled path.
+    pub sbx_binary: PathBuf,
+    /// The host workspace mounted into every sandbox at its host path.
+    pub workspace: PathBuf,
+    /// Optional immutable template image pin. When set, every create request
+    /// must carry exactly this template.
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Optional deployment-pinned policy identity attested at readiness.
+    #[serde(default)]
+    pub policy: Option<PolicyIdentity>,
+    /// The per-execution profile.
+    pub exec_profile: DockerExecProfile,
+}
+
+/// Per-execution parameters for the Docker Sandboxes runtime.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockerExecProfile {
+    /// The user (or `uid[:gid]`) passed to `sbx exec --user`; unset uses the
+    /// sandbox image's default user.
+    #[serde(default)]
+    pub user: Option<String>,
+    /// The working directory passed to `sbx exec --workdir`; defaults to
+    /// `/sandbox`.
+    #[serde(default)]
+    pub workdir: Option<String>,
+    /// Optional readiness probe argv executed once the sandbox is running;
+    /// readiness is attested only after it exits zero.
+    #[serde(default)]
+    pub readiness_probe: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -88,8 +146,6 @@ fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
         || config.authorized_callers.len() > 1024
         || config.maximum_connections == 0
         || config.maximum_connections > 65_536
-        || !valid_loopback_https_endpoint(&config.runtime_endpoint)
-        || config.runtime_mtls_directory.as_os_str().is_empty()
         || [
             config.runtime_connect_timeout_ms,
             config.runtime_poll_interval_ms,
@@ -106,12 +162,113 @@ fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
     {
         return Err(ConfigError);
     }
+    match config.runtime_kind {
+        RuntimeKind::Openshell => {
+            let endpoint = config.runtime_endpoint.as_deref().ok_or(ConfigError)?;
+            let mtls_directory = config.runtime_mtls_directory.as_ref().ok_or(ConfigError)?;
+            if !valid_loopback_https_endpoint(endpoint)
+                || mtls_directory.as_os_str().is_empty()
+                || config.docker_sandboxes.is_some()
+            {
+                return Err(ConfigError);
+            }
+            validate_owner_directory(mtls_directory)?;
+        }
+        RuntimeKind::DockerSandboxes => {
+            if config.runtime_endpoint.is_some() || config.runtime_mtls_directory.is_some() {
+                return Err(ConfigError);
+            }
+            let docker = config.docker_sandboxes.as_ref().ok_or(ConfigError)?;
+            validate_docker_sandboxes(docker)?;
+        }
+    }
     validate_owner_file(&config.server_certificate_path, false)?;
     validate_owner_file(&config.server_private_key_path, true)?;
     validate_owner_file(&config.client_ca_path, false)?;
     validate_owner_directory(&config.state_directory)?;
-    validate_owner_directory(&config.runtime_mtls_directory)?;
     Ok(())
+}
+
+fn validate_docker_sandboxes(config: &DockerSandboxesServiceConfig) -> Result<(), ConfigError> {
+    let binary = config.sbx_binary.as_os_str();
+    if binary.is_empty() || binary.to_string_lossy().contains('\0') {
+        return Err(ConfigError);
+    }
+    if config.sbx_binary.is_absolute() {
+        validate_owner_file(&config.sbx_binary, false)?;
+    } else if config
+        .sbx_binary
+        .to_string_lossy()
+        .chars()
+        .any(|character| character == '/' || character.is_whitespace())
+    {
+        return Err(ConfigError);
+    }
+    validate_workspace(&config.workspace)?;
+    if config
+        .template
+        .as_ref()
+        .is_some_and(|template| !immutable_image_reference(template))
+    {
+        return Err(ConfigError);
+    }
+    if config
+        .exec_profile
+        .readiness_probe
+        .as_ref()
+        .is_some_and(Vec::is_empty)
+    {
+        return Err(ConfigError);
+    }
+    if config
+        .exec_profile
+        .user
+        .as_ref()
+        .is_some_and(|user| !valid_exec_user(user))
+    {
+        return Err(ConfigError);
+    }
+    if config
+        .exec_profile
+        .workdir
+        .as_ref()
+        .is_some_and(|workdir| !workdir.starts_with('/') || workdir.contains('\0'))
+    {
+        return Err(ConfigError);
+    }
+    Ok(())
+}
+
+/// The workspace is the shared host mount; it must exist, be a directory,
+/// and contain no symlink components. Ownership is intentionally not
+/// required: the workload inside the sandbox is the reader/writer.
+fn validate_workspace(path: &Path) -> Result<(), ConfigError> {
+    reject_symlink_components(path)?;
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| ConfigError)?;
+    if !metadata.is_dir() {
+        return Err(ConfigError);
+    }
+    Ok(())
+}
+
+fn immutable_image_reference(image: &str) -> bool {
+    let Some((repository, digest)) = image.rsplit_once("@sha256:") else {
+        return false;
+    };
+    !repository.is_empty()
+        && !image.chars().any(char::is_whitespace)
+        && digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_exec_user(user: &str) -> bool {
+    !user.is_empty()
+        && user.len() <= 128
+        && user
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-' | b':'))
 }
 
 fn valid_loopback_https_endpoint(value: &str) -> bool {
@@ -312,7 +469,7 @@ mod tests {
         let state = root.join("state");
         let runtime = root.join("runtime-mtls");
         for directory in [&tls, &state, &runtime] {
-            std::fs::create_dir(directory).unwrap();
+            std::fs::create_dir_all(directory).unwrap();
             std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
         }
         let certificate = tls.join("server.crt");
@@ -416,6 +573,161 @@ mod tests {
         value["allow_degraded_landlock"] = serde_json::Value::Bool(true);
         write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
         assert!(load(&path).unwrap().allow_degraded_landlock);
+    }
+
+    fn docker_fixture(root: &Path) -> (PathBuf, serde_json::Value) {
+        let (path, mut value) = fixture(root);
+        let workspace = root.join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::set_permissions(&workspace, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let binary = root.join("sbx");
+        write(&binary, b"#!/bin/sh\n", 0o755);
+        if let serde_json::Value::Object(fields) = &mut value {
+            fields.remove("runtime_endpoint");
+            fields.remove("runtime_mtls_directory");
+        }
+        value["runtime_kind"] = serde_json::Value::String("docker-sandboxes".to_owned());
+        value["docker_sandboxes"] = serde_json::json!({
+            "sbx_binary": binary,
+            "workspace": workspace,
+            "template": format!("registry.invalid/openbox@sha256:{}", "c".repeat(64)),
+            "policy": {
+                "id": "deny-network",
+                "version": 1,
+                "sha256": "d".repeat(64)
+            },
+            "exec_profile": {
+                "user": "sandbox",
+                "workdir": "/sandbox",
+                "readiness_probe": ["/bin/true"]
+            }
+        });
+        (path, value)
+    }
+
+    #[test]
+    fn docker_sandboxes_runtime_kind_loads_and_validates_its_section() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let (path, value) = docker_fixture(&root);
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+        let config = load(&path).unwrap();
+        assert_eq!(config.runtime_kind, RuntimeKind::DockerSandboxes);
+        assert!(config.runtime_endpoint.is_none());
+        assert!(config.runtime_mtls_directory.is_none());
+        let docker = config.docker_sandboxes.as_ref().unwrap();
+        assert_eq!(docker.exec_profile.user.as_deref(), Some("sandbox"));
+        assert_eq!(docker.exec_profile.workdir.as_deref(), Some("/sandbox"));
+        assert_eq!(
+            docker.exec_profile.readiness_probe.as_deref(),
+            Some(["/bin/true".to_owned()].as_slice())
+        );
+    }
+
+    #[test]
+    fn docker_sandboxes_kind_rejects_openshell_fields_and_bad_sections() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let (path, value) = docker_fixture(&root);
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+
+        let mut with_openshell = value.clone();
+        with_openshell["runtime_endpoint"] =
+            serde_json::Value::String("https://127.0.0.1:17670".to_owned());
+        with_openshell["runtime_mtls_directory"] =
+            serde_json::Value::String(root.join("runtime-mtls").to_string_lossy().into_owned());
+        write(
+            &path,
+            serde_json::to_vec(&with_openshell).unwrap().as_slice(),
+            0o600,
+        );
+        assert!(load(&path).is_err());
+
+        let mut no_section = value.clone();
+        if let serde_json::Value::Object(fields) = &mut no_section {
+            fields.remove("docker_sandboxes");
+        }
+        write(
+            &path,
+            serde_json::to_vec(&no_section).unwrap().as_slice(),
+            0o600,
+        );
+        assert!(load(&path).is_err());
+
+        let mut bad_probe = value.clone();
+        bad_probe["docker_sandboxes"]["exec_profile"]["readiness_probe"] = serde_json::json!([]);
+        write(
+            &path,
+            serde_json::to_vec(&bad_probe).unwrap().as_slice(),
+            0o600,
+        );
+        assert!(load(&path).is_err());
+
+        let mut bad_user = value.clone();
+        bad_user["docker_sandboxes"]["exec_profile"]["user"] =
+            serde_json::Value::String("sand box".to_owned());
+        write(
+            &path,
+            serde_json::to_vec(&bad_user).unwrap().as_slice(),
+            0o600,
+        );
+        assert!(load(&path).is_err());
+
+        let mut bad_template = value.clone();
+        bad_template["docker_sandboxes"]["template"] =
+            serde_json::Value::String("registry.invalid/openbox:latest".to_owned());
+        write(
+            &path,
+            serde_json::to_vec(&bad_template).unwrap().as_slice(),
+            0o600,
+        );
+        assert!(load(&path).is_err());
+
+        let mut missing_workspace = value.clone();
+        missing_workspace["docker_sandboxes"]["workspace"] =
+            serde_json::Value::String(root.join("absent-workspace").to_string_lossy().into_owned());
+        write(
+            &path,
+            serde_json::to_vec(&missing_workspace).unwrap().as_slice(),
+            0o600,
+        );
+        assert!(load(&path).is_err());
+
+        let mut relative_binary = value.clone();
+        relative_binary["docker_sandboxes"]["sbx_binary"] =
+            serde_json::Value::String("tools/sbx".to_owned());
+        write(
+            &path,
+            serde_json::to_vec(&relative_binary).unwrap().as_slice(),
+            0o600,
+        );
+        assert!(load(&path).is_err());
+
+        let mut bare_binary = value;
+        bare_binary["docker_sandboxes"]["sbx_binary"] = serde_json::Value::String("sbx".to_owned());
+        write(
+            &path,
+            serde_json::to_vec(&bare_binary).unwrap().as_slice(),
+            0o600,
+        );
+        assert!(load(&path).is_ok());
+    }
+
+    #[test]
+    fn openshell_kind_rejects_docker_section_and_defaults_to_openshell() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let (path, mut value) = docker_fixture(&root);
+        value["runtime_kind"] = serde_json::Value::String("openshell".to_owned());
+        value["runtime_endpoint"] = serde_json::Value::String("https://127.0.0.1:17670".to_owned());
+        value["runtime_mtls_directory"] =
+            serde_json::Value::String(root.join("runtime-mtls").to_string_lossy().into_owned());
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+        assert!(load(&path).is_err());
+
+        let (path, value) = fixture(&root);
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+        assert_eq!(load(&path).unwrap().runtime_kind, RuntimeKind::Openshell);
     }
 
     #[test]

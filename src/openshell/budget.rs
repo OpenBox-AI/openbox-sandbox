@@ -23,6 +23,14 @@ impl OperationBudget {
         }
     }
 
+    pub(crate) fn cancellation(&self) -> &CancellationToken {
+        &self.cancellation
+    }
+
+    pub(crate) fn deadline_instant(&self) -> Instant {
+        self.deadline
+    }
+
     pub fn check(&self) -> Result<(), BudgetFailure> {
         if self.cancellation.is_cancelled() {
             return Err(BudgetFailure::Cancelled);

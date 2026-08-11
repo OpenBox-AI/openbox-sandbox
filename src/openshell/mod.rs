@@ -6,14 +6,17 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
-mod budget;
+pub mod budget;
 mod config;
 #[cfg(test)]
 mod conformance_tests;
 mod error;
-mod exec;
+// Adapter-side helpers shared with sibling runtimes (e.g. the Docker Sandboxes
+// adapter): `budget` is the generic operation budget, `exec` is the bounded
+// process-output collector, and `policy` owns immutable-image validation.
+pub mod exec;
 mod operations;
-mod policy;
+pub mod policy;
 mod provider;
 mod transport;
 
