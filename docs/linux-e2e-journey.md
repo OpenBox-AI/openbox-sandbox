@@ -1866,7 +1866,7 @@ fix — tests must use current-code binaries (local build or a fresh dispatch).
 The temporal CONSTRAIN proof was reshaped to the released SDK's canonical
 integration pattern (measured against `OpenBox-AI/openbox-temporal-sdk-python`
 v1.4.0 and `poc-temporal-agent`): a standard Temporal `Worker` composed with
-`OpenBoxPlugin` instead of the `create_openbox_worker` wrapper route.
+`OpenBoxPlugin` as the single integration surface.
 
 ```python
 worker = Worker(
