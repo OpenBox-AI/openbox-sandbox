@@ -226,30 +226,6 @@ jobs:
           # artifacts for the normal 90-day default.
           retention-days: 3
 
-
-  dev-image:
-    name: build dev sandbox image
-    needs: [build, dev-image]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-
-      - name: Build dev image (NVIDIA base + python/git/curl)
-        run: |
-          docker build -t openbox-sandboxes-dev:latest deploy/sandbox/dev/
-
-      - name: Save image as release asset
-        run: |
-          docker save openbox-sandboxes-dev:latest | gzip > openbox-sandbox-dev-darwin-arm64.tar.gz
-          mkdir -p dev-asset
-          mv openbox-sandbox-dev-darwin-arm64.tar.gz dev-asset/
-
-      - name: Upload dev image asset
-        uses: actions/upload-artifact@ea165f8d65b6e75bde449cb0b6e3f07d693bd268
-        with:
-          name: dev-sandbox-image
-          path: dev-asset/
-
   publish:
     name: publish hosted-bin
     needs: [scan, build]
