@@ -68,7 +68,7 @@ trap 'rm -rf "${work}"' EXIT
 checksum_for() {
   local asset="$1" cfile="$2" fallback="$3"
   local got
-  got="$(curl -fsSL "${BASE}/${cfile}" 2>/dev/null | awk -v a="$asset" '$2==a {print $1}')"
+  got="$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${BASE}/${cfile}" 2>/dev/null | awk -v a="$asset" '$2==a {print $1}')"
   if [[ -z "$got" ]]; then
     if [[ -n "$fallback" ]]; then echo "$fallback"; return; fi
     echo "error: ${cfile} missing checksum for ${asset}" >&2; exit 1
@@ -84,7 +84,9 @@ verify_and_extract() {
   expected="$(checksum_for "$asset" "$cfile" "$fallback_sha")"
   echo "  downloading ${asset}"
   command -v curl >/dev/null 2>&1 || { echo "error: curl is required" >&2; exit 1; }
-  curl -fsSL "${url}" -o "${dst}"
+  # GitHub release assets occasionally reset mid-transfer; retry with
+  # backoff before failing the provision.
+  curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${url}" -o "${dst}"
   local got
   if command -v sha256sum >/dev/null 2>&1; then
     got="$(sha256sum "${dst}" | awk '{print $1}')"
