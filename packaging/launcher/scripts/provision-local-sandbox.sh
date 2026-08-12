@@ -146,11 +146,12 @@ COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
 SANDBOX_IMAGE="${OPENBOX_SANDBOX_IMAGE:-ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e}"
 # v0.1.0-dev releases ship the dev image tar next to obs — auto-detect it.
 DEV_TAR="${OPENBOX_SANDBOX_DEV_TAR:-openbox-sandbox-dev-darwin-arm64.tar.gz}"
-if [[ -f "$DEV_TAR" ]]; then
-  info "dev release detected ($DEV_TAR) — loading dev sandbox image"
-  gunzip -c "$DEV_TAR" | docker load || die "dev image load failed"
+if [[ -f "$DEV_TAR" ]] || docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
+  if [[ -f "$DEV_TAR" ]]; then
+    info "dev release detected ($DEV_TAR) — loading dev sandbox image"
+    gunzip -c "$DEV_TAR" | docker load || die "dev image load failed"
+  fi
   SANDBOX_IMAGE="openbox-sandboxes-dev:latest"
-  rm -f "$DEV_TAR"
 fi
 PORT="${OPENSHELL_SERVER_PORT:-17670}"
 GATEWAY_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
