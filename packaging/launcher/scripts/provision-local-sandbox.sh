@@ -144,10 +144,10 @@ if [ -n "${ARG_DEV:-}" ]; then
   DEV_TAG="${OPENBOX_SANDBOX_DEV_TAG:-v0.1.0-dev}"
   DEV_IMAGE="openbox-sandboxes-dev:${DEV_TAG}"
   if ! docker image inspect "$DEV_IMAGE" >/dev/null 2>&1; then
-    DEV_TAR="openbox-sandbox-dev-darwin-arm64.tar"
+    DEV_TAR="openbox-sandbox-dev-darwin-arm64.tar.gz"
     info "dev mode: downloading $DEV_TAR from GitHub release $DEV_TAG..."
     gh release download "$DEV_TAG" --repo OpenBox-AI/openbox-sandbox --pattern "$DEV_TAR" --output "$DEV_TAR" || die "dev image download failed"
-    docker load < "$DEV_TAR" || die "dev image load failed"
+    gunzip -c "$DEV_TAR" | docker load || die "dev image load failed"
     rm -f "$DEV_TAR"
     docker tag openbox-sandboxes-dev:latest "$DEV_IMAGE" 2>/dev/null || true
   fi
