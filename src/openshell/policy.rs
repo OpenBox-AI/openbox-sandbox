@@ -8,6 +8,21 @@ use sha2::{Digest, Sha256};
 
 const SANDBOX_WRITABLE_PATH: &str = "/sandbox";
 const PROXY_TEMP_PATH: &str = "/tmp";
+// Baseline filesystem paths OpenShell injects for proxy-mode sandboxes when
+// the policy declares network policies. Mirrors PROXY_BASELINE_READ_ONLY and
+// PROXY_BASELINE_READ_WRITE in the pinned OpenShell release (0.0.88).
+// /app is deliberately absent — the released sandbox images do not ship /app
+// and OpenShell skips it via its runtime existence check. If a future image
+// adds /app the enriched policy diverges and readiness fails closed.
+const PROXY_BASELINE_READ_ONLY: &[&str] = &[
+    "/usr",
+    "/lib",
+    "/etc",
+    "/var/log",
+    "/proc",
+    "/dev/urandom",
+];
+const PROXY_BASELINE_READ_WRITE: &[&str] = &["/sandbox", "/tmp"];
 
 pub fn validate_image(template: &TemplateIdentity) -> Result<String, ()> {
     let image = template.as_str();
@@ -86,7 +101,9 @@ pub fn parse_and_validate_policy(
         );
         return Err(());
     }
-    Ok(policy)
+    let mut effective = policy;
+    apply_proxy_baseline_enrichment(&mut effective);
+    Ok(effective)
 }
 
 fn meets_security_floor(policy: &SandboxPolicy, allow_degraded_landlock: bool) -> bool {
@@ -108,6 +125,36 @@ fn meets_security_floor(policy: &SandboxPolicy, allow_degraded_landlock: bool) -
         && process.run_as_user == "sandbox"
         && process.run_as_group == "sandbox"
         && policy.network_middlewares.is_empty()
+}
+
+/// Mirror OpenShell's baseline-path enrichment for proxy-mode sandboxes.
+///
+/// OpenShell (crates/openshell-sandbox::enrich_proto_baseline_paths) adds
+/// baseline filesystem paths to policies that declare network policies, then
+/// syncs the enriched document back to the gateway as a NEW policy revision.
+/// The service must normalize identically so the readiness content check
+/// compares like-for-like (the stored effective policy vs. the expected
+/// policy). Paths already declared in either list are skipped, matching
+/// OpenShell's enrich_proto_baseline_paths_with.
+fn apply_proxy_baseline_enrichment(policy: &mut SandboxPolicy) {
+    if policy.network_policies.is_empty() {
+        return;
+    }
+    let Some(filesystem) = policy.filesystem.as_mut() else {
+        return;
+    };
+    for path in PROXY_BASELINE_READ_ONLY {
+        if !filesystem.read_only.iter().any(|p| p == path)
+            && !filesystem.read_write.iter().any(|p| p == path)
+        {
+            filesystem.read_only.push((*path).to_owned());
+        }
+    }
+    for path in PROXY_BASELINE_READ_WRITE {
+        if !filesystem.read_write.iter().any(|p| p == path) {
+            filesystem.read_write.push((*path).to_owned());
+        }
+    }
 }
 
 fn filesystem_paths_are_unambiguous(filesystem: &FilesystemPolicy) -> bool {
