@@ -151,7 +151,12 @@ if [[ -f "$DEV_TAR" ]] || docker image inspect openbox-sandboxes-dev:latest >/de
     info "dev release detected ($DEV_TAR) — loading dev sandbox image"
     gunzip -c "$DEV_TAR" | docker load || die "dev image load failed"
   fi
-  SANDBOX_IMAGE="openbox-sandboxes-dev:latest"
+  DEV_DIGEST="$(docker image inspect openbox-sandboxes-dev:latest --format '{{.Id}}' | sed 's/sha256:/sha256:/')"
+  if [[ -n "$DEV_DIGEST" ]]; then
+    SANDBOX_IMAGE="openbox-sandboxes-dev@$DEV_DIGEST"
+  else
+    SANDBOX_IMAGE="openbox-sandboxes-dev:latest"
+  fi
 fi
 PORT="${OPENSHELL_SERVER_PORT:-17670}"
 GATEWAY_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
