@@ -137,10 +137,6 @@ else
   POLICY_FILE="$(cd "$PROJECT_ROOT" && pwd)/${OPENBOX_POLICY_FILE:-deploy/policies/policy-deny-network-dev.yaml}"
 fi
 POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
-if [ -n "${ARG_DEV:-}" ]; then
-  POLICY_FILE="$(cd "$PROJECT_ROOT" && pwd)/deploy/policies/policy-allow-network-dev.yaml"
-  POLICY_ID="openbox-allow-network-dev"
-fi
 POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
 DEV_IMAGE="ghcr.io/nvidia/openshell-community/sandboxes/dev@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e"
