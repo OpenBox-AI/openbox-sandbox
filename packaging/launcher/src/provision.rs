@@ -274,7 +274,7 @@ fn which_gh() -> Option<PathBuf> {
 }
 
 /// `obs provision` — teardown and provision, optionally cleaning state first.
-pub fn run_provision(clean_rerun: bool, keep_pki: bool, dev: bool) -> ExitCode {
+pub fn run_provision(clean_rerun: bool, keep_pki: bool) -> ExitCode {
     if let Err(code) = auto_fetch_bundle() {
         return code;
     }
@@ -286,9 +286,6 @@ pub fn run_provision(clean_rerun: bool, keep_pki: bool, dev: bool) -> ExitCode {
         }
     };
     banner_phase("PROVISION");
-    if dev {
-        info("dev mode — using sandboxes/dev image with Python, Node, Git pre-installed");
-    }
     info("teardown stale runs -> codesign -> gateway -> mTLS -> service -> agent.env");
     let mut args = Vec::new();
     if clean_rerun {
@@ -296,9 +293,6 @@ pub fn run_provision(clean_rerun: bool, keep_pki: bool, dev: bool) -> ExitCode {
     }
     if keep_pki {
         args.push("--keep-pki");
-    }
-    if dev {
-        args.push("--dev");
     }
     exec_bash(&script, &args)
 }

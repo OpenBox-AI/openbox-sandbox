@@ -100,7 +100,6 @@ enum CommandLine {
     Provision {
         clean_rerun: bool,
         keep_pki: bool,
-        dev: bool,
     },
     Uninstall {
         keep_pki: bool,
@@ -126,17 +125,15 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
     };
     match command {
         "provision" => {
-            ensure_options(&args[1..], &["--clean-rerun", "--keep-pki", "--dev"])?;
+            ensure_options(&args[1..], &["--clean-rerun", "--keep-pki"])?;
             let clean_rerun = args[1..].iter().any(|arg| arg == "--clean-rerun");
             let keep_pki = args[1..].iter().any(|arg| arg == "--keep-pki");
-            let dev = args[1..].iter().any(|arg| arg == "--dev");
             if keep_pki && !clean_rerun {
                 return Err("--keep-pki requires `obs provision --clean-rerun`".to_owned());
             }
             Ok(CommandLine::Provision {
                 clean_rerun,
                 keep_pki,
-                dev,
             })
         }
         "uninstall" => {
@@ -223,8 +220,7 @@ fn main() -> ExitCode {
         Ok(CommandLine::Provision {
             clean_rerun,
             keep_pki,
-            dev,
-        }) => return provision::run_provision(clean_rerun, keep_pki, dev),
+        }) => return provision::run_provision(clean_rerun, keep_pki),
         Ok(CommandLine::Uninstall { keep_pki }) => return provision::run_uninstall(keep_pki),
         Ok(CommandLine::Verify) => return provision::run_verify(),
         Ok(CommandLine::Status) => return provision::run_status(),

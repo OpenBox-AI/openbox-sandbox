@@ -80,10 +80,9 @@ for arg in "$@"; do
     --uninstall)     ARG_UNINSTALL=1 ;;
     --clean-rerun)   ARG_CLEAN_RERUN=1 ;;
     --keep-pki)      ARG_KEEP_PKI=1 ;;
-    --dev)           ARG_DEV=1 ;;
     --help|-h)       sed -n '1,55p' "$0"; exit 0 ;;
     --)              break ;;
-    *)               die "unsupported arg: $arg (use --uninstall|--clean-rerun|--keep-pki|--dev)" ;;
+    *)               die "unsupported arg: $arg (use --uninstall|--clean-rerun|--keep-pki)" ;;
   esac
 done
 if [[ "$ARG_KEEP_PKI" == "1" && "$ARG_UNINSTALL" != "1" && "$ARG_CLEAN_RERUN" != "1" ]]; then
@@ -139,12 +138,7 @@ fi
 POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
 POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
-DEV_IMAGE="ghcr.io/nvidia/openshell-community/sandboxes/dev@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e"
 SANDBOX_IMAGE="${OPENBOX_SANDBOX_IMAGE:-ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e}"
-if [ -n "${ARG_DEV:-}" ]; then
-  SANDBOX_IMAGE="${OPENBOX_SANDBOX_DEV_IMAGE:-$DEV_IMAGE}"
-  info "dev mode: using $SANDBOX_IMAGE"
-fi
 PORT="${OPENSHELL_SERVER_PORT:-17670}"
 GATEWAY_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
 STATE_ROOT="${OPENBOX_STATE_ROOT:-$HOME/.local/state/openbox-sandbox}"
