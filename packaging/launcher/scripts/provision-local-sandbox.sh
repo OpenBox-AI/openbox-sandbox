@@ -152,7 +152,9 @@ if [ -n "${ARG_DEV:-}" ]; then
     docker tag openbox-sandboxes-dev:latest "$DEV_IMAGE" 2>/dev/null || true
   fi
   SANDBOX_IMAGE="$DEV_IMAGE"
-  POLICY_FILE="$(cd "$PROJECT_ROOT" && pwd)/deploy/policies/policy-allow-network-dev.yaml"
+  if [[ -z "${OPENBOX_POLICY_FILE:-}" ]]; then
+    POLICY_FILE="$(cd "$PROJECT_ROOT" && pwd)/deploy/policies/policy-allow-network-dev.yaml"
+  fi
   POLICY_ID="openbox-allow-network-dev"
   info "dev mode: image=$SANDBOX_IMAGE policy=$POLICY_ID"
 fi

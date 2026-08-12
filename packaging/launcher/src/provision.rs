@@ -49,7 +49,7 @@ fn wizard_script() -> Result<PathBuf, String> {
 
 /// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
 /// machine needs only `obs provision`. Reuses the embedded fetch logic.
-fn auto_fetch_bundle() -> Result<(), ExitCode> {
+fn auto_fetch_bundle(dev: bool) -> Result<(), ExitCode> {
     // Always compute the bundle dir from the CWD — never inherit from
     // the parent environment (a leaked OPENSHELL_BUNDLE_DIR from a
     // previous provision or operator setup would route the fetch to a
@@ -74,7 +74,11 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     } else {
         "openbox-sandbox"
     };
-    let policy_name = "policy-deny-network-dev.yaml";
+    let policy_name = if dev {
+        "policy-allow-network-dev.yaml"
+    } else {
+        "policy-deny-network-dev.yaml"
+    };
     // Already present — pin it and let the wizard proceed.
     // The service binary and policy are SEPARATE release assets, NOT inside
     // the OpenShell bundle dir. Do NOT mark the bundle as ready unless both
@@ -275,7 +279,7 @@ fn which_gh() -> Option<PathBuf> {
 
 /// `obs provision` — teardown and provision, optionally cleaning state first.
 pub fn run_provision(clean_rerun: bool, keep_pki: bool, dev: bool) -> ExitCode {
-    if let Err(code) = auto_fetch_bundle() {
+    if let Err(code) = auto_fetch_bundle(dev) {
         return code;
     }
     let script = match wizard_script() {
