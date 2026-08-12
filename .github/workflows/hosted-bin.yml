@@ -252,7 +252,7 @@ jobs:
 
   publish:
     name: publish hosted-bin
-    needs: [scan, build, dev-image]
+    needs: [scan, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
