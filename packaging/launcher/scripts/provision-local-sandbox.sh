@@ -80,10 +80,9 @@ for arg in "$@"; do
     --uninstall)     ARG_UNINSTALL=1 ;;
     --clean-rerun)   ARG_CLEAN_RERUN=1 ;;
     --keep-pki)      ARG_KEEP_PKI=1 ;;
-    --dev)           ARG_DEV=1 ;;
     --help|-h)       sed -n '1,55p' "$0"; exit 0 ;;
     --)              break ;;
-    *)               die "unsupported arg: $arg (use --uninstall|--clean-rerun|--keep-pki|--dev)" ;;
+    *)               die "unsupported arg: $arg (use --uninstall|--clean-rerun|--keep-pki)" ;;
   esac
 done
 if [[ "$ARG_KEEP_PKI" == "1" && "$ARG_UNINSTALL" != "1" && "$ARG_CLEAN_RERUN" != "1" ]]; then
@@ -137,26 +136,21 @@ else
   POLICY_FILE="$(cd "$PROJECT_ROOT" && pwd)/${OPENBOX_POLICY_FILE:-deploy/policies/policy-deny-network-dev.yaml}"
 fi
 POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
+if [[ -f "policy-allow-network-dev.yaml" ]]; then
+  POLICY_FILE="$(pwd)/policy-allow-network-dev.yaml"
+  POLICY_ID="openbox-allow-network-dev"
+  info "dev policy detected — using allow-network"
+fi
 POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
 SANDBOX_IMAGE="${OPENBOX_SANDBOX_IMAGE:-ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e}"
-if [ -n "${ARG_DEV:-}" ]; then
-  DEV_TAG="${OPENBOX_SANDBOX_DEV_TAG:-v0.1.0-dev}"
-  DEV_IMAGE="openbox-sandboxes-dev:${DEV_TAG}"
-  if ! docker image inspect "$DEV_IMAGE" >/dev/null 2>&1; then
-    DEV_TAR="openbox-sandbox-dev-darwin-arm64.tar.gz"
-    info "dev mode: downloading $DEV_TAR from GitHub release $DEV_TAG..."
-    gh release download "$DEV_TAG" --repo OpenBox-AI/openbox-sandbox --pattern "$DEV_TAR" --output "$DEV_TAR" || die "dev image download failed"
-    gunzip -c "$DEV_TAR" | docker load || die "dev image load failed"
-    rm -f "$DEV_TAR"
-    docker tag openbox-sandboxes-dev:latest "$DEV_IMAGE" 2>/dev/null || true
-  fi
-  SANDBOX_IMAGE="$DEV_IMAGE"
-  if [[ -z "${OPENBOX_POLICY_FILE:-}" ]]; then
-    POLICY_FILE="$(cd "$PROJECT_ROOT" && pwd)/deploy/policies/policy-allow-network-dev.yaml"
-  fi
-  POLICY_ID="openbox-allow-network-dev"
-  info "dev mode: image=$SANDBOX_IMAGE policy=$POLICY_ID"
+# v0.1.0-dev releases ship the dev image tar next to obs — auto-detect it.
+DEV_TAR="${OPENBOX_SANDBOX_DEV_TAR:-openbox-sandbox-dev-darwin-arm64.tar.gz}"
+if [[ -f "$DEV_TAR" ]]; then
+  info "dev release detected ($DEV_TAR) — loading dev sandbox image"
+  gunzip -c "$DEV_TAR" | docker load || die "dev image load failed"
+  SANDBOX_IMAGE="openbox-sandboxes-dev:latest"
+  rm -f "$DEV_TAR"
 fi
 PORT="${OPENSHELL_SERVER_PORT:-17670}"
 GATEWAY_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"

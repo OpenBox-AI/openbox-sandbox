@@ -49,7 +49,7 @@ fn wizard_script() -> Result<PathBuf, String> {
 
 /// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
 /// machine needs only `obs provision`. Reuses the embedded fetch logic.
-fn auto_fetch_bundle(dev: bool) -> Result<(), ExitCode> {
+fn auto_fetch_bundle() -> Result<(), ExitCode> {
     // Always compute the bundle dir from the CWD — never inherit from
     // the parent environment (a leaked OPENSHELL_BUNDLE_DIR from a
     // previous provision or operator setup would route the fetch to a
@@ -74,11 +74,7 @@ fn auto_fetch_bundle(dev: bool) -> Result<(), ExitCode> {
     } else {
         "openbox-sandbox"
     };
-    let policy_name = if dev {
-        "policy-allow-network-dev.yaml"
-    } else {
-        "policy-deny-network-dev.yaml"
-    };
+    let policy_name = "policy-deny-network-dev.yaml";
     // Already present — pin it and let the wizard proceed.
     // The service binary and policy are SEPARATE release assets, NOT inside
     // the OpenShell bundle dir. Do NOT mark the bundle as ready unless both
@@ -278,8 +274,8 @@ fn which_gh() -> Option<PathBuf> {
 }
 
 /// `obs provision` — teardown and provision, optionally cleaning state first.
-pub fn run_provision(clean_rerun: bool, keep_pki: bool, dev: bool) -> ExitCode {
-    if let Err(code) = auto_fetch_bundle(dev) {
+pub fn run_provision(clean_rerun: bool, keep_pki: bool) -> ExitCode {
+    if let Err(code) = auto_fetch_bundle() {
         return code;
     }
     let script = match wizard_script() {
@@ -290,9 +286,6 @@ pub fn run_provision(clean_rerun: bool, keep_pki: bool, dev: bool) -> ExitCode {
         }
     };
     banner_phase("PROVISION");
-    if dev {
-        info("dev mode — using v0.1.0-dev sandbox image (Python, Git, curl pre-installed)");
-    }
     info("teardown stale runs -> codesign -> gateway -> mTLS -> service -> agent.env");
     let mut args = Vec::new();
     if clean_rerun {
@@ -301,9 +294,7 @@ pub fn run_provision(clean_rerun: bool, keep_pki: bool, dev: bool) -> ExitCode {
     if keep_pki {
         args.push("--keep-pki");
     }
-    if dev {
-        args.push("--dev");
-    }
+
     exec_bash(&script, &args)
 }
 
