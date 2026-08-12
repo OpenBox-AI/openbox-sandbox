@@ -283,6 +283,9 @@ process_matches() {
     [[ "${executable##*/}" == "openshell-gateway" ]] || return 1
     [[ "$command_line" == *" --config $required_marker" \
       || "$command_line" == *" --config $required_marker "* ]]
+  elif [[ "$identity_mode" == "binary-name" ]]; then
+    executable="${command_line%% *}"
+    [[ "${executable##*/}" == "$expected_binary" ]] || return 1
   else
     [[ "$command_line" == "$expected_binary" || "$command_line" == "$expected_binary "* ]] \
       || return 1
@@ -371,7 +374,7 @@ stop_scoped_vm_drivers() {
 }
 
 info "Teardown (always)"
-stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$SANDBOX_BIN"
+stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$(basename "$SANDBOX_BIN")" "" "binary-name"
 stop_pid_file "$GATEWAY_PID_FILE" "gateway" "$GATEWAY_BIN" "$GATEWAY_CONFIG" "gateway-config"
 assert_port_free "$SANDBOX_PORT" "sandbox service"
 assert_port_free "$PORT" "gateway"
@@ -389,7 +392,7 @@ provision_error_cleanup() {
   trap - EXIT  # disarm first: a validated-stop refusal may die() inside cleanup
   if [[ "$rc" != "0" ]]; then
     warn "provision failed (exit $rc); tearing down wizard-owned processes started this run"
-    stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$SANDBOX_BIN"
+    stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$(basename "$SANDBOX_BIN")" "" "binary-name"
     stop_pid_file "$GATEWAY_PID_FILE" "gateway" "$GATEWAY_BIN" "$GATEWAY_CONFIG" "gateway-config"
     stop_scoped_vm_drivers
   fi
