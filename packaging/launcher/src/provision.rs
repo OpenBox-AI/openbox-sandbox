@@ -102,13 +102,14 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
             info(&format!("{dev_tar} missing — fetching from the dev release"));
             let _ = gh_download_pattern(&gh, tag, dev_tar);
         }
-        if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
-            info(&format!("{vm_cache} missing — fetching (runtime stays optional)"));
-            let _ = gh_download_pattern(&gh, tag, vm_cache);
-        }
     } else if !cwd.join("policy-deny-network-dev.yaml").is_file() {
         info("deny policy missing — fetching from the base release");
         let _ = gh_download_pattern(&gh, tag, "policy-deny-network-dev.yaml");
+    }
+    // The prepared VM cache ships for BOTH channels — always self-heal it.
+    if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
+        info(&format!("{vm_cache} missing — fetching (runtime stays optional)"));
+        let _ = gh_download_pattern(&gh, tag, vm_cache);
     }
 }
 
