@@ -236,21 +236,17 @@ if [[ "$POLICY_ID" == *allow* && -z "$DEV_TAR" ]] \
    && ! docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
   die "dev policy selected ($POLICY_ID) but no dev image is available — download the dev image tar first: ./obs update --all"
 fi
-_cache_candidate=""
-if [[ "$USE_VM_CACHE" == "1" ]]; then
-  for _c in "$LAUNCHER_DIR/$VM_CACHE_TAR" "$(pwd)/$VM_CACHE_TAR"; do
-    [[ -f "$_c" ]] && _cache_candidate="$_c" && break
-  done
-fi
-if [[ -n "$_cache_candidate" ]]; then
-  CACHE_IMAGE_ID="$(tar -xzOf "$_cache_candidate" "./cache-image" 2>/dev/null | head -1 || true)"
-  if [[ -n "$CACHE_IMAGE_ID" ]]; then
-    SANDBOX_IMAGE="$CACHE_IMAGE_ID"
-    info "prepared cache carries the image identity ($CACHE_IMAGE_ID) — runtime not needed"
+# The dev image ref is host-less (openbox-sandboxes-dev@sha256:...), so the
+# VM driver can only learn its identity through a local container engine or a
+# registry with a host. The shipped cache is keyed BY that identity — it
+# cannot substitute for the resolve step. Therefore: whenever the dev tar is
+# present, ALWAYS load it (idempotent) so the driver's local resolve succeeds;
+# the cache then turns the warm into a seconds-long hit.
+if [[ -n "$DEV_TAR" ]]; then
+  info "dev release detected ($DEV_TAR) — loading the dev sandbox image so the driver can resolve it locally"
+  if ! resolve_runtime; then
+    die "the dev image ref is host-less — the VM driver resolves it through a container runtime. Install Docker or Podman (the prepared cache cannot replace the resolve step)"
   fi
-fi
-if [[ -n "$DEV_TAR" ]] && [[ -z "$_cache_candidate" || -z "$CACHE_IMAGE_ID" ]]; then
-  info "dev release detected ($DEV_TAR) and no usable cache — loading dev sandbox image (runtime fallback)"
   # Container runtime selection (the VM driver speaks the Docker-compatible
   # API: Docker first, then rootless Podman — researched from driver.rs
   # connect_local_container_engine). Explicit CONTAINER_RUNTIME wins.
