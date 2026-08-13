@@ -1,6 +1,6 @@
 [package]
 name = "openbox-sandbox-launcher"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2021"
 publish = false
 description = "Launcher that locates, pins, and runs externally-provided OpenBox and OpenShell artifacts."

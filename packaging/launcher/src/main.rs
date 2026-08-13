@@ -35,6 +35,26 @@ mod pin;
 mod scripts;
 mod update;
 
+/// The release line this binary was built for — baked at compile time
+/// (OPENBOX_CHANNEL=dev|base). The channel decides every default: which tag
+/// update targets, which release provision fetches from, which policy
+/// template is the default.
+/// The release line this binary was built for — baked at compile time
+/// (OPENBOX_CHANNEL=dev|base). The channel decides every default: which tag
+/// update targets, which release provision fetches from, which policy
+/// template is the default.
+/// The release line this binary was built for — baked at compile time
+/// (OPENBOX_CHANNEL=dev|base). The channel decides every default: which tag
+/// update targets, which release provision fetches from, which policy
+/// template is the default.
+pub(crate) fn channel() -> &'static str {
+    if option_env!("OPENBOX_CHANNEL") == Some("base") {
+        "base"
+    } else {
+        "dev"
+    }
+}
+
 /// One OpenShell compute driver the launcher can detect.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Runtime {
@@ -98,6 +118,7 @@ enum Posture {
 #[derive(Debug, PartialEq, Eq)]
 enum CommandLine {
     Help,
+    Version,
     Provision {
         clean_rerun: bool,
         keep_pki: bool,
@@ -258,6 +279,10 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
         return Ok(CommandLine::Launch);
     };
     match command {
+        "version" => {
+            ensure_options(&args[1..], &[])?;
+            return Ok(CommandLine::Version);
+        }
         "provision" => {
             let (overrides, clean_rerun, keep_pki) = parse_provision_flags(&args[1..])?;
             Ok(CommandLine::Provision {
@@ -370,6 +395,10 @@ fn main() -> ExitCode {
     match parse_command(&args) {
         Ok(CommandLine::Help) => {
             print_help();
+            return ExitCode::SUCCESS;
+        }
+        Ok(CommandLine::Version) => {
+            println!("obs {} (release line: {})", env!("CARGO_PKG_VERSION"), channel());
             return ExitCode::SUCCESS;
         }
         Ok(CommandLine::Provision {
@@ -741,6 +770,7 @@ fn print_help() {
         r#"obs — OpenBox operator/developer launcher
 
 USAGE:
+  obs version                 Print the version and the baked release line.
   obs provision [OPTIONS]      Teardown stale state, then provision dogfood.
   obs uninstall [--keep-pki]   Teardown and delete wizard-owned state.
   obs verify                   Prove mTLS create→ready→exec→delete live.

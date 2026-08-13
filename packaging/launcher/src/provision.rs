@@ -89,7 +89,15 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     let dev_channel = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
         Ok("dev") => true,
         Ok(_) => false,
-        Err(_) => !dev_tar.is_empty() && cwd.join(dev_tar).is_file(),
+        Err(_) => {
+            // The binary knows its channel; the dev tar in the dir only
+            // upgrades a base build's DEFAULT to dev — never the reverse.
+            if !dev_tar.is_empty() && cwd.join(dev_tar).is_file() {
+                true
+            } else {
+                crate::channel() != "base"
+            }
+        }
     };
     let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
     info(&format!(

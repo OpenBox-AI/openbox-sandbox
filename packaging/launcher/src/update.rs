@@ -13,34 +13,17 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         }
     };
     let repo = "OpenBox-AI/openbox-sandbox";
-    // No channel sniffing: with no explicit tag, target GitHub's LATEST
-    // release. The line is an explicit choice: --dev/--base, or a tag.
+    // The binary knows its channel — update targets the SAME line by default.
     let release = match tag {
         Some(t) => t.to_owned(),
         None => {
-            {
-                let out = Command::new(&gh)
-                    .args([
-                        "release",
-                        "view",
-                        "--repo",
-                        repo,
-                        "--json",
-                        "tagName",
-                        "--jq",
-                        ".tagName",
-                    ])
-                    .output();
-                match out {
-                    Ok(o) if o.status.success() => {
-                        String::from_utf8_lossy(&o.stdout).trim().to_owned()
-                    }
-                    _ => {
-                        crate::err("could not resolve the latest release tag");
-                        return ExitCode::FAILURE;
-                    }
-                }
-            }
+            let t = if crate::channel() == "base" {
+                "v0.1.0"
+            } else {
+                "v0.1.0-dev"
+            };
+            crate::info(&format!("release line: {} — updating within the same channel", crate::channel()));
+            t.to_owned()
         }
     };
     if release.is_empty() {
