@@ -101,12 +101,17 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
         info(&format!("{svc_name} missing — fetching from {tag}"));
         let _ = gh_download_pattern(&gh, tag, svc_name);
     }
-    // Policy files are TEMPLATES — always fetch both; the release line only
-    // selects which one is the default, never which one may exist.
-    for template in ["policy-allow-network-dev.yaml", "policy-deny-network-dev.yaml"] {
+    // Policy files are TEMPLATES — always fetch both. Each template lives on
+    // the release that carries it (allow -> dev tag, deny -> base tag), so no
+    // pattern is ever tried against a release that cannot have it.
+    let template_tags = [
+        ("policy-allow-network-dev.yaml", "v0.1.0-dev"),
+        ("policy-deny-network-dev.yaml", "v0.1.0"),
+    ];
+    for (template, template_tag) in template_tags {
         if !cwd.join(template).is_file() {
-            info(&format!("policy template {template} missing — fetching from {tag}"));
-            let _ = gh_download_pattern(&gh, tag, template);
+            info(&format!("policy template {template} missing — fetching from {template_tag}"));
+            let _ = gh_download_pattern(&gh, template_tag, template);
         }
     }
     if dev_channel && !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
