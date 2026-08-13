@@ -293,6 +293,10 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
                     release = Some(value);
                 } else if arg == "--all" {
                     all = true;
+                } else if arg == "--dev" {
+                    release = Some("v0.1.0-dev".to_owned());
+                } else if arg == "--base" {
+                    release = Some("v0.1.0".to_owned());
                 } else if arg.starts_with('-') {
                     return Err(format!("unknown update option '{arg}'"));
                 } else if release.is_none() {
@@ -743,9 +747,11 @@ USAGE:
   obs status                   Report stack readiness.
   obs publish <dir> [tag]      Publish a release dir to GitHub Releases.
   obs update [TAG] [--all]    Update obs itself from TAG (default: latest
-                              release) into the current dir, verify its
-                              checksum, and replace obs. --all also downloads
-                              the service binary, policies, and dev image tar.
+                              release = v0.1.0-dev) into the current dir,
+                              verify its checksum, and replace obs. --dev or
+                              --base picks the line explicitly. --all also
+                              downloads the service binary, templates, cache,
+                              and dev image tar.
   obs [OPTIONS]                Start the external OpenShell gateway.
 
 MODULES:
