@@ -93,7 +93,7 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     };
     let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
     info(&format!(
-        "release line: {} ({tag}) — the {} policy template is the default; both templates are downloaded",
+        "release line: {} ({tag}) — all assets fetch from this tag only ({} template)",
         if dev_channel { "dev" } else { "base" },
         if dev_channel { "allow-network" } else { "deny-network" }
     ));
@@ -101,27 +101,31 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
         info(&format!("{svc_name} missing — fetching from {tag}"));
         let _ = gh_download_pattern(&gh, tag, svc_name);
     }
-    // Policy files are TEMPLATES — always fetch both. Each template lives on
-    // the release that carries it (allow -> dev tag, deny -> base tag), so no
-    // pattern is ever tried against a release that cannot have it.
-    let template_tags = [
-        ("policy-allow-network-dev.yaml", "v0.1.0-dev"),
-        ("policy-deny-network-dev.yaml", "v0.1.0"),
-    ];
-    for (template, template_tag) in template_tags {
-        if !cwd.join(template).is_file() {
-            info(&format!("policy template {template} missing — fetching from {template_tag}"));
-            let _ = gh_download_pattern(&gh, template_tag, template);
+    // CHANNEL-LOCKED: everything comes from the channel's own tag only.
+    // dev -> v0.1.0-dev: allow template, dev cache, dev tar.
+    // base -> v0.1.0: deny template, base cache. No cross-channel fetches.
+    if dev_channel {
+        if !cwd.join("policy-allow-network-dev.yaml").is_file() {
+            info("allow policy template missing — fetching from v0.1.0-dev");
+            let _ = gh_download_pattern(&gh, "v0.1.0-dev", "policy-allow-network-dev.yaml");
         }
-    }
-    if dev_channel && !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
-        info(&format!("{dev_tar} missing — fetching from the dev release"));
-        let _ = gh_download_pattern(&gh, tag, dev_tar);
-    }
-    // The prepared VM cache ships for BOTH channels — always self-heal it.
-    if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
-        info(&format!("{vm_cache} missing — fetching (runtime stays optional)"));
-        let _ = gh_download_pattern(&gh, tag, vm_cache);
+        if !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
+            info(&format!("{dev_tar} missing — fetching from v0.1.0-dev"));
+            let _ = gh_download_pattern(&gh, "v0.1.0-dev", dev_tar);
+        }
+        if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
+            info(&format!("{vm_cache} missing — fetching from v0.1.0-dev"));
+            let _ = gh_download_pattern(&gh, "v0.1.0-dev", vm_cache);
+        }
+    } else {
+        if !cwd.join("policy-deny-network-dev.yaml").is_file() {
+            info("deny policy template missing — fetching from v0.1.0");
+            let _ = gh_download_pattern(&gh, "v0.1.0", "policy-deny-network-dev.yaml");
+        }
+        if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
+            info(&format!("{vm_cache} missing — fetching from v0.1.0"));
+            let _ = gh_download_pattern(&gh, "v0.1.0", vm_cache);
+        }
     }
 }
 
@@ -165,13 +169,20 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     };
     // Fallback policy name for the bundle-readiness check only — the actual
     // channel-aware policy fetch happens in ensure_release_assets.
-    let policy_name = if cwd.join("policy-allow-network-dev.yaml").is_file()
-        || (!dev_tar_name(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64")).is_empty()
-            && cwd.join(dev_tar_name(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"))).is_file())
-    {
-        "policy-allow-network-dev.yaml"
-    } else {
-        "policy-deny-network-dev.yaml"
+    let policy_name = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
+        Ok("dev") => "policy-allow-network-dev.yaml",
+        Ok(_) => "policy-deny-network-dev.yaml",
+        Err(_) => {
+            if cwd.join("policy-allow-network-dev.yaml").is_file()
+                || cwd.join(dev_tar_name(
+                    cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
+                )).is_file()
+            {
+                "policy-allow-network-dev.yaml"
+            } else {
+                "policy-deny-network-dev.yaml"
+            }
+        }
     };
     // Already present — pin it and let the wizard proceed.
     // The service binary and policy are SEPARATE release assets that land
@@ -237,12 +248,20 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     if !svc_bin.is_file() {
         if let Some(gh) = which_gh() {
             info(&format!("sandbox service missing — fetching {svc_name}"));
-            let fetch_tag = if cwd.join("policy-allow-network-dev.yaml").is_file()
-                || cwd.join(dev_tar_name(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"))).is_file()
-            {
-                "v0.1.0-dev"
-            } else {
-                "v0.1.0"
+            let fetch_tag = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
+                Ok("dev") => "v0.1.0-dev",
+                Ok(_) => "v0.1.0",
+                Err(_) => {
+                    if cwd.join("policy-allow-network-dev.yaml").is_file()
+                        || cwd.join(dev_tar_name(
+                            cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
+                        )).is_file()
+                    {
+                        "v0.1.0-dev"
+                    } else {
+                        "v0.1.0"
+                    }
+                }
             };
             let dl = Command::new(&gh)
                 .args(["release", "download", fetch_tag])
@@ -320,12 +339,20 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     if !policy_path.is_file() {
         if let Some(gh) = which_gh() {
             info(&format!("policy file missing — fetching {policy_name}"));
-            let fetch_tag = if cwd.join("policy-allow-network-dev.yaml").is_file()
-                || cwd.join(dev_tar_name(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"))).is_file()
-            {
-                "v0.1.0-dev"
-            } else {
-                "v0.1.0"
+            let fetch_tag = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
+                Ok("dev") => "v0.1.0-dev",
+                Ok(_) => "v0.1.0",
+                Err(_) => {
+                    if cwd.join("policy-allow-network-dev.yaml").is_file()
+                        || cwd.join(dev_tar_name(
+                            cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
+                        )).is_file()
+                    {
+                        "v0.1.0-dev"
+                    } else {
+                        "v0.1.0"
+                    }
+                }
             };
             let dl = Command::new(&gh)
                 .args(["release", "download", fetch_tag])

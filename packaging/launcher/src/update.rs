@@ -70,6 +70,13 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         crate::err("no release assets for this platform (darwin-arm64 and linux-x86_64 are published)");
         return ExitCode::FAILURE;
     };
+    let vm_cache = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "prepared-vm-cache-darwin-arm64.tar.gz"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "prepared-vm-cache-linux-x86_64.tar.gz"
+    } else {
+        ""
+    };
 
     // Default: only obs + the checksums needed to verify it. --all adds the
     // service binary, policies, and the dev image tar — scoped to the release
@@ -85,6 +92,9 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         });
         if is_dev && !dev_tar.is_empty() {
             patterns.push(dev_tar);
+        }
+        if !vm_cache.is_empty() {
+            patterns.push(vm_cache);
         }
     }
     for pattern in patterns.iter().filter(|p| !p.is_empty()) {
