@@ -1037,6 +1037,42 @@ try_shipped_vm_cache() {
     break
   done
   [[ -f "$VM_CACHE_TAR" ]] || return 1
+
+  # Verify the local tar against the channel's published checksum: match ->
+  # use it; mismatch -> remove + re-download; either failing -> runtime path.
+  case "$RELEASE_LINE" in
+    dev) CHANNEL_TAG="v0.1.0-dev" ;;
+    *)   CHANNEL_TAG="v0.1.0" ;;
+  esac
+  SUMS_FILE=""
+  for _s in "$LAUNCHER_DIR/SHA256SUMS" "$(pwd)/SHA256SUMS"; do
+    [[ -f "$_s" ]] && SUMS_FILE="$_s" && break
+  done
+  if [[ -z "$SUMS_FILE" ]] && command -v gh >/dev/null 2>&1; then
+    gh release download "$CHANNEL_TAG" --repo OpenBox-AI/openbox-sandbox \
+      --pattern SHA256SUMS --clobber >/dev/null 2>&1 \
+      && SUMS_FILE="$(pwd)/SHA256SUMS"
+  fi
+  if [[ -n "$SUMS_FILE" ]]; then
+    CACHE_NAME="$(basename "$VM_CACHE_TAR")"
+    EXPECTED_SHA="$(awk -v n="$CACHE_NAME" '$2 == n { print $1; exit }' "$SUMS_FILE" 2>/dev/null || true)"
+    if [[ -n "$EXPECTED_SHA" ]]; then
+      LOCAL_SHA="$(sha256_hex "$VM_CACHE_TAR")"
+      if [[ "$LOCAL_SHA" != "$EXPECTED_SHA" ]]; then
+        warn "local prepared cache sha mismatch (expected $EXPECTED_SHA, got $LOCAL_SHA) — removing and re-downloading"
+        rm -f "$VM_CACHE_TAR"
+        if command -v gh >/dev/null 2>&1; then
+          gh release download "$CHANNEL_TAG" --repo OpenBox-AI/openbox-sandbox \
+            --pattern "$CACHE_NAME" --clobber >/dev/null 2>&1 \
+            || { warn "cache re-download failed — falling back to the runtime path"; return 1; }
+        else
+          return 1
+        fi
+      fi
+    fi
+  fi
+  [[ -f "$VM_CACHE_TAR" ]] || { warn "prepared cache unavailable — falling back to the runtime path"; return 1; }
+
   info "prepared VM cache found ($VM_CACHE_TAR) — extracting into $VM_DRIVER_STATE_DIR/images"
   mkdir -p "$VM_DRIVER_STATE_DIR/images"
   tar -xzf "$VM_CACHE_TAR" -C "$VM_DRIVER_STATE_DIR/images" \
