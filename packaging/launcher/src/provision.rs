@@ -49,6 +49,59 @@ fn wizard_script() -> Result<PathBuf, String> {
 
 /// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
 /// machine needs only `obs provision`. Reuses the embedded fetch logic.
+
+fn gh_download_pattern(gh: &str, tag: &str, pattern: &str) -> bool {
+    let status = Command::new(gh)
+        .args([
+            "release", "download", tag,
+            "--repo", "OpenBox-AI/openbox-sandbox",
+            "--pattern", pattern,
+            "--clobber",
+        ])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
+    matches!(status, Ok(st) if st.success())
+}
+
+/// Provision must self-heal: anything missing from the detected release line
+/// (service binary, policy, dev image tar) is fetched from the matching tag.
+fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
+    let gh = match which_gh() {
+        Some(gh) => gh,
+        None => return, // surface later as a clear missing-file error
+    };
+    let gh = gh.to_string_lossy().to_string();
+    let dev_tar = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "openbox-sandbox-dev-darwin-arm64.tar.gz"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "openbox-sandbox-dev-linux-x86_64.tar.gz"
+    } else {
+        ""
+    };
+    let dev_channel = cwd.join("policy-allow-network-dev.yaml").is_file()
+        || (!dev_tar.is_empty() && cwd.join(dev_tar).is_file());
+    let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
+    if !cwd.join(svc_name).is_file() {
+        info(&format!("{svc_name} missing — fetching from {tag}"));
+        let _ = gh_download_pattern(&gh, tag, svc_name);
+    }
+    if dev_channel {
+        if !cwd.join("policy-allow-network-dev.yaml").is_file() {
+            info("allow policy missing — fetching from the dev release");
+            let _ = gh_download_pattern(&gh, tag, "policy-allow-network-dev.yaml");
+        }
+        if !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
+            info(&format!("{dev_tar} missing — fetching from the dev release"));
+            let _ = gh_download_pattern(&gh, tag, dev_tar);
+        }
+    } else if !cwd.join("policy-deny-network-dev.yaml").is_file() {
+        info("deny policy missing — fetching from the base release");
+        let _ = gh_download_pattern(&gh, tag, "policy-deny-network-dev.yaml");
+    }
+}
+
+
 fn auto_fetch_bundle() -> Result<(), ExitCode> {
     // Always compute the bundle dir from the CWD — never inherit from
     // the parent environment (a leaked OPENSHELL_BUNDLE_DIR from a
@@ -306,6 +359,17 @@ pub fn run_provision(
     if let Err(code) = auto_fetch_bundle() {
         return code;
     }
+    let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "openbox-sandbox-darwin-arm64"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "openbox-sandbox-linux-x86_64"
+    } else {
+        "openbox-sandbox"
+    };
+    ensure_release_assets(
+        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        svc_name,
+    );
     let script = match wizard_script() {
         Ok(s) => s,
         Err(reason) => {
