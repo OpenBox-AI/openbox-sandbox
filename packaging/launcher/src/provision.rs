@@ -117,6 +117,22 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
             info(&format!("{vm_cache} missing — fetching from v0.1.0-dev"));
             let _ = gh_download_pattern(&gh, "v0.1.0-dev", vm_cache);
         }
+        // Runtime-agnostic registry assets: the OCI layout + the zot binary.
+        let oci_layout = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+            "openbox-sandbox-dev-darwin-arm64-oci.tar.gz"
+        } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+            "openbox-sandbox-dev-linux-x86_64-oci.tar.gz"
+        } else {
+            ""
+        };
+        if !oci_layout.is_empty() && !cwd.join(oci_layout).is_file() {
+            info(&format!("{oci_layout} missing — fetching from v0.1.0-dev"));
+            let _ = gh_download_pattern(&gh, "v0.1.0-dev", oci_layout);
+        }
+        if !cwd.join("zot").is_file() {
+            info("zot (local image registry) missing — fetching from v0.1.0-dev");
+            let _ = gh_download_pattern(&gh, "v0.1.0-dev", "zot");
+        }
     } else {
         if !cwd.join("policy-deny-network-dev.yaml").is_file() {
             info("deny policy template missing — fetching from v0.1.0");
