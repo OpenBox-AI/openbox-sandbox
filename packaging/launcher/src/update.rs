@@ -151,22 +151,38 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Replace the running obs binary (macOS/Linux allow overwriting the
-    // running executable; Windows-style locks don't apply).
-    if let Err(e) = std::fs::copy(obs_name, "obs") {
-        crate::err(&format!("could not replace obs: {e}"));
+    // Replace the binary the user actually invoked — a renamed copy of obs is
+    // updated in place, not ignored. Resolution: args[0] with a directory
+    // component wins; a bare name is resolved through PATH; the final
+    // fallback is ./obs.
+    let invoked = std::env::args().next().unwrap_or_else(|| "obs".to_owned());
+    let target = if invoked.contains('/') {
+        invoked.clone()
+    } else if let Some(dir) = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .and_then(|dirs| dirs.into_iter().find(|d| d.join(&invoked).is_file()))
+    {
+        dir.join(&invoked).to_string_lossy().to_string()
+    } else if std::path::Path::new(&invoked).is_file() {
+        invoked.clone()
+    } else {
+        "obs".to_owned()
+    };
+    crate::info(&format!("replacing {target}"));
+    if let Err(e) = std::fs::copy(obs_name, &target) {
+        crate::err(&format!("could not replace {target}: {e}"));
         return ExitCode::FAILURE;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata("obs") {
+        if let Ok(meta) = std::fs::metadata(&target) {
             let mut perms = meta.permissions();
             perms.set_mode(0o755);
-            let _ = std::fs::set_permissions("obs", perms);
+            let _ = std::fs::set_permissions(&target, perms);
         }
     }
-    crate::ok(&format!("obs updated to {release} — assets verified"));
+    crate::ok(&format!("{target} updated to {release} — assets verified"));
     ExitCode::SUCCESS
 }
 
