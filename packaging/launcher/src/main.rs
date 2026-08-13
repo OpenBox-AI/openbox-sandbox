@@ -713,34 +713,49 @@ DOGFOOD LOOP (source checkout only):
   OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision
   obs verify && obs uninstall
 
-PROVISION OPTIONS:
-  --clean-rerun        Also remove wizard-owned state before provisioning.
-  --keep-pki           Preserve PKI (with --clean-rerun or uninstall).
-  --state-root PATH    Override OPENBOX_STATE_ROOT
-  --config-root PATH   Override OPENBOX_CONFIG_ROOT
-  --sandbox-port N     Override OPENBOX_SANDBOX_PORT (default 17443)
-  --gateway-port N     Override OPENSHELL_SERVER_PORT (default 17670)
-  --policy-file PATH   Override OPENBOX_POLICY_FILE
-  --policy-id ID       Override OPENBOX_POLICY_ID
-  --dev-tar PATH       Override OPENBOX_SANDBOX_DEV_TAR
-  --dev-image NAME     Override OPENBOX_DEV_IMAGE_NAME
-  --sandbox-image REF  Override OPENBOX_SANDBOX_IMAGE
-  --bundle-dir PATH    Override OPENSHELL_BUNDLE_DIR
-  --bin-override PATH  Override OPENSHELL_BIN_OVERRIDE
-  --log-level LEVEL    Override OPENSHELL_LOG_LEVEL
-  --container-runtime RUNTIME  Override CONTAINER_RUNTIME
-  --cert-days N        Override OPENBOX_CERT_DAYS
-  --rsa-bits N         Override OPENBOX_RSA_BITS
-  --jwt-ttl-secs N     Override OPENBOX_JWT_TTL_SECS
-  --warm-poll-count N  Override OPENBOX_WARM_POLL_COUNT
-  --warm-poll-interval S  Override OPENBOX_WARM_POLL_INTERVAL
-  --max-connections N  Override OPENBOX_MAX_CONNECTIONS
-  --drain-timeout-ms N Override OPENBOX_DRAIN_TIMEOUT_MS
-  --allow-degraded-landlock BOOL  Override OPENBOX_ALLOW_DEGRADED_LANDLOCK
-  --no-start           Set NO_START=1 (write configs, start nothing)
-  --skip-warm-cache    Set OPENBOX_WARM_CACHE=0
-  --force-warm-cache   Set OPENBOX_WARM_CACHE=1
-  (every OPENBOX_* env knob has a --flag; --flag=value also accepted)
+PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
+  --clean-rerun          Also remove wizard-owned state before provisioning.
+  --keep-pki             Preserve PKI (with --clean-rerun or uninstall).
+  --state-root PATH      (~/.local/state/openbox-sandbox)
+  --config-root PATH     (~/.config/openbox-sandbox)
+  --sandbox-port N       (17443)
+  --gateway-port N       (17670)
+  --gateway-name NAME    (openshell)
+  --log-level LEVEL      (info)
+  --policy-file PATH     (auto: launcher dir / cwd / repo defaults)
+  --policy-id ID         (auto from policy file name)
+  --policy-version N     (1)
+  --compat-id ID         (darwin-dev-1)
+  --dev-tar PATH         (auto per platform next to obs)
+  --dev-image NAME       (openbox-sandboxes-dev)
+  --sandbox-image REF    (NVIDIA base image digest)
+  --bundle-dir PATH      (auto: launcher bundle dir)
+  --bin-override PATH    (bundle bin override)
+  --container-runtime RT (docker)
+  --cert-days N          (825)
+  --rsa-bits N           (2048)
+  --jwt-ttl-secs N       (3600)
+  --gateway-ready-polls N (60)
+  --gateway-ready-interval S (0.5)
+  --service-ready-polls N (40)
+  --service-ready-interval S (0.25)
+  --warm-poll-count N    (240)
+  --warm-poll-interval S (5)
+  --runtime-connect-timeout-ms N (10000)
+  --runtime-poll-interval-ms N  (500)
+  --reconcile-delete-deadline-ms N (60000)
+  --reconcile-wait-deadline-ms N  (60000)
+  --max-connections N    (64)
+  --drain-timeout-ms N   (30000)
+  --allow-degraded-landlock BOOL (true)
+  --vm-driver-state-dir PATH (auto per user+gateway)
+  --tls-dir PATH         (~/.local/state/openshell/tls)
+  --runtime-mtls-dir PATH (~/.config/openbox-sandbox/runtime-mtls)
+  --openshell-meta-dir PATH (~/.config/openshell)
+  --caller-subj SUBJ     (/CN=openbox-sandbox-runtime-caller)
+  --no-start             Set NO_START=1 (write configs, start nothing)
+  --skip-warm-cache      Set OPENBOX_WARM_CACHE=0
+  --force-warm-cache     Set OPENBOX_WARM_CACHE=1
 
 LAUNCHER OPTIONS:
   --driver <name>      Force a driver (podman|docker|kubernetes|vm).
