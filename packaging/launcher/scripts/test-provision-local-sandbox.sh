@@ -355,7 +355,8 @@ check_unbound
 HOME="$TMP/home" OPENBOX_STATE_ROOT="$TMP/teardown-state" OPENBOX_CONFIG_ROOT="$TMP/teardown-config" \
   OPENBOX_SANDBOX_PORT="$(free_tcp_port)" OPENSHELL_SERVER_PORT="$(free_tcp_port)" \
   OPENSHELL_BIN_OVERRIDE="$TMP/bin" OPENBOX_SANDBOX_BIN="$TMP/missing-svc" \
-  bash "$PROVISION" --teardown-only >"$TMP/stdout" 2>"$TMP/stderr"
+  OPENBOX_TEARDOWN_ONLY=1 \
+  bash "$PROVISION" >"$TMP/stdout" 2>"$TMP/stderr"
 check_unbound
 
 # --purge-cache alone must be rejected (not crash)
