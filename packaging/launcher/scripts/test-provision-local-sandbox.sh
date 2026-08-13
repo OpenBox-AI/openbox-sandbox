@@ -11,7 +11,7 @@ audit_use_before_define() {
   python3 - "$provision" <<'PY'
 import re, sys
 lines = open(sys.argv[1]).read().split('\n')
-assign, issues, depth, in_func = {}, [], 0, False
+assign, issues, depth, in_func, guarded = {}, [], 0, False, set()
 BUILTINS = {'BASH_VERSION','LINENO','HOME','USER','PATH','PWD','RANDOM','SECONDS'}
 for i, l in enumerate(lines, 1):
     st = l.strip()
@@ -20,14 +20,16 @@ for i, l in enumerate(lines, 1):
     if depth == 0 and not in_func and st and not st.startswith('#'):
         for m in re.finditer(r'^([A-Z][A-Z0-9_]*)=', st):
             assign.setdefault(m.group(1), i)
+        for m in re.finditer(r'\$\{([A-Z][A-Z0-9_]*):-', l):
+            guarded.add(m.group(1))
         for m in re.finditer(r'\$\{([A-Z][A-Z0-9_]*)\}(?![:+-])', l):
             v = m.group(1)
-            if v in BUILTINS: continue
+            if v in BUILTINS or v in guarded: continue
             if assign.get(v, 10**9) > i:
                 issues.append(f"line {i}: {v} used before top-level assignment")
         for m in re.finditer(r'\$(?!\{)([A-Z][A-Z0-9_]*)', l):
             v = m.group(1)
-            if v in BUILTINS: continue
+            if v in BUILTINS or v in guarded: continue
             if assign.get(v, 10**9) > i:
                 issues.append(f"line {i}: {v} used before top-level assignment")
     depth += l.count('{'); depth -= l.count('}')

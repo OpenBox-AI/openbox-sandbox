@@ -181,11 +181,12 @@ info "release line: $RELEASE_LINE (set OPENBOX_RELEASE_LINE or use --dev/--base 
 # the channel selects the default template (dev -> allow, base -> deny).
 # BOTH templates are downloaded by the launcher, so the choice is never
 # blocked on which file happens to be present.
+DEFAULT_POLICY_TEMPLATE="policy-deny-network-dev.yaml"
+DEFAULT_POLICY_ID="openbox-deny-network-dev"
 case "$RELEASE_LINE" in
   dev)  DEFAULT_POLICY_TEMPLATE="policy-allow-network-dev.yaml"
         DEFAULT_POLICY_ID="openbox-allow-network-dev" ;;
-  *)    DEFAULT_POLICY_TEMPLATE="policy-deny-network-dev.yaml"
-        DEFAULT_POLICY_ID="openbox-deny-network-dev" ;;
+  *)    ;;
 esac
 POLICY_ID="${OPENBOX_POLICY_ID:-$DEFAULT_POLICY_ID}"
 if [[ -n "${OPENBOX_POLICY_FILE:-}" && "${OPENBOX_POLICY_FILE}" == /* ]]; then
@@ -321,6 +322,7 @@ OPENSHELL_LOCKED_VERSION="${OPENBOX_OPENSHELL_LOCKED_VERSION:-0.0.88}"
 #   $OPENSHELL_BIN_OVERRIDE/<symlinks>  — explicit directory
 #   $OPENSHELL_BUNDLE_DIR (release bundle, prefers ${bin}/${libexec})
 #   A flat source-build directory selected through OPENSHELL_BIN_OVERRIDE.
+OPENSHELL_BIN_OVERRIDE="${OPENSHELL_BIN_OVERRIDE:-}"
 GATEWAY_BIN="${OPENBOX_GATEWAY_BIN:-}"
 CLI_BIN="${OPENBOX_CLI_BIN:-}"
 DRIVER_BIN="${OPENBOX_DRIVER_BIN:-}"
