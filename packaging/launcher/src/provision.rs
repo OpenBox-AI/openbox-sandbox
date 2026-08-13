@@ -278,7 +278,11 @@ fn which_gh() -> Option<PathBuf> {
 }
 
 /// `obs provision` — teardown and provision, optionally cleaning state first.
-pub fn run_provision(clean_rerun: bool, keep_pki: bool) -> ExitCode {
+pub fn run_provision(
+    clean_rerun: bool,
+    keep_pki: bool,
+    overrides: Vec<(String, String)>,
+) -> ExitCode {
     if let Err(code) = auto_fetch_bundle() {
         return code;
     }
@@ -299,7 +303,7 @@ pub fn run_provision(clean_rerun: bool, keep_pki: bool) -> ExitCode {
         args.push("--keep-pki");
     }
 
-    exec_bash(&script, &args)
+    exec_bash_env(&script, &args, &overrides)
 }
 
 /// `obs uninstall` — stop everything the wizard started and wipe its state.
@@ -673,13 +677,26 @@ fn parse_agent_env(body: &str) -> Result<Vec<(&str, &str)>, String> {
 }
 
 fn exec_bash(script: &Path, args: &[&str]) -> ExitCode {
-    let status = Command::new("bash")
+    exec_bash_env(script, args, &[])
+}
+
+fn exec_bash_env(
+    script: &Path,
+    args: &[&str],
+    overrides: &[(String, String)],
+) -> ExitCode {
+    let mut command = Command::new("bash");
+    command
         .arg(script.to_str().unwrap_or(""))
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
+        .stderr(Stdio::inherit());
+    for (key, value) in overrides {
+        info(&format!("override {key}={value}"));
+        command.env(key, value);
+    }
+    let status = command.status();
     match status {
         Ok(s) if s.success() => ExitCode::SUCCESS,
         Ok(s) => {

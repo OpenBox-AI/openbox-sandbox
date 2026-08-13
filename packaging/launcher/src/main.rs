@@ -100,6 +100,7 @@ enum CommandLine {
     Provision {
         clean_rerun: bool,
         keep_pki: bool,
+        overrides: Vec<(String, String)>,
     },
     Uninstall {
         keep_pki: bool,
@@ -116,6 +117,119 @@ enum CommandLine {
     Launch,
 }
 
+/// Value-taking `--flag` → env mapping for provision options. Every knob the
+/// provision script accepts via OPENBOX_* env has a CLI spelling.
+const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
+    ("--state-root", "OPENBOX_STATE_ROOT"),
+    ("--config-root", "OPENBOX_CONFIG_ROOT"),
+    ("--project-root", "OPENBOX_PROJECT_ROOT"),
+    ("--bundle-dir", "OPENSHELL_BUNDLE_DIR"),
+    ("--sandbox-bin", "OPENBOX_SANDBOX_BIN"),
+    ("--sandbox-port", "OPENBOX_SANDBOX_PORT"),
+    ("--gateway-port", "OPENSHELL_SERVER_PORT"),
+    ("--gateway-name", "OPENSHELL_GATEWAY_NAME"),
+    ("--log-level", "OPENSHELL_LOG_LEVEL"),
+    ("--policy-file", "OPENBOX_POLICY_FILE"),
+    ("--policy-id", "OPENBOX_POLICY_ID"),
+    ("--policy-version", "OPENBOX_POLICY_VERSION"),
+    ("--compat-id", "OPENBOX_COMPAT_ID"),
+    ("--sandbox-image", "OPENBOX_SANDBOX_IMAGE"),
+    ("--dev-tar", "OPENBOX_SANDBOX_DEV_TAR"),
+    ("--dev-image", "OPENBOX_DEV_IMAGE_NAME"),
+    ("--vm-driver-state-dir", "OPENSHELL_VM_DRIVER_STATE_DIR"),
+    ("--tls-dir", "OPENSHELL_LOCAL_TLS_DIR"),
+    ("--runtime-mtls-dir", "OPENBOX_RUNTIME_MTLS_DIR"),
+    ("--openshell-meta-dir", "OPENBOX_OPENSHELL_META_DIR"),
+    ("--caller-subj", "OPENBOX_CALLER_SUBJ"),
+    ("--cert-days", "OPENBOX_CERT_DAYS"),
+    ("--rsa-bits", "OPENBOX_RSA_BITS"),
+    ("--jwt-ttl-secs", "OPENBOX_JWT_TTL_SECS"),
+    ("--gateway-ready-polls", "OPENBOX_GATEWAY_READY_POLLS"),
+    ("--gateway-ready-interval", "OPENBOX_GATEWAY_READY_INTERVAL"),
+    ("--service-ready-polls", "OPENBOX_SERVICE_READY_POLLS"),
+    ("--service-ready-interval", "OPENBOX_SERVICE_READY_INTERVAL"),
+    ("--warm-poll-count", "OPENBOX_WARM_POLL_COUNT"),
+    ("--warm-poll-interval", "OPENBOX_WARM_POLL_INTERVAL"),
+    ("--runtime-connect-timeout-ms", "OPENBOX_RUNTIME_CONNECT_TIMEOUT_MS"),
+    ("--runtime-poll-interval-ms", "OPENBOX_RUNTIME_POLL_INTERVAL_MS"),
+    ("--reconcile-delete-deadline-ms", "OPENBOX_RECONCILE_DELETE_DEADLINE_MS"),
+    ("--reconcile-wait-deadline-ms", "OPENBOX_RECONCILE_WAIT_DEADLINE_MS"),
+    ("--max-connections", "OPENBOX_MAX_CONNECTIONS"),
+    ("--drain-timeout-ms", "OPENBOX_DRAIN_TIMEOUT_MS"),
+    ("--allow-degraded-landlock", "OPENBOX_ALLOW_DEGRADED_LANDLOCK"),
+    ("--container-runtime", "CONTAINER_RUNTIME"),
+    ("--bin-override", "OPENSHELL_BIN_OVERRIDE"),
+];
+
+/// Boolean `--flag` → env=value pairs for provision options.
+const PROVISION_FLAG_BOOLS: &[(&str, &str, &str)] = &[
+    ("--no-start", "NO_START", "1"),
+    ("--skip-warm-cache", "OPENBOX_WARM_CACHE", "0"),
+    ("--force-warm-cache", "OPENBOX_WARM_CACHE", "1"),
+];
+
+fn parse_provision_flags(
+    args: &[String],
+) -> Result<(Vec<(String, String)>, bool, bool), String> {
+    let mut overrides: Vec<(String, String)> = Vec::new();
+    let mut clean_rerun = false;
+    let mut keep_pki = false;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--clean-rerun" {
+            clean_rerun = true;
+            i += 1;
+            continue;
+        }
+        if arg == "--keep-pki" {
+            keep_pki = true;
+            i += 1;
+            continue;
+        }
+        if let Some((_, env_key, value)) = PROVISION_FLAG_BOOLS
+            .iter()
+            .find(|(flag, _, _)| *flag == arg)
+        {
+            overrides.push(((*env_key).to_owned(), (*value).to_owned()));
+            i += 1;
+            continue;
+        }
+        let mut matched = false;
+        for (flag, env_key) in PROVISION_FLAG_ENV {
+            if arg == *flag {
+                // --flag value
+                if i + 1 >= args.len() {
+                    return Err(format!("{arg} requires a value"));
+                }
+                overrides.push(((*env_key).to_owned(), args[i + 1].clone()));
+                i += 2;
+                matched = true;
+                break;
+            }
+            // --flag=value
+            if let Some(value) = arg.strip_prefix(&format!("{flag}=")) {
+                if value.is_empty() {
+                    return Err(format!("{flag}= requires a value"));
+                }
+                overrides.push(((*env_key).to_owned(), value.to_owned()));
+                i += 1;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            return Err(format!(
+                "unknown provision option '{arg}' (see `obs provision --help`-listed flags)"
+            ));
+        }
+    }
+    if keep_pki && !clean_rerun {
+        return Err("--keep-pki requires `obs provision --clean-rerun`".to_owned());
+    }
+    Ok((overrides, clean_rerun, keep_pki))
+}
+
 fn parse_command(args: &[String]) -> Result<CommandLine, String> {
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         return Ok(CommandLine::Help);
@@ -125,15 +239,11 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
     };
     match command {
         "provision" => {
-            ensure_options(&args[1..], &["--clean-rerun", "--keep-pki"])?;
-            let clean_rerun = args[1..].iter().any(|arg| arg == "--clean-rerun");
-            let keep_pki = args[1..].iter().any(|arg| arg == "--keep-pki");
-            if keep_pki && !clean_rerun {
-                return Err("--keep-pki requires `obs provision --clean-rerun`".to_owned());
-            }
+            let (overrides, clean_rerun, keep_pki) = parse_provision_flags(&args[1..])?;
             Ok(CommandLine::Provision {
                 clean_rerun,
                 keep_pki,
+                overrides,
             })
         }
         "uninstall" => {
@@ -220,7 +330,8 @@ fn main() -> ExitCode {
         Ok(CommandLine::Provision {
             clean_rerun,
             keep_pki,
-        }) => return provision::run_provision(clean_rerun, keep_pki),
+            overrides,
+        }) => return provision::run_provision(clean_rerun, keep_pki, overrides),
         Ok(CommandLine::Uninstall { keep_pki }) => return provision::run_uninstall(keep_pki),
         Ok(CommandLine::Verify) => return provision::run_verify(),
         Ok(CommandLine::Status) => return provision::run_status(),
@@ -605,6 +716,31 @@ DOGFOOD LOOP (source checkout only):
 PROVISION OPTIONS:
   --clean-rerun        Also remove wizard-owned state before provisioning.
   --keep-pki           Preserve PKI (with --clean-rerun or uninstall).
+  --state-root PATH    Override OPENBOX_STATE_ROOT
+  --config-root PATH   Override OPENBOX_CONFIG_ROOT
+  --sandbox-port N     Override OPENBOX_SANDBOX_PORT (default 17443)
+  --gateway-port N     Override OPENSHELL_SERVER_PORT (default 17670)
+  --policy-file PATH   Override OPENBOX_POLICY_FILE
+  --policy-id ID       Override OPENBOX_POLICY_ID
+  --dev-tar PATH       Override OPENBOX_SANDBOX_DEV_TAR
+  --dev-image NAME     Override OPENBOX_DEV_IMAGE_NAME
+  --sandbox-image REF  Override OPENBOX_SANDBOX_IMAGE
+  --bundle-dir PATH    Override OPENSHELL_BUNDLE_DIR
+  --bin-override PATH  Override OPENSHELL_BIN_OVERRIDE
+  --log-level LEVEL    Override OPENSHELL_LOG_LEVEL
+  --container-runtime RUNTIME  Override CONTAINER_RUNTIME
+  --cert-days N        Override OPENBOX_CERT_DAYS
+  --rsa-bits N         Override OPENBOX_RSA_BITS
+  --jwt-ttl-secs N     Override OPENBOX_JWT_TTL_SECS
+  --warm-poll-count N  Override OPENBOX_WARM_POLL_COUNT
+  --warm-poll-interval S  Override OPENBOX_WARM_POLL_INTERVAL
+  --max-connections N  Override OPENBOX_MAX_CONNECTIONS
+  --drain-timeout-ms N Override OPENBOX_DRAIN_TIMEOUT_MS
+  --allow-degraded-landlock BOOL  Override OPENBOX_ALLOW_DEGRADED_LANDLOCK
+  --no-start           Set NO_START=1 (write configs, start nothing)
+  --skip-warm-cache    Set OPENBOX_WARM_CACHE=0
+  --force-warm-cache   Set OPENBOX_WARM_CACHE=1
+  (every OPENBOX_* env knob has a --flag; --flag=value also accepted)
 
 LAUNCHER OPTIONS:
   --driver <name>      Force a driver (podman|docker|kubernetes|vm).
