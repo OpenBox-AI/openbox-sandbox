@@ -158,6 +158,12 @@ else
     break
   done
 fi
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
+  Linux-x86_64) _dev_tar_default="openbox-sandbox-dev-linux-x86_64.tar.gz" ;;
+  Linux-aarch64|Linux-arm64) _dev_tar_default="openbox-sandbox-dev-linux-aarch64.tar.gz" ;;
+  *) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
+esac
 LAUNCHER_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Release line: explicit env/flag wins, else the dev image tar decides, else
 # base. The POLICY FILES are templates — the line selects the default template,
@@ -203,12 +209,6 @@ POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
 SANDBOX_IMAGE="${OPENBOX_SANDBOX_IMAGE:-ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e}"
 # v0.1.0-dev releases ship the dev image tar next to obs — auto-detect it.
-case "$(uname -s)-$(uname -m)" in
-  Darwin-arm64) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
-  Linux-x86_64) _dev_tar_default="openbox-sandbox-dev-linux-x86_64.tar.gz" ;;
-  Linux-aarch64|Linux-arm64) _dev_tar_default="openbox-sandbox-dev-linux-aarch64.tar.gz" ;;
-  *) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
-esac
 DEV_IMAGE_NAME="${OPENBOX_DEV_IMAGE_NAME:-openbox-sandboxes-dev}"
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) _cache_default="prepared-vm-cache-darwin-arm64.tar.gz" ;;
