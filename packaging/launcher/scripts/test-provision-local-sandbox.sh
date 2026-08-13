@@ -67,7 +67,7 @@ if grep -Eq '^[[:space:]]*umask 022[[:space:]]*$' "$PROVISION"; then
   exit 1
 fi
 # shellcheck disable=SC2016  # literal $GATEWAY_BIN in the launch construct
-grep -Eq '\([[:space:]]*umask 022;[[:space:]]*exec nohup "\$GATEWAY_BIN"' "$PROVISION" \
+grep -Eq '\([[:space:]]*umask 022;[[:space:]]*(export RUST_LOG=[^;]*;[[:space:]]*)?exec nohup "\$GATEWAY_BIN"' "$PROVISION" \
   || { echo 'expected the gateway child to launch under ( umask 022; exec nohup ... )' >&2; exit 1; }
 # The log redirect must be OUTSIDE the umask 022 subshell so gateway.log is
 # opened by the parent shell under umask 077 (0600), not the relaxed child
