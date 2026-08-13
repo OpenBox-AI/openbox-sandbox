@@ -13,28 +13,45 @@ pub fn run(tag: Option<&str>) -> ExitCode {
         }
     };
     let repo = "OpenBox-AI/openbox-sandbox";
+    // Default channel: detect which release line the current directory holds.
+    // The dev release ships the dev image tar + allow policy; the base ships
+    // the deny policy. When neither is present, fall back to the latest.
     let release = match tag {
         Some(t) => t.to_owned(),
         None => {
-            let out = Command::new(&gh)
-                .args([
-                    "release",
-                    "view",
-                    "--repo",
-                    repo,
-                    "--json",
-                    "tagName",
-                    "--jq",
-                    ".tagName",
-                ])
-                .output();
-            match out {
-                Ok(o) if o.status.success() => {
-                    String::from_utf8_lossy(&o.stdout).trim().to_owned()
-                }
-                _ => {
-                    crate::err("could not resolve the latest release tag");
-                    return ExitCode::FAILURE;
+            let dev_markers = [
+                "openbox-sandbox-dev-darwin-arm64.tar.gz",
+                "openbox-sandbox-dev-linux-x86_64.tar.gz",
+                "policy-allow-network-dev.yaml",
+            ];
+            let base_markers = ["policy-deny-network-dev.yaml"];
+            if dev_markers.iter().any(|m| std::path::Path::new(m).is_file()) {
+                crate::info("dev channel detected — targeting v0.1.0-dev");
+                "v0.1.0-dev".to_owned()
+            } else if base_markers.iter().any(|m| std::path::Path::new(m).is_file()) {
+                crate::info("base channel detected — targeting v0.1.0");
+                "v0.1.0".to_owned()
+            } else {
+                let out = Command::new(&gh)
+                    .args([
+                        "release",
+                        "view",
+                        "--repo",
+                        repo,
+                        "--json",
+                        "tagName",
+                        "--jq",
+                        ".tagName",
+                    ])
+                    .output();
+                match out {
+                    Ok(o) if o.status.success() => {
+                        String::from_utf8_lossy(&o.stdout).trim().to_owned()
+                    }
+                    _ => {
+                        crate::err("could not resolve the latest release tag");
+                        return ExitCode::FAILURE;
+                    }
                 }
             }
         }
