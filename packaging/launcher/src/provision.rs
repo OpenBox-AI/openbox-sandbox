@@ -89,15 +89,7 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     let dev_channel = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
         Ok("dev") => true,
         Ok(_) => false,
-        Err(_) => {
-            // The binary knows its channel; the dev tar in the dir only
-            // upgrades a base build's DEFAULT to dev — never the reverse.
-            if !dev_tar.is_empty() && cwd.join(dev_tar).is_file() {
-                true
-            } else {
-                crate::channel() != "base"
-            }
-        }
+        Err(_) => crate::channel() != "base",
     };
     let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
     info(&format!(
@@ -450,6 +442,11 @@ pub fn run_provision(
     // asset fetches must see the same values the provision script will.
     for (key, value) in &overrides {
         std::env::set_var(key, value);
+    }
+    // The channel is the BINARY's channel — always pass it down so the
+    // script never guesses.
+    if std::env::var("OPENBOX_RELEASE_LINE").is_err() {
+        std::env::set_var("OPENBOX_RELEASE_LINE", crate::channel());
     }
     if let Err(code) = auto_fetch_bundle() {
         return code;

@@ -168,14 +168,8 @@ LAUNCHER_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Release line: explicit env/flag wins, else the dev image tar decides, else
 # base. The POLICY FILES are templates — the line selects the default template,
 # never the other way around.
-if [[ -n "${OPENBOX_RELEASE_LINE:-}" ]]; then
-  RELEASE_LINE="$OPENBOX_RELEASE_LINE"
-elif [[ -f "$LAUNCHER_DIR/$_dev_tar_default" || -f "$(pwd)/$_dev_tar_default" ]]; then
-  RELEASE_LINE="dev"
-else
-  RELEASE_LINE="base"
-fi
-info "release line: $RELEASE_LINE (set OPENBOX_RELEASE_LINE or use --dev/--base to override)"
+RELEASE_LINE="${OPENBOX_RELEASE_LINE:-base}"
+info "release line: $RELEASE_LINE (the launcher passes the binary's channel; --dev/--base override)"
 
 # Policy template resolution: an explicit policy file always wins; otherwise
 # the channel selects the default template (dev -> allow, base -> deny).
