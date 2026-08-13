@@ -239,6 +239,9 @@ RUNTIME_POLL_INTERVAL_MS="${OPENBOX_RUNTIME_POLL_INTERVAL_MS:-500}"
 RECONCILE_DELETE_DEADLINE_MS="${OPENBOX_RECONCILE_DELETE_DEADLINE_MS:-60000}"
 RECONCILE_WAIT_DEADLINE_MS="${OPENBOX_RECONCILE_WAIT_DEADLINE_MS:-60000}"
 MAX_CONNECTIONS="${OPENBOX_MAX_CONNECTIONS:-64}"
+GATEWAY_LOG_LEVEL="${OPENBOX_GATEWAY_LOG_LEVEL:-info}"
+KRUN_LOG_LEVEL="${OPENBOX_KRUN_LOG_LEVEL:-1}"
+DRIVER_RUST_LOG="${OPENBOX_DRIVER_RUST_LOG:-}"
 DRAIN_TIMEOUT_MS="${OPENBOX_DRAIN_TIMEOUT_MS:-30000}"
 ALLOW_DEGRADED_LANDLOCK="${OPENBOX_ALLOW_DEGRADED_LANDLOCK:-true}"
 CALLER_SUBJ="${OPENBOX_CALLER_SUBJ:-/CN=openbox-sandbox-runtime-caller}"
@@ -666,6 +669,7 @@ version = 1
 [openshell.gateway]
 compute_drivers = ["vm"]
 disable_tls = false
+log_level = "${GATEWAY_LOG_LEVEL}"
 
 [openshell.gateway.auth]
 allow_unauthenticated_users = false
@@ -682,6 +686,7 @@ ttl_secs = ${JWT_TTL_SECS}
 
 [openshell.drivers.vm]
 default_image = "${SANDBOX_IMAGE}"
+krun_log_level = ${KRUN_LOG_LEVEL}
 grpc_endpoint = "${GRPC_ENDPOINT}"
 driver_dir = "$(dirname "$DRIVER_BIN")"
 state_dir = "${VM_DRIVER_STATE_DIR}"
@@ -722,7 +727,7 @@ else
   # $VM_DRIVER_STATE_DIR parent created above. The log redirect stays OUTSIDE
   # the subshell so gateway.log is opened by the parent shell under umask 077
   # (0600), not by the relaxed child.
-  ( umask 022; exec nohup "$GATEWAY_BIN" \
+  ( umask 022; export RUST_LOG="${DRIVER_RUST_LOG:-${RUST_LOG:-}}"; exec nohup "$GATEWAY_BIN" \
     --config "$GATEWAY_CONFIG" \
     --port "$PORT" \
     --log-level "$LOG_LEVEL" \
