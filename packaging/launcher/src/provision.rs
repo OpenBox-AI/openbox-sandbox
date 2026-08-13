@@ -79,6 +79,13 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     } else {
         ""
     };
+    let vm_cache = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "prepared-vm-cache-darwin-arm64.tar.gz"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "prepared-vm-cache-linux-x86_64.tar.gz"
+    } else {
+        ""
+    };
     let dev_channel = cwd.join("policy-allow-network-dev.yaml").is_file()
         || (!dev_tar.is_empty() && cwd.join(dev_tar).is_file());
     let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
@@ -94,6 +101,10 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
         if !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
             info(&format!("{dev_tar} missing — fetching from the dev release"));
             let _ = gh_download_pattern(&gh, tag, dev_tar);
+        }
+        if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
+            info(&format!("{vm_cache} missing — fetching (runtime stays optional)"));
+            let _ = gh_download_pattern(&gh, tag, vm_cache);
         }
     } else if !cwd.join("policy-deny-network-dev.yaml").is_file() {
         info("deny policy missing — fetching from the base release");
