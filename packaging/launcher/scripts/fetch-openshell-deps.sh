@@ -50,7 +50,7 @@ if ! gh auth status >/dev/null 2>&1; then
   echo "error: gh is not authenticated — run 'gh auth login' first" >&2
   exit 1
 fi
-OPENSHELL_VERSION="${OPENBOX_OPENSHELL_VERSION:-0.0.85}"
+OPENSHELL_VERSION="${OPENBOX_OPENSHELL_VERSION:-0.0.88}"
 OUT="${OUT:-$(pwd)/openbox-sandbox-bundle}"
 BASE="https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}"
 

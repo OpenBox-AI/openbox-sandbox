@@ -26,7 +26,7 @@ use std::process::Command;
 use crate::bundle::Artifacts;
 
 /// The OpenShell version this launcher is built and tested against.
-pub const REQUIRED_VERSION: &str = "0.0.85";
+pub const REQUIRED_VERSION: &str = "0.0.88";
 
 /// Reported by [`verify`]: the artifact that failed, and why.
 #[derive(Debug)]

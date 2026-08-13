@@ -234,8 +234,15 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     if !svc_bin.is_file() {
         if let Some(gh) = which_gh() {
             info(&format!("sandbox service missing — fetching {svc_name}"));
+            let fetch_tag = if cwd.join("policy-allow-network-dev.yaml").is_file()
+                || cwd.join(dev_tar_name(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"))).is_file()
+            {
+                "v0.1.0-dev"
+            } else {
+                "v0.1.0"
+            };
             let dl = Command::new(&gh)
-                .args(["release", "download", "v0.1.0"])
+                .args(["release", "download", fetch_tag])
                 .args(["--repo", "OpenBox-AI/openbox-sandbox"])
                 .args(["--pattern", &svc_name])
                 .args(["--dir", bundle_dir.to_str().unwrap_or(".")])
@@ -310,8 +317,15 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     if !policy_path.is_file() {
         if let Some(gh) = which_gh() {
             info(&format!("policy file missing — fetching {policy_name}"));
+            let fetch_tag = if cwd.join("policy-allow-network-dev.yaml").is_file()
+                || cwd.join(dev_tar_name(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"))).is_file()
+            {
+                "v0.1.0-dev"
+            } else {
+                "v0.1.0"
+            };
             let dl = Command::new(&gh)
-                .args(["release", "download", "v0.1.0"])
+                .args(["release", "download", fetch_tag])
                 .args(["--repo", "OpenBox-AI/openbox-sandbox"])
                 .args(["--pattern", policy_name])
                 .args(["--dir", bundle_dir.to_str().unwrap_or(".")])
