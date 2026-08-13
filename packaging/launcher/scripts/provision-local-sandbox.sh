@@ -178,6 +178,12 @@ case "$(uname -s)-$(uname -m)" in
   *) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
 esac
 DEV_IMAGE_NAME="${OPENBOX_DEV_IMAGE_NAME:-openbox-sandboxes-dev}"
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) _cache_default="prepared-vm-cache-darwin-arm64.tar.gz" ;;
+  Linux-x86_64) _cache_default="prepared-vm-cache-linux-x86_64.tar.gz" ;;
+  *)           _cache_default="" ;;
+esac
+VM_CACHE_TAR="${OPENBOX_VM_CACHE_TAR:-$_cache_default}"
 if [[ -n "${OPENBOX_SANDBOX_DEV_TAR:-}" && "${OPENBOX_SANDBOX_DEV_TAR}" == /* ]]; then
   DEV_TAR="$OPENBOX_SANDBOX_DEV_TAR"
 else
@@ -266,6 +272,9 @@ GATEWAY_READY_POLLS="${OPENBOX_GATEWAY_READY_POLLS:-60}"
 GATEWAY_READY_INTERVAL="${OPENBOX_GATEWAY_READY_INTERVAL:-0.5}"
 SERVICE_READY_POLLS="${OPENBOX_SERVICE_READY_POLLS:-40}"
 SERVICE_READY_INTERVAL="${OPENBOX_SERVICE_READY_INTERVAL:-0.25}"
+VM_CACHE_TAR="${OPENBOX_VM_CACHE_TAR:-}"
+USE_VM_CACHE="${OPENBOX_USE_VM_CACHE:-1}"
+VM_CACHE_HIT_TIMEOUT="${OPENBOX_VM_CACHE_HIT_TIMEOUT:-30}"
 WARM_POLL_COUNT="${OPENBOX_WARM_POLL_COUNT:-240}"
 WARM_POLL_INTERVAL="${OPENBOX_WARM_POLL_INTERVAL:-5}"
 RUNTIME_CONNECT_TIMEOUT_MS="${OPENBOX_RUNTIME_CONNECT_TIMEOUT_MS:-10000}"
@@ -975,15 +984,37 @@ ok "agent.env written"
 # (minutes), which exceeds the live test's wait_ready deadline. Pre-warm with
 # one create -> ready -> delete cycle so the first real request is fast.
 # Skip with OPENBOX_WARM_CACHE=0 (or implicitly when NO_START=1).
+# Try the shipped prepared-cache first (zero runtime deps): extract, warm,
+# expect a fast cache-hit ready. Only when that misses do we fall back to the
+# container-runtime path (docker/podman, optional) to build the cache locally.
+try_shipped_vm_cache() {
+  [[ "$USE_VM_CACHE" == "1" && -n "$VM_CACHE_TAR" ]] || return 1
+  for _cand in "$LAUNCHER_DIR/$VM_CACHE_TAR" "$(pwd)/$VM_CACHE_TAR"; do
+    [[ -f "$_cand" ]] || continue
+    VM_CACHE_TAR="$_cand"
+    break
+  done
+  [[ -f "$VM_CACHE_TAR" ]] || return 1
+  info "prepared VM cache found ($VM_CACHE_TAR) — extracting into $VM_DRIVER_STATE_DIR/images"
+  mkdir -p "$VM_DRIVER_STATE_DIR/images"
+  tar -xzf "$VM_CACHE_TAR" -C "$VM_DRIVER_STATE_DIR/images" \
+    || { warn "prepared cache extraction failed — falling back to the runtime path"; return 1; }
+  return 0
+}
+
 if [[ "${OPENBOX_WARM_CACHE:-1}" == "0" ]]; then
   info "cache warm skipped (OPENBOX_WARM_CACHE=0)"
 elif [[ "$NO_START" == "1" ]]; then
   info "cache warm skipped (NO_START=1; stack not started)"
 elif [[ -x "$CLI_BIN" ]]; then
-  # The VM driver pulls sandbox images through a container runtime —
-  # reuse the same docker/podman resolution as the dev-image load.
-  if ! resolve_runtime; then
-    die "no container runtime available — install Docker or Podman and re-run"
+  cache_prepared=0
+  try_shipped_vm_cache && cache_prepared=1
+  # The runtime is ONLY needed when the shipped cache is absent/missed —
+  # it is no longer a required dependency of the happy path.
+  if [[ "$cache_prepared" != "1" ]]; then
+    if ! resolve_runtime; then
+      die "no prepared VM cache and no container runtime available — install Docker or Podman (or re-run once the cache asset is present) and re-run"
+    fi
   fi
   # The VM driver builds the ext4 rootfs with mkfs.ext4 AND fixes ownership
   # with debugfs (both from e2fsprogs) — checked against the pinned driver's
@@ -1091,9 +1122,22 @@ elif [[ -x "$CLI_BIN" ]]; then
     sleep "$WARM_POLL_INTERVAL"
   done
   if [[ "$warmed" == "1" ]]; then
-    ok "cache warmed: $warm_name"
-  elif [[ ! -s "$warm_log" ]] && [[ "$(grep -ciE 'error|failed|validation' "$warm_log" 2>/dev/null || true)" -eq 0 ]]; then
-    warn "warm sandbox did not reach ready in ${elapsed}s; first request may be slow"
+    if [[ "$cache_prepared" == "1" ]]; then
+      ok "prepared VM cache hit — warm completed in ${elapsed}s without a container runtime"
+    else
+      ok "cache warmed: $warm_name"
+    fi
+  else
+    if [[ "$cache_prepared" == "1" ]]; then
+      err "prepared VM cache MISS — the driver rejected or failed it; falling back to the runtime path"
+      rm -rf "$VM_DRIVER_STATE_DIR/images"
+      cache_prepared=0
+    fi
+    if [[ "$cache_prepared" != "1" ]] && resolve_runtime; then
+      info "rebuilding the image cache via the container runtime ($RUNTIME)"
+    elif [[ ! -s "$warm_log" ]] && [[ "$(grep -ciE 'error|failed|validation' "$warm_log" 2>/dev/null || true)" -eq 0 ]]; then
+      warn "warm sandbox did not reach ready in ${elapsed}s; first request may be slow"
+    fi
   fi
   kill "$warm_tail_pid" 2>/dev/null || true
   run_with_timeout "${OPENBOX_WARM_DELETE_TIMEOUT:-30}" "$CLI_BIN" sandbox delete "$warm_name" >/dev/null 2>&1 \
