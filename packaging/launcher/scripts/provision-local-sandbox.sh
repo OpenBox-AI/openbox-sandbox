@@ -142,8 +142,12 @@ LAUNCHER_DIR="$(cd "$(dirname "$0")" && pwd)"
 # Policy resolution is hermetic: an explicit env path wins; otherwise look in
 # the launcher directory (release assets ship next to obs), then the working
 # directory, then the source-tree defaults. Stray files elsewhere are ignored.
+POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
 if [[ -n "${OPENBOX_POLICY_FILE:-}" && "${OPENBOX_POLICY_FILE}" == /* ]]; then
   POLICY_FILE="$OPENBOX_POLICY_FILE"
+  case "$(basename "$POLICY_FILE")" in
+    *allow*) POLICY_ID="${OPENBOX_POLICY_ID:-openbox-allow-network-dev}" ;;
+  esac
 else
   POLICY_FILE=""
   POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
