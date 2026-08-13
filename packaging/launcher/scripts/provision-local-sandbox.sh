@@ -241,7 +241,7 @@ fi
 ZOT_BIN="${OPENBOX_ZOT_BIN:-}"
 _oci_layout="${OPENBOX_OCI_LAYOUT:-}"
 
-if [[ -n "$DEV_TAR" ]] && [[ -z "$ZOT_BIN" || -z "$_oci_layout" ]]; then
+if [[ -n "$DEV_TAR" ]] && [[ -z "$ZOT_BIN" || -z "$_oci_layout" ]] && [[ -z "${OPENBOX_SANDBOX_IMAGE:-}" ]]; then
   info "dev release detected ($DEV_TAR) — loading the dev sandbox image so the driver can resolve it locally (registry mode unavailable)"
   if ! resolve_runtime; then
     die "the dev image ref is host-less — the VM driver resolves it through a container runtime or a local registry. Install Docker/Podman, or ship the OCI layout + zot assets"
@@ -750,14 +750,36 @@ fi
 if [[ -n "$_oci_layout" && -n "$ZOT_BIN" ]]; then
   ZOT_DIR="$STATE_ROOT/zot"
   ZOT_PORT="${OPENBOX_ZOT_PORT:-15000}"
-  mkdir -p "$ZOT_DIR/layout" "$ZOT_DIR/run"
-  info "runtime-agnostic image registry: serving the shipped OCI layout via zot on 127.0.0.1:$ZOT_PORT"
+  mkdir -p "$ZOT_DIR/layout" "$ZOT_DIR/tls"
+  info "runtime-agnostic image registry: serving the shipped OCI layout via zot on 127.0.0.1:$ZOT_PORT (HTTPS)"
   tar -xzf "$_oci_layout" -C "$ZOT_DIR/layout" \
     || die "failed to extract the OCI layout ($_oci_layout)"
+  # The VM driver's registry client speaks HTTPS only — generate a local CA
+  # and trust it into the user keychain so its TLS verification passes.
+  openssl req -x509 -newkey rsa:2048 \
+    -keyout "$ZOT_DIR/tls/key.pem" -out "$ZOT_DIR/tls/cert.pem" \
+    -days 825 -nodes -subj "/CN=127.0.0.1" \
+    -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" >/dev/null 2>&1 \
+    || die "failed to generate the registry TLS certificate"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    security add-trusted-cert -d -r trustRoot \
+      -k "$HOME/Library/Keychains/login.keychain-db" "$ZOT_DIR/tls/cert.pem" >/dev/null 2>&1 \
+      || warn "could not trust the registry CA in the keychain — the driver may reject the registry certificate"
+  else
+    mkdir -p "$STATE_ROOT/certs"
+    cp "$ZOT_DIR/tls/cert.pem" "$STATE_ROOT/certs/openbox-registry-ca.crt"
+    sudo -n cp "$ZOT_DIR/tls/cert.pem" /usr/local/share/ca-certificates/openbox-registry-ca.crt >/dev/null 2>&1 \
+      && sudo -n update-ca-certificates >/dev/null 2>&1 \
+      || warn "could not install the registry CA system-wide (sudo required) — the driver may reject the registry certificate"
+  fi
   cat > "$ZOT_DIR/zot-config.json" <<ZOTEOF
 {
   "storage": { "rootDirectory": "$ZOT_DIR/layout" },
-  "http": { "address": "127.0.0.1", "port": "$ZOT_PORT" },
+  "http": {
+    "address": "127.0.0.1",
+    "port": "$ZOT_PORT",
+    "tls": { "cert": "$ZOT_DIR/tls/cert.pem", "key": "$ZOT_DIR/tls/key.pem" }
+  },
   "log": { "level": "error" }
 }
 ZOTEOF
