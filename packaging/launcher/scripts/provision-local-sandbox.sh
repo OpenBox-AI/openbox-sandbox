@@ -1262,63 +1262,63 @@ elif [[ -x "$CLI_BIN" ]]; then
   warm_name="w$(date +%s)"
   warm_log="${STATE_ROOT}/warm-${warm_name}.log"
   warm_start="$(date +%s)"
-  # The openshell CLI fails its create after a fixed 300s provisioning
-  # timeout, and the cold path (image pull + rootfs build + first microVM
-  # boot) can exceed that on small hosts. The gateway keeps provisioning the
-  # sandbox after the CLI gives up, so a create that exits non-zero is not a
-  # failure: poll the sandbox by name and reap it either way.
-  run_with_timeout "${OPENBOX_WARM_CREATE_TIMEOUT:-300}" \
-    "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >"$warm_log" 2>&1 \
-    || warn "warm sandbox create exited non-zero (CLI timeout or validation failure); see $warm_log — polling by name"
-  # Stream the create log live — the layer-by-layer pull progress lands here.
-  tail -n +1 -f "$warm_log" >&2 &
-  warm_tail_pid=$!
-  warmed=0
-  # Cold-cache create can take 10-15 min (image pull/extract + rootfs build
-  # + microVM boot on small hosts); poll up to 20 min with visible progress.
-  # Only a sandbox that reached ready (or was reaped after running) is a warm
-  # cache; a create that never materialized is surfaced, not swallowed.
-  last_phase=""
-  seen_once=0
-  heartbeat=0
-  for _ in $(seq 1 "$WARM_POLL_COUNT"); do
-    elapsed=$(( $(date +%s) - warm_start ))
-    status="$(run_with_timeout "${OPENBOX_WARM_GET_TIMEOUT:-10}" "$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
-      # "Not found" only means completed-and-reaped AFTER we saw the sandbox
-      # at least once. Before that it means the gateway has not registered it
-      # yet — keep polling.
-      if [[ "$seen_once" == "1" ]]; then
-        info "warm sandbox $warm_name completed and reaped (elapsed ${elapsed}s)"
-        warmed=1
-        break
+
+  # One full warm attempt: create + poll to ready/terminal. Returns 0 when
+  # the sandbox reached ready, 1 otherwise. Reused by the runtime fallback
+  # retry so a failed first attempt (e.g. registry rejected) actually gets
+  # re-driven through the container-engine path instead of just printed.
+  warm_attempt() {
+    local attempt_name="$1" attempt_log="$2"
+    run_with_timeout "${OPENBOX_WARM_CREATE_TIMEOUT:-300}" \
+      "$CLI_BIN" sandbox create --name "$attempt_name" -- /bin/true >"$attempt_log" 2>&1 \
+      || warn "warm sandbox create exited non-zero (CLI timeout or validation failure); see $attempt_log — polling by name"
+    tail -n +1 -f "$attempt_log" >&2 &
+    local tail_pid=$!
+    local saw_once=0
+    local attempts=0
+    local phase=""
+    local last_phase=""
+    local heartbeat=0
+    for _ in $(seq 1 "$WARM_POLL_COUNT"); do
+      elapsed=$(( $(date +%s) - warm_start ))
+      local status
+      status="$(run_with_timeout "${OPENBOX_WARM_GET_TIMEOUT:-10}" "$CLI_BIN" sandbox get "$attempt_name" 2>/dev/null)" || {
+        if [[ "$saw_once" == "1" ]]; then
+          info "warm sandbox $attempt_name completed and reaped (elapsed ${elapsed}s)"
+          kill "$tail_pid" 2>/dev/null || true
+          return 0
+        fi
+        status=""
+      }
+      if [[ -n "$status" ]]; then
+        saw_once=1
+        phase="$(printf '%s\n' "$status" | grep -oiE 'provisioning|pulling|booting|starting|creating|ready|running|deleting|error' | head -1 || true)"
+        if [[ -n "$phase" && "$phase" != "$last_phase" ]]; then
+          info "warm progress: phase=$phase elapsed=${elapsed}s"
+          last_phase="$phase"
+          heartbeat=0
+        fi
       fi
-      status=""
-    }
-    if [[ -n "$status" ]]; then
-      seen_once=1
-      phase="$(printf '%s\n' "$status" | grep -oiE 'provisioning|pulling|booting|starting|creating|ready|running|deleting|error' | head -1 || true)"
-      if [[ -n "$phase" && "$phase" != "$last_phase" ]]; then
-        info "warm progress: phase=$phase elapsed=${elapsed}s"
-        last_phase="$phase"
-        heartbeat=0
+      heartbeat=$((heartbeat + 1))
+      if (( heartbeat % 6 == 0 )); then
+        info "still warming… elapsed=${elapsed}s phase=${last_phase:-waiting-for-gateway}"
       fi
-    fi
-    # Heartbeat so the user sees liveness even inside one long phase.
-    heartbeat=$((heartbeat + 1))
-    if (( heartbeat % 6 == 0 )); then
-      info "still warming… elapsed=${elapsed}s phase=${last_phase:-waiting-for-gateway}"
-    fi
-    if printf '%s\n' "$status" | grep -qiE 'ready|running|deleting'; then
-      warmed=1
-      break
-    fi
-    if printf '%s\n' "$status" | grep -qiE 'error|failed'; then
-      err "warm sandbox entered a terminal error state; log content ($warm_log):"
-      tail -n 20 "$warm_log" 2>/dev/null >&2 || true
-      break
-    fi
-    sleep "$WARM_POLL_INTERVAL"
-  done
+      if printf '%s\n' "$status" | grep -qiE 'ready|running|deleting'; then
+        kill "$tail_pid" 2>/dev/null || true
+        return 0
+      fi
+      if printf '%s\n' "$status" | grep -qiE 'error|failed'; then
+        err "warm sandbox entered a terminal error state; log content ($attempt_log):"
+        tail -n 20 "$attempt_log" 2>/dev/null >&2 || true
+        kill "$tail_pid" 2>/dev/null || true
+        return 1
+      fi
+      sleep "$WARM_POLL_INTERVAL"
+    done
+    kill "$tail_pid" 2>/dev/null || true
+    return 1
+  }
+  warm_attempt "$warm_name" "$warm_log" && warmed=1 || warmed=0
   if [[ "$warmed" == "1" ]]; then
     if [[ "$cache_prepared" == "1" ]]; then
       ok "prepared VM cache hit — warm completed in ${elapsed}s (no image pull or build)"
@@ -1331,7 +1331,23 @@ elif [[ -x "$CLI_BIN" ]]; then
       cache_prepared=0
     fi
     if [[ "$cache_prepared" != "1" ]] && resolve_runtime; then
-      info "rebuilding the image cache via the container runtime ($RUNTIME)"
+      # Real retry: ensure the image resolves through the engine, then run a
+      # second full warm attempt. The first failure's sandbox is reaped.
+      info "first warm attempt failed — retrying via the container runtime ($RUNTIME)"
+      if [[ -n "$DEV_TAR" ]]; then
+        LOAD_OUTPUT2="$(gunzip -c "$DEV_TAR" | "$RUNTIME" load 2>&1)" \
+          || warn "dev image load failed during the fallback retry — the driver may still resolve it if already loaded"
+      fi
+      retry_name="w$(date +%s)r"
+      retry_log="${STATE_ROOT}/warm-${retry_name}.log"
+      if warm_attempt "$retry_name" "$retry_log"; then
+        warmed=1
+        warm_name="$retry_name"
+        warm_log="$retry_log"
+        ok "cache warmed via the runtime fallback: $warm_name"
+      else
+        warn "runtime-fallback warm also failed (log: $retry_log); first request may be slow"
+      fi
     elif [[ ! -s "$warm_log" ]] && [[ "$(grep -ciE 'error|failed|validation' "$warm_log" 2>/dev/null || true)" -eq 0 ]]; then
       warn "warm sandbox did not reach ready in ${elapsed}s; first request may be slow"
     fi
