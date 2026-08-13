@@ -4,7 +4,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 /// Download the platform release assets for `tag` (default: latest release)
 /// into the current directory, verify SHA256SUMS, and replace the local obs.
-pub fn run(tag: Option<&str>) -> ExitCode {
+pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
     let gh = match which_gh() {
         Some(gh) => gh,
         None => {
@@ -83,16 +83,17 @@ pub fn run(tag: Option<&str>) -> ExitCode {
         "obs"
     };
 
-    // Download per-pattern so a release that lacks one asset (base has no dev
-    // tar; either may lack one of the policy names) doesn't fail the update.
-    let patterns: &[&str] = &[
-        obs_name,
-        svc,
-        "SHA256SUMS",
-        "policy-allow-network-dev.yaml",
-        "policy-deny-network-dev.yaml",
-        dev_tar,
-    ];
+    // Default: only obs + the checksums needed to verify it. --all adds the
+    // service binary, policies, and the dev image tar.
+    let mut patterns: Vec<&str> = vec![obs_name, "SHA256SUMS"];
+    if all {
+        patterns.extend([
+            svc,
+            "policy-allow-network-dev.yaml",
+            "policy-deny-network-dev.yaml",
+            if dev_tar.is_empty() { "" } else { dev_tar },
+        ]);
+    }
     for pattern in patterns.iter().filter(|p| !p.is_empty()) {
         let status = Command::new(&gh)
             .args([
@@ -113,7 +114,11 @@ pub fn run(tag: Option<&str>) -> ExitCode {
         let _ = status;
     }
 
-    let required = [obs_name, svc, "SHA256SUMS"];
+    let required = if all {
+        vec![obs_name, svc, "SHA256SUMS"]
+    } else {
+        vec![obs_name, "SHA256SUMS"]
+    };
     let missing: Vec<&str> = required
         .iter()
         .filter(|name| !std::path::Path::new(**name).is_file())

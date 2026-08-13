@@ -117,6 +117,7 @@ enum CommandLine {
     },
     Update {
         release: Option<String>,
+        all: bool,
     },
     Launch,
 }
@@ -266,6 +267,7 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
         }
         "update" => {
             let mut release = None;
+            let mut all = false;
             for arg in &args[1..] {
                 if let Some(value) = arg.strip_prefix("--release=") {
                     release = Some(value.to_owned());
@@ -274,13 +276,15 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
                         return Err("--release requires a value".to_owned());
                     };
                     release = Some(value);
+                } else if arg == "--all" {
+                    all = true;
                 } else if arg.starts_with('-') {
                     return Err(format!("unknown update option '{arg}'"));
                 } else if release.is_none() {
                     release = Some(arg.clone());
                 }
             }
-            Ok(CommandLine::Update { release })
+            Ok(CommandLine::Update { release, all })
         }
         "publish" => {
             if args.len() < 2 {
@@ -359,7 +363,7 @@ fn main() -> ExitCode {
         Ok(CommandLine::Status) => return provision::run_status(),
         Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
         Ok(CommandLine::Publish { release_dir, tag }) => return publish::run(&release_dir, &tag),
-        Ok(CommandLine::Update { release }) => return update::run(release.as_deref()),
+        Ok(CommandLine::Update { release, all }) => return update::run(release.as_deref(), all),
         Ok(CommandLine::Launch) => {}
         Err(message) => {
             err(&message);
@@ -723,9 +727,10 @@ USAGE:
   obs verify                   Prove mTLS create→ready→exec→delete live.
   obs status                   Report stack readiness.
   obs publish <dir> [tag]      Publish a release dir to GitHub Releases.
-  obs update [TAG]            Download the platform assets for TAG (default:
-                              latest release) into the current dir, verify
-                              SHA256SUMS, and replace obs.
+  obs update [TAG] [--all]    Update obs itself from TAG (default: latest
+                              release) into the current dir, verify its
+                              checksum, and replace obs. --all also downloads
+                              the service binary, policies, and dev image tar.
   obs [OPTIONS]                Start the external OpenShell gateway.
 
 MODULES:
