@@ -130,16 +130,27 @@ else
     break
   done
 fi
+LAUNCHER_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Policy resolution is hermetic: an explicit env path wins; otherwise look in
+# the launcher directory (release assets ship next to obs), then the working
+# directory, then the source-tree defaults. Stray files elsewhere are ignored.
 if [[ -n "${OPENBOX_POLICY_FILE:-}" && "${OPENBOX_POLICY_FILE}" == /* ]]; then
   POLICY_FILE="$OPENBOX_POLICY_FILE"
 else
-  POLICY_FILE="$(cd "$PROJECT_ROOT" && pwd)/${OPENBOX_POLICY_FILE:-deploy/policies/policy-deny-network-dev.yaml}"
-fi
-POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
-if [[ -f "policy-allow-network-dev.yaml" ]]; then
-  POLICY_FILE="$(pwd)/policy-allow-network-dev.yaml"
-  POLICY_ID="openbox-allow-network-dev"
-  info "dev policy detected — using allow-network"
+  POLICY_FILE=""
+  POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
+  for _cand in       "${OPENBOX_POLICY_FILE:-}"       "$LAUNCHER_DIR/policy-allow-network-dev.yaml"       "$LAUNCHER_DIR/policy-deny-network-dev.yaml"       "$(pwd)/policy-allow-network-dev.yaml"       "$(pwd)/policy-deny-network-dev.yaml"       "$PROJECT_ROOT/deploy/policies/policy-deny-network-dev.yaml"; do
+    [[ -n "$_cand" && -f "$_cand" ]] || continue
+    POLICY_FILE="$(cd "$(dirname "$_cand")" && pwd)/$(basename "$_cand")"
+    break
+  done
+  if [[ -z "$POLICY_FILE" ]]; then
+    die "no policy file found (checked launcher dir $LAUNCHER_DIR, cwd, and repo defaults) — set OPENBOX_POLICY_FILE"
+  fi
+  case "$(basename "$POLICY_FILE")" in
+    *allow*) POLICY_ID="${OPENBOX_POLICY_ID:-openbox-allow-network-dev}"
+             info "dev policy detected ($POLICY_FILE) — using allow-network" ;;
+  esac
 fi
 POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
@@ -151,18 +162,30 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64|Linux-arm64) _dev_tar_default="openbox-sandbox-dev-linux-aarch64.tar.gz" ;;
   *) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
 esac
-DEV_TAR="${OPENBOX_SANDBOX_DEV_TAR:-$_dev_tar_default}"
-if [[ -f "$DEV_TAR" ]] || docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
-  if [[ -f "$DEV_TAR" ]]; then
-    info "dev release detected ($DEV_TAR) — loading dev sandbox image"
-    gunzip -c "$DEV_TAR" | docker load || die "dev image load failed"
+if [[ -n "${OPENBOX_SANDBOX_DEV_TAR:-}" && "${OPENBOX_SANDBOX_DEV_TAR}" == /* ]]; then
+  DEV_TAR="$OPENBOX_SANDBOX_DEV_TAR"
+else
+  DEV_TAR=""
+  for _cand in "${OPENBOX_SANDBOX_DEV_TAR:-}" "$LAUNCHER_DIR/$_dev_tar_default" "$(pwd)/$_dev_tar_default"; do
+    [[ -n "$_cand" && -f "$_cand" ]] || continue
+    DEV_TAR="$(cd "$(dirname "$_cand")" && pwd)/$(basename "$_cand")"
+    break
+  done
+fi
+if [[ -n "$DEV_TAR" ]]; then
+  info "dev release detected ($DEV_TAR) — loading dev sandbox image"
+  LOAD_OUTPUT="$(gunzip -c "$DEV_TAR" | docker load 2>&1)" || die "dev image load failed"
+  # The digest comes from the tar itself via docker load's reported image ID —
+  # never from the mutable ':latest' tag, which can drift across machines.
+  DEV_DIGEST="$(printf '%s\n' "$LOAD_OUTPUT" | sed -n 's/.*Loaded image ID: sha256:\([a-f0-9]\+\).*/sha256:\1/p' | head -1)"
+  if [[ -z "$DEV_DIGEST" ]]; then
+    DEV_DIGEST="$(printf '%s\n' "$LOAD_OUTPUT" | sed -n 's/.*Loaded image: openbox-sandboxes-dev@sha256:\([a-f0-9]\+\).*/sha256:\1/p' | head -1)"
   fi
-  DEV_DIGEST="$(docker image inspect openbox-sandboxes-dev:latest --format '{{.Id}}' | sed 's/sha256:/sha256:/')"
-  if [[ -n "$DEV_DIGEST" ]]; then
-    SANDBOX_IMAGE="openbox-sandboxes-dev@$DEV_DIGEST"
-  else
-    SANDBOX_IMAGE="openbox-sandboxes-dev:latest"
+  if [[ -z "$DEV_DIGEST" ]]; then
+    die "could not determine the loaded dev image digest from docker load output; the image tar may be malformed"
   fi
+  info "dev image digest: $DEV_DIGEST"
+  SANDBOX_IMAGE="openbox-sandboxes-dev@$DEV_DIGEST"
 fi
 PORT="${OPENSHELL_SERVER_PORT:-17670}"
 GATEWAY_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
@@ -334,6 +357,24 @@ stop_pid_file() {
   rm -f "$f"
 }
 
+sweep_matching_listeners() {
+  local port="$1" expected_binary="$2" pids pid command_line executable
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
+  [[ -n "$pids" ]] || return 0
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    command_line="$(process_command "$pid")"
+    executable="${command_line%% *}"
+    if [[ "${executable##*/}" == "$expected_binary" ]]; then
+      warn "killing stale $expected_binary listener pid=$pid (port $port)"
+      kill -9 "$pid" 2>/dev/null || true
+    fi
+  done <<<"$pids"
+}
+
 assert_port_free() {
   local port="$1" label="$2" pids pid command_line
   if command -v lsof >/dev/null 2>&1; then
@@ -388,6 +429,8 @@ stop_scoped_vm_drivers() {
 
 info "Teardown (always)"
 stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$(basename "$SANDBOX_BIN")" "" "binary-name"
+sweep_matching_listeners "$SANDBOX_PORT" "$(basename "$SANDBOX_BIN")"
+sweep_matching_listeners "$SANDBOX_PORT" "$(basename "$SANDBOX_BIN")"
 stop_pid_file "$GATEWAY_PID_FILE" "gateway" "$GATEWAY_BIN" "$GATEWAY_CONFIG" "gateway-config"
 assert_port_free "$SANDBOX_PORT" "sandbox service"
 assert_port_free "$PORT" "gateway"
@@ -799,35 +842,46 @@ elif [[ -x "$CLI_BIN" ]]; then
   fi
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
   warm_name="w$(date +%s)"
+  warm_log="${STATE_ROOT}/warm-${warm_name}.log"
+  warm_start="$(date +%s)"
   # The openshell CLI fails its create after a fixed 300s provisioning
   # timeout, and the cold path (image pull + rootfs build + first microVM
   # boot) can exceed that on small hosts. The gateway keeps provisioning the
   # sandbox after the CLI gives up, so a create that exits non-zero is not a
   # failure: poll the sandbox by name and reap it either way.
-  "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >/dev/null 2>&1 \
-    || warn "warm sandbox create timed out (CLI 300s provisioning limit); polling by name"
+  "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >"$warm_log" 2>&1     || warn "warm sandbox create exited non-zero (CLI 300s provisioning limit or validation failure); see $warm_log — polling by name"
   warmed=0
   # Cold-cache create can take 10-15 min (image pull/extract + rootfs build
-  # + microVM boot on small hosts); poll up to 20 min. A sandbox that no
-  # longer resolves
-  # has already run to completion and been reaped (fast hosts), which is
-  # also a warm cache; only a stuck Provisioning/Error phase is a miss.
+  # + microVM boot on small hosts); poll up to 20 min with visible progress.
+  # Only a sandbox that reached ready (or was reaped after running) is a warm
+  # cache; a create that never materialized is surfaced, not swallowed.
+  last_phase=""
   for _ in $(seq 1 240); do
+    elapsed=$(( $(date +%s) - warm_start ))
     status="$("$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
-      info "warm sandbox $warm_name already completed"
+      info "warm sandbox $warm_name already completed and reaped (elapsed ${elapsed}s)"
       warmed=1
       break
     }
+    phase="$(printf '%s\n' "$status" | grep -oiE 'provisioning|pulling|booting|ready|running|deleting|error' | head -1)"
+    if [[ -n "$phase" && "$phase" != "$last_phase" ]]; then
+      info "warm progress: phase=$phase elapsed=${elapsed}s"
+      last_phase="$phase"
+    fi
     if printf '%s\n' "$status" | grep -qiE 'ready|running|deleting'; then
       warmed=1
+      break
+    fi
+    if printf '%s\n' "$status" | grep -qiE 'error|failed'; then
+      err "warm sandbox entered a terminal error state — see $warm_log"
       break
     fi
     sleep 5
   done
   if [[ "$warmed" == "1" ]]; then
     ok "cache warmed: $warm_name"
-  else
-    warn "warm sandbox did not reach ready in time; first request may be slow"
+  elif [[ ! -s "$warm_log" ]] && [[ "$(grep -ciE 'error|failed|validation' "$warm_log" 2>/dev/null || true)" -eq 0 ]]; then
+    warn "warm sandbox did not reach ready in ${elapsed}s; first request may be slow"
   fi
   "$CLI_BIN" sandbox delete "$warm_name" >/dev/null 2>&1 \
     || warn "warm sandbox $warm_name delete failed (gateway will reap it)"

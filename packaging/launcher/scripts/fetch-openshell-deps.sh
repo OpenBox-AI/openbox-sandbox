@@ -29,7 +29,20 @@
 # Then run the launcher against it:
 #   OPENBOX_BUNDLE_DIR="$OUT" cargo run -- --dry-run
 
-set -euo pipefail
+set -euo
+
+# gh is the release transport; fail fast with an actionable error instead of
+# a mid-download auth failure.
+if ! command -v gh >/dev/null 2>&1; then
+  echo "error: gh CLI is required to fetch OpenShell releases" >&2
+  echo "install: brew install gh && gh auth login" >&2
+  exit 1
+fi
+if ! gh auth status >/dev/null 2>&1; then
+  echo "error: gh is not authenticated — run 'gh auth login' first" >&2
+  exit 1
+fi
+ pipefail
 
 OPENSHELL_VERSION="${OPENBOX_OPENSHELL_VERSION:-0.0.85}"
 OUT="${OUT:-$(pwd)/openbox-sandbox-bundle}"
