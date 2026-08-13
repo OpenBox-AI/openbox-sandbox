@@ -174,10 +174,10 @@ swapon --show: (empty — no swap)
 
 **Mac:**
 ```
-$ cd /Users/z/orca/projects/openbox-sandbox
+$ cd <path-to-openbox-sandbox-checkout>
 $ git archive --format=tar.gz -o /tmp/obs-src.tar.gz HEAD
 $ ls -lh /tmp/obs-src.tar.gz
--rw-r--r-- 1 z wheel 137K Aug 3 17:42 /tmp/obs-src.tar.gz
+-rw-r--r-- 1 user wheel 137K Aug 3 17:42 /tmp/obs-src.tar.gz
 $ sha256sum /tmp/obs-src.tar.gz
 ffeb96178a0606a4ff325ab4166ce552abc63e1bb20cf8c5211bc5c7ec5e2c4c  /tmp/obs-src.tar.gz
 ```
