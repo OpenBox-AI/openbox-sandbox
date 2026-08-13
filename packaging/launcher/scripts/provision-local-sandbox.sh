@@ -162,6 +162,7 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64|Linux-arm64) _dev_tar_default="openbox-sandbox-dev-linux-aarch64.tar.gz" ;;
   *) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
 esac
+DEV_IMAGE_NAME="${OPENBOX_DEV_IMAGE_NAME:-openbox-sandboxes-dev}"
 if [[ -n "${OPENBOX_SANDBOX_DEV_TAR:-}" && "${OPENBOX_SANDBOX_DEV_TAR}" == /* ]]; then
   DEV_TAR="$OPENBOX_SANDBOX_DEV_TAR"
 else
