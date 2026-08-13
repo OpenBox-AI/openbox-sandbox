@@ -250,10 +250,26 @@ OPENSHELL_LOCKED_VERSION="${OPENBOX_OPENSHELL_LOCKED_VERSION:-0.0.88}"
 #   $OPENSHELL_BIN_OVERRIDE/<symlinks>  — explicit directory
 #   $OPENSHELL_BUNDLE_DIR (release bundle, prefers ${bin}/${libexec})
 #   A flat source-build directory selected through OPENSHELL_BIN_OVERRIDE.
-GATEWAY_BIN=""
-CLI_BIN=""
-DRIVER_BIN=""
-if [[ -n "${OPENSHELL_BIN_OVERRIDE:-}" && -d "${OPENSHELL_BIN_OVERRIDE}" ]]; then
+GATEWAY_BIN="${OPENBOX_GATEWAY_BIN:-}"
+CLI_BIN="${OPENBOX_CLI_BIN:-}"
+DRIVER_BIN="${OPENBOX_DRIVER_BIN:-}"
+for _cand in "${GATEWAY_BIN:-}" "$LAUNCHER_DIR/bin/openshell-gateway" "$(pwd)/bin/openshell-gateway" "$(pwd)/openshell-gateway"; do
+  [[ -n "$_cand" && -x "$_cand" ]] || continue
+  GATEWAY_BIN="$_cand"
+  break
+done
+for _cand in "${CLI_BIN:-}" "$LAUNCHER_DIR/bin/openshell" "$(pwd)/bin/openshell" "$(pwd)/openshell"; do
+  [[ -n "$_cand" && -x "$_cand" ]] || continue
+  CLI_BIN="$_cand"
+  break
+done
+for _cand in "${DRIVER_BIN:-}" "$LAUNCHER_DIR/libexec/openshell-driver-vm" "$(pwd)/libexec/openshell-driver-vm" "$(pwd)/openshell-driver-vm"; do
+  [[ -n "$_cand" && -x "$_cand" ]] || continue
+  DRIVER_BIN="$_cand"
+  break
+done
+if [[ -z "$GATEWAY_BIN" || -z "$CLI_BIN" || -z "$DRIVER_BIN" ]] \
+   && [[ -n "${OPENSHELL_BIN_OVERRIDE:-}" && -d "${OPENSHELL_BIN_OVERRIDE}" ]]; then
   for layout in "release" "flat"; do
     case "$layout" in
       release)
