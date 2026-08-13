@@ -89,6 +89,15 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     let dev_channel = cwd.join("policy-allow-network-dev.yaml").is_file()
         || (!dev_tar.is_empty() && cwd.join(dev_tar).is_file());
     let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
+    info(&format!(
+        "release line detected: {} ({tag}){}",
+        if dev_channel { "dev" } else { "base" },
+        if dev_channel {
+            " — markers: allow policy or dev image tar present"
+        } else {
+            " — markers: neither allow policy nor dev image tar present"
+        }
+    ));
     if !cwd.join(svc_name).is_file() {
         info(&format!("{svc_name} missing — fetching from {tag}"));
         let _ = gh_download_pattern(&gh, tag, svc_name);
@@ -113,6 +122,14 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     }
 }
 
+
+fn dev_tar_name(is_darwin_arm64: bool) -> &'static str {
+    if is_darwin_arm64 {
+        "openbox-sandbox-dev-darwin-arm64.tar.gz"
+    } else {
+        "openbox-sandbox-dev-linux-x86_64.tar.gz"
+    }
+}
 
 fn auto_fetch_bundle() -> Result<(), ExitCode> {
     // Always compute the bundle dir from the CWD — never inherit from
@@ -143,7 +160,16 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     } else {
         "openbox-sandbox"
     };
-    let policy_name = "policy-deny-network-dev.yaml";
+    // Fallback policy name for the bundle-readiness check only — the actual
+    // channel-aware policy fetch happens in ensure_release_assets.
+    let policy_name = if cwd.join("policy-allow-network-dev.yaml").is_file()
+        || (!dev_tar_name(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64")).is_empty()
+            && cwd.join(dev_tar_name(cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"))).is_file())
+    {
+        "policy-allow-network-dev.yaml"
+    } else {
+        "policy-deny-network-dev.yaml"
+    };
     // Already present — pin it and let the wizard proceed.
     // The service binary and policy are SEPARATE release assets that land
     // either inside the bundle dir (fetched) or in the CWD next to obs
