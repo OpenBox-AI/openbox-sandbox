@@ -946,6 +946,19 @@ elif [[ -x "$CLI_BIN" ]]; then
   if ! "$RUNTIME" ps >/dev/null 2>&1; then
     die "container runtime '$RUNTIME' is installed but not running — start Docker Desktop (or your runtime) before provisioning"
   fi
+  # The VM driver builds the ext4 rootfs with mkfs.ext4 (e2fsprogs) — fail
+  # fast BEFORE the multi-minute image pull instead of after it.
+  MKFS=""
+  for _cand in "$(command -v mkfs.ext4 2>/dev/null)" \
+               /usr/local/opt/e2fsprogs/bin/mkfs.ext4 \
+               /opt/homebrew/opt/e2fsprogs/bin/mkfs.ext4 \
+               /usr/local/opt/e2fsprogs/sbin/mkfs.ext4 \
+               /opt/homebrew/opt/e2fsprogs/sbin/mkfs.ext4; do
+    [[ -n "$_cand" && -x "$_cand" ]] && MKFS="$_cand" && break
+  done
+  if [[ -z "$MKFS" ]]; then
+    die "mkfs.ext4 (e2fsprogs) is required by the VM driver — install it first: brew install e2fsprogs"
+  fi
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
   if [[ "$SANDBOX_IMAGE" == ghcr.io/* ]]; then
     warn "no dev image tar detected — the driver will PULL FROM ghcr.io on first warm"
