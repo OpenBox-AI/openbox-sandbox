@@ -53,6 +53,8 @@ fi
 # Env (see OPENBOX_SANDBOX_* / OPENSHELL_* defaults below).
 
 set -Eeuo pipefail
+# Name the failing line instead of dying silently under errexit.
+trap 'echo "provision failed at line $LINENO (exit $?)" >&2' ERR
 umask 077
 
 die() { printf 'provision: %s\n' "$*" >&2; exit 1; }
