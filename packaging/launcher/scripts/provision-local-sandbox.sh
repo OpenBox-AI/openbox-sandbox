@@ -230,8 +230,8 @@ if [[ "$POLICY_ID" == *allow* && -z "$DEV_TAR" ]] \
    && ! docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
   die "dev policy selected ($POLICY_ID) but no dev image is available — download the dev image tar first: ./obs update --all"
 fi
-if [[ -n "$DEV_TAR" ]]; then
-  info "dev release detected ($DEV_TAR) — loading dev sandbox image"
+if [[ -n "$DEV_TAR" ]] && [[ ! -f "$LAUNCHER_DIR/$VM_CACHE_TAR" && ! -f "$(pwd)/$VM_CACHE_TAR" ]]; then
+  info "dev release detected ($DEV_TAR) and no prepared cache — loading dev sandbox image (runtime fallback)"
   # Container runtime selection (the VM driver speaks the Docker-compatible
   # API: Docker first, then rootless Podman — researched from driver.rs
   # connect_local_container_engine). Explicit CONTAINER_RUNTIME wins.
@@ -265,7 +265,15 @@ if [[ -n "$DEV_TAR" ]]; then
     DEV_DIGEST="$(printf '%s\n' "$LOAD_OUTPUT" | sed -n "s/.*Loaded image: ${DEV_IMAGE_NAME}@sha256:\\([a-f0-9]\\+\\).*/sha256:\\1/p" | head -1)"
   fi
   if [[ -z "$DEV_DIGEST" ]]; then
-    die "could not determine the loaded dev image digest from docker load output; the image tar may be malformed"
+    DEV_DIGEST="$("$RUNTIME" image inspect "$DEV_IMAGE_NAME:latest" --format '{{.Id}}' 2>/dev/null || true)"
+  fi
+  if [[ -z "$DEV_DIGEST" ]]; then
+    DEV_DIGEST="$("$RUNTIME" images --no-trunc --format '{{.ID}}' "$DEV_IMAGE_NAME:latest" 2>/dev/null | head -1 || true)"
+  fi
+  if [[ -z "$DEV_DIGEST" ]]; then
+    err "could not determine the loaded dev image digest — runtime output:"
+    printf '%s\n' "$LOAD_OUTPUT" >&2
+    die "the image tar may be malformed or the runtime refused the load"
   fi
   info "dev image digest: $DEV_DIGEST"
   SANDBOX_IMAGE="$DEV_IMAGE_NAME@$DEV_DIGEST"
