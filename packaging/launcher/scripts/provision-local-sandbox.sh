@@ -787,10 +787,10 @@ ZOTEOF
   ZOT_PID=$!
   echo "$ZOT_PID" > "$ZOT_DIR/zot.pid"
   for _i in $(seq 1 20); do
-    curl -sf "http://127.0.0.1:$ZOT_PORT/v2/" >/dev/null 2>&1 && break
+    curl -skf "https://127.0.0.1:$ZOT_PORT/v2/" >/dev/null 2>&1 && break
     sleep 0.5
   done
-  if ! curl -sf "http://127.0.0.1:$ZOT_PORT/v2/" >/dev/null 2>&1; then
+  if ! curl -skf "https://127.0.0.1:$ZOT_PORT/v2/" >/dev/null 2>&1; then
     err "zot did not come up (log: $ZOT_DIR/zot.log)"
     kill "$ZOT_PID" 2>/dev/null || true
     die "local image registry failed to start"
