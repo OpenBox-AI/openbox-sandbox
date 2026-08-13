@@ -636,7 +636,14 @@ state_clean() {
   rm -rf -- "$STATE_ROOT"
   rm -rf -- "$CONFIG_ROOT"
   rm -rf -- "$GATEWAY_META_DIR"
-  rm -rf -- "$VM_DRIVER_STATE_DIR"
+  if [[ "$ARG_UNINSTALL" == "1" ]]; then
+    # Uninstall = full removal, including the prepared image cache.
+    rm -rf -- "$VM_DRIVER_STATE_DIR"
+  else
+    # --clean-rerun preserves the prepared image cache — the cache is only
+    # removed by the user; the driver's identity check ignores stale entries.
+    find "$VM_DRIVER_STATE_DIR" -mindepth 1 -maxdepth 1 ! -name images -exec rm -rf {} + 2>/dev/null || true
+  fi
   if [[ "$ARG_KEEP_PKI" == "1" ]]; then
     info "--keep-pki: preserving $TLS_DIR"
   else
@@ -1168,8 +1175,7 @@ elif [[ -x "$CLI_BIN" ]]; then
     fi
   else
     if [[ "$cache_prepared" == "1" ]]; then
-      err "prepared VM cache MISS — the driver rejected or failed it; falling back to the runtime path"
-      rm -rf "$VM_DRIVER_STATE_DIR/images"
+      err "prepared VM cache MISS — the driver rejected or failed it; falling back to the runtime path (the extracted cache is left in place — remove it manually if you want it gone)"
       cache_prepared=0
     fi
     if [[ "$cache_prepared" != "1" ]] && resolve_runtime; then
