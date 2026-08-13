@@ -201,6 +201,7 @@ const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
 /// Boolean `--flag` → env=value pairs for provision options.
 const PROVISION_FLAG_BOOLS: &[(&str, &str, &str)] = &[
     ("--no-start", "NO_START", "1"),
+    ("--purge-cache", "OPENBOX_PURGE_CACHE", "1"),
     ("--skip-warm-cache", "OPENBOX_WARM_CACHE", "0"),
     ("--force-warm-cache", "OPENBOX_WARM_CACHE", "1"),
     ("--no-vm-cache", "OPENBOX_USE_VM_CACHE", "0"),
@@ -850,6 +851,8 @@ PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --fla
   --dev / --base         Select the release line explicitly (default: dev tar
                           present -> dev, else base). Both policy templates
                           are always downloaded; the line picks the default
+  --purge-cache          With --clean-rerun: also wipe the extracted VM image
+                          cache (full reset of everything sandbox-local)
   --no-start             Set NO_START=1 (write configs, start nothing)
   --skip-warm-cache      Set OPENBOX_WARM_CACHE=0
   --force-warm-cache     Set OPENBOX_WARM_CACHE=1

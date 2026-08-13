@@ -103,10 +103,12 @@ warn() { printf '  [warn] %s\n' "$*" >&2; }
 ARG_UNINSTALL=0
 ARG_CLEAN_RERUN=0
 ARG_KEEP_PKI=0
+ARG_PURGE_CACHE="${OPENBOX_PURGE_CACHE:-0}"
 for arg in "$@"; do
   case "$arg" in
     --uninstall)     ARG_UNINSTALL=1 ;;
     --clean-rerun)   ARG_CLEAN_RERUN=1 ;;
+    --purge-cache)   ARG_PURGE_CACHE=1 ;;
     --keep-pki)      ARG_KEEP_PKI=1 ;;
     --help|-h)       sed -n '1,55p' "$0"; exit 0 ;;
     --)              break ;;
@@ -115,6 +117,9 @@ for arg in "$@"; do
 done
 if [[ "$ARG_KEEP_PKI" == "1" && "$ARG_UNINSTALL" != "1" && "$ARG_CLEAN_RERUN" != "1" ]]; then
   die "--keep-pki requires --uninstall or --clean-rerun"
+fi
+if [[ "$ARG_PURGE_CACHE" == "1" && "$ARG_UNINSTALL" != "1" && "$ARG_CLEAN_RERUN" != "1" ]]; then
+  die "--purge-cache requires --uninstall or --clean-rerun"
 fi
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
