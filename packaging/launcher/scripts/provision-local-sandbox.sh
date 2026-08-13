@@ -179,13 +179,13 @@ if [[ -n "$DEV_TAR" ]]; then
   # never from the mutable ':latest' tag, which can drift across machines.
   DEV_DIGEST="$(printf '%s\n' "$LOAD_OUTPUT" | sed -n 's/.*Loaded image ID: sha256:\([a-f0-9]\+\).*/sha256:\1/p' | head -1)"
   if [[ -z "$DEV_DIGEST" ]]; then
-    DEV_DIGEST="$(printf '%s\n' "$LOAD_OUTPUT" | sed -n 's/.*Loaded image: openbox-sandboxes-dev@sha256:\([a-f0-9]\+\).*/sha256:\1/p' | head -1)"
+    DEV_DIGEST="$(printf '%s\n' "$LOAD_OUTPUT" | sed -n "s/.*Loaded image: ${DEV_IMAGE_NAME}@sha256:\\([a-f0-9]\\+\\).*/sha256:\\1/p" | head -1)"
   fi
   if [[ -z "$DEV_DIGEST" ]]; then
     die "could not determine the loaded dev image digest from docker load output; the image tar may be malformed"
   fi
   info "dev image digest: $DEV_DIGEST"
-  SANDBOX_IMAGE="openbox-sandboxes-dev@$DEV_DIGEST"
+  SANDBOX_IMAGE="$DEV_IMAGE_NAME@$DEV_DIGEST"
 fi
 PORT="${OPENSHELL_SERVER_PORT:-17670}"
 GATEWAY_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
@@ -195,6 +195,28 @@ SANDBOX_PORT="${OPENBOX_SANDBOX_PORT:-17443}"
 LOG_LEVEL="${OPENSHELL_LOG_LEVEL:-info}"
 NO_START="${NO_START:-0}"
 TEARDOWN_ONLY="${OPENBOX_TEARDOWN_ONLY:-0}"
+
+# Everything else is configurable too — every path, port, size, timeout, and
+# identity below has an env override with the shipped default.
+CERT_DAYS="${OPENBOX_CERT_DAYS:-825}"
+RSA_BITS="${OPENBOX_RSA_BITS:-2048}"
+JWT_TTL_SECS="${OPENBOX_JWT_TTL_SECS:-3600}"
+GATEWAY_READY_POLLS="${OPENBOX_GATEWAY_READY_POLLS:-60}"
+GATEWAY_READY_INTERVAL="${OPENBOX_GATEWAY_READY_INTERVAL:-0.5}"
+SERVICE_READY_POLLS="${OPENBOX_SERVICE_READY_POLLS:-40}"
+SERVICE_READY_INTERVAL="${OPENBOX_SERVICE_READY_INTERVAL:-0.25}"
+WARM_POLL_COUNT="${OPENBOX_WARM_POLL_COUNT:-240}"
+WARM_POLL_INTERVAL="${OPENBOX_WARM_POLL_INTERVAL:-5}"
+RUNTIME_CONNECT_TIMEOUT_MS="${OPENBOX_RUNTIME_CONNECT_TIMEOUT_MS:-10000}"
+RUNTIME_POLL_INTERVAL_MS="${OPENBOX_RUNTIME_POLL_INTERVAL_MS:-500}"
+RECONCILE_DELETE_DEADLINE_MS="${OPENBOX_RECONCILE_DELETE_DEADLINE_MS:-60000}"
+RECONCILE_WAIT_DEADLINE_MS="${OPENBOX_RECONCILE_WAIT_DEADLINE_MS:-60000}"
+MAX_CONNECTIONS="${OPENBOX_MAX_CONNECTIONS:-64}"
+DRAIN_TIMEOUT_MS="${OPENBOX_DRAIN_TIMEOUT_MS:-30000}"
+ALLOW_DEGRADED_LANDLOCK="${OPENBOX_ALLOW_DEGRADED_LANDLOCK:-true}"
+CALLER_SUBJ="${OPENBOX_CALLER_SUBJ:-/CN=openbox-sandbox-runtime-caller}"
+RUNTIME_MTLS_DIR="${OPENBOX_RUNTIME_MTLS_DIR:-$CONFIG_ROOT/runtime-mtls}"
+OPENSHELL_META_DIR="${OPENBOX_OPENSHELL_META_DIR:-$HOME/.config/openshell}"
 OPENSHELL_SOURCE_PIN="f169084923503a02a94425857b938de2841cab0c"
 OPENSHELL_SOURCE_MARKER="f1690849"
 # Locked released OpenShell version for the hosted-bin flow (no source build).
@@ -347,7 +369,7 @@ stop_pid_file() {
   kill "$pid" 2>/dev/null || true
   for _ in $(seq 1 20); do
     process_alive "$pid" || break
-    sleep 0.25
+    sleep "$SERVICE_READY_INTERVAL"
   done
   if process_alive "$pid"; then
     process_matches "$pid" "$expected_binary" "$required_marker" "$identity_mode" \
@@ -552,7 +574,7 @@ EOF
 openssl req -new -key "$TLS_DIR/ca.key" -subj "$CA_SUBJ" \
   -out "$TLS_DIR/ca.csr.tmp" 2>/dev/null || die "CA re-key CSR failed"
 openssl x509 -req -in "$TLS_DIR/ca.csr.tmp" -signkey "$TLS_DIR/ca.key" \
-  -out "$TLS_DIR/ca.crt.tmp" -days 825 -extfile "$TLS_DIR/ca.ext" 2>/dev/null \
+  -out "$TLS_DIR/ca.crt.tmp" -days "$CERT_DAYS" -extfile "$TLS_DIR/ca.ext" 2>/dev/null \
   || die "CA re-sign failed"
 mv "$TLS_DIR/ca.crt.tmp" "$TLS_DIR/ca.crt"
 rm -f "$TLS_DIR/ca.csr.tmp" "$TLS_DIR/ca.ext"
@@ -591,7 +613,7 @@ signing_key_path = "${TLS_DIR}/jwt/signing.pem"
 public_key_path = "${TLS_DIR}/jwt/public.pem"
 kid_path = "${TLS_DIR}/jwt/kid"
 gateway_id = "${GATEWAY_NAME}"
-ttl_secs = 3600
+ttl_secs = ${JWT_TTL_SECS}
 
 [openshell.drivers.vm]
 default_image = "${SANDBOX_IMAGE}"
@@ -615,8 +637,8 @@ cat >"$GATEWAY_META_DIR/metadata.json" <<EOF
 }
 EOF
 chmod 600 "$GATEWAY_META_DIR/metadata.json"
-mkdir -p "$HOME/.config/openshell"
-printf '%s' "$GATEWAY_NAME" >"$HOME/.config/openshell/active_gateway"
+mkdir -p "$OPENSHELL_META_DIR"
+printf '%s' "$GATEWAY_NAME" >"$OPENSHELL_META_DIR/active_gateway"
 
 if [[ "$NO_START" == "1" ]]; then
   info "NO_START=1 — gateway config written, not started"
@@ -647,13 +669,13 @@ else
     --enable-mtls-auth true ) >"$GATEWAY_LOG" 2>&1 &
   echo $! >"$GATEWAY_PID_FILE"
   gateway_ready=0
-  for _ in $(seq 1 60); do
+  for _ in $(seq 1 "$GATEWAY_READY_POLLS"); do
     if (echo >/dev/tcp/127.0.0.1/"$PORT") >/dev/null 2>&1; then
       ok "gateway up (pid=$(cat "$GATEWAY_PID_FILE"))"
       gateway_ready=1
       break
     fi
-    sleep 0.5
+    sleep "$GATEWAY_READY_INTERVAL"
   done
   [[ "$gateway_ready" == "1" ]] || die "gateway failed to become ready; see $GATEWAY_LOG"
 fi
@@ -663,8 +685,7 @@ info "Generating runtime-caller mTLS pair"
 mkdir -p "$SANDBOX_TLS_DIR"
 chmod 700 "$SANDBOX_TLS_DIR"
 
-CALLER_SUBJ="/CN=openbox-sandbox-runtime-caller"
-openssl genrsa -out "$SANDBOX_TLS_DIR/client.key" 2048 >/dev/null 2>&1
+openssl genrsa -out "$SANDBOX_TLS_DIR/client.key" "$RSA_BITS" >/dev/null 2>&1
 openssl req -new -key "$SANDBOX_TLS_DIR/client.key" -subj "$CALLER_SUBJ" \
   -out "$SANDBOX_TLS_DIR/client.csr" >/dev/null 2>&1
 cat >"$SANDBOX_TLS_DIR/client.ext" <<'EOF'
@@ -672,7 +693,7 @@ basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature
 extendedKeyUsage=clientAuth
 EOF
-openssl x509 -req -sha256 -days 825 \
+openssl x509 -req -sha256 -days "$CERT_DAYS" \
   -in "$SANDBOX_TLS_DIR/client.csr" \
   -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial \
   -extfile "$SANDBOX_TLS_DIR/client.ext" \
@@ -683,7 +704,7 @@ chmod 644 "$SANDBOX_TLS_DIR/client.crt" "$SANDBOX_TLS_DIR/ca.crt"
 rm -f "$SANDBOX_TLS_DIR/client.csr"
 
 # Server identity for the sandbox service itself.
-openssl genrsa -out "$SANDBOX_TLS_DIR/server.key" 2048 >/dev/null 2>&1
+openssl genrsa -out "$SANDBOX_TLS_DIR/server.key" "$RSA_BITS" >/dev/null 2>&1
 cat >"$SANDBOX_TLS_DIR/server.cnf.tmp" <<'EOF'
 [req]
 distinguished_name = dn
@@ -701,7 +722,7 @@ IP.1 = 127.0.0.1
 EOF
 openssl req -new -key "$SANDBOX_TLS_DIR/server.key" -config "$SANDBOX_TLS_DIR/server.cnf.tmp" \
   -out "$SANDBOX_TLS_DIR/server.csr" >/dev/null 2>&1
-openssl x509 -req -sha256 -days 825 \
+openssl x509 -req -sha256 -days "$CERT_DAYS" \
   -in "$SANDBOX_TLS_DIR/server.csr" \
   -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial \
   -extfile "$SANDBOX_TLS_DIR/server.cnf.tmp" -extensions v3_req \
@@ -711,7 +732,7 @@ chmod 644 "$SANDBOX_TLS_DIR/server.crt"
 rm -f "$SANDBOX_TLS_DIR/server.csr" "$SANDBOX_TLS_DIR/server.cnf.tmp"
 
 # Runtime-mTLS credentials (sandbox service -> gateway).
-RUNTIME_MTLS_DIR="$CONFIG_ROOT/runtime-mtls"
+RUNTIME_MTLS_DIR="$RUNTIME_MTLS_DIR"
 mkdir -p "$RUNTIME_MTLS_DIR"
 chmod 700 "$RUNTIME_MTLS_DIR"
 cp "$TLS_DIR/ca.crt"            "$RUNTIME_MTLS_DIR/ca.crt"
@@ -750,13 +771,13 @@ cat >"$SERVICE_CONFIG" <<EOF
   },
   "runtime_endpoint": "https://127.0.0.1:${PORT}",
   "runtime_mtls_directory": "${RUNTIME_MTLS_DIR}",
-  "runtime_connect_timeout_ms": 10000,
-  "runtime_poll_interval_ms": 500,
-  "reconcile_delete_deadline_ms": 60000,
-  "reconcile_wait_deadline_ms": 60000,
-  "maximum_connections": 64,
-  "drain_timeout_ms": 30000,
-  "allow_degraded_landlock": true
+  "runtime_connect_timeout_ms": ${RUNTIME_CONNECT_TIMEOUT_MS},
+  "runtime_poll_interval_ms": ${RUNTIME_POLL_INTERVAL_MS},
+  "reconcile_delete_deadline_ms": ${RECONCILE_DELETE_DEADLINE_MS},
+  "reconcile_wait_deadline_ms": ${RECONCILE_WAIT_DEADLINE_MS},
+  "maximum_connections": ${MAX_CONNECTIONS},
+  "drain_timeout_ms": ${DRAIN_TIMEOUT_MS},
+  "allow_degraded_landlock": ${ALLOW_DEGRADED_LANDLOCK}
 }
 EOF
 chmod 600 "$SERVICE_CONFIG"
@@ -770,13 +791,13 @@ else
   OPENBOX_SANDBOX_CONFIG="$SERVICE_CONFIG" nohup "$SANDBOX_BIN" >"$SERVICE_LOG" 2>&1 &
   echo $! >"$SANDBOX_PID_FILE"
   service_ready=0
-  for _ in $(seq 1 40); do
+  for _ in $(seq 1 "$SERVICE_READY_POLLS"); do
     if port_listening "$SANDBOX_PORT"; then
       ok "service up (pid=$(cat "$SANDBOX_PID_FILE"))"
       service_ready=1
       break
     fi
-    sleep 0.25
+    sleep "$SERVICE_READY_INTERVAL"
   done
   [[ "$service_ready" == "1" ]] || die "sandbox service failed to become ready; see $SERVICE_LOG"
   OPENBOX_SANDBOX_CONFIG="$SERVICE_CONFIG" "$SANDBOX_BIN" --check-config >/dev/null 2>&1 || \
@@ -856,7 +877,7 @@ elif [[ -x "$CLI_BIN" ]]; then
   # Only a sandbox that reached ready (or was reaped after running) is a warm
   # cache; a create that never materialized is surfaced, not swallowed.
   last_phase=""
-  for _ in $(seq 1 240); do
+  for _ in $(seq 1 "$WARM_POLL_COUNT"); do
     elapsed=$(( $(date +%s) - warm_start ))
     status="$("$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
       info "warm sandbox $warm_name already completed and reaped (elapsed ${elapsed}s)"
@@ -876,7 +897,7 @@ elif [[ -x "$CLI_BIN" ]]; then
       err "warm sandbox entered a terminal error state — see $warm_log"
       break
     fi
-    sleep 5
+    sleep "$WARM_POLL_INTERVAL"
   done
   if [[ "$warmed" == "1" ]]; then
     ok "cache warmed: $warm_name"
