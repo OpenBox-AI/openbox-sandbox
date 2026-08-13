@@ -805,7 +805,18 @@ ZOTEOF
     kill "$ZOT_PID" 2>/dev/null || true
     die "local image registry failed to start"
   fi
-  SANDBOX_IMAGE="127.0.0.1:$ZOT_PORT/openbox-sandboxes-dev:latest"
+  # Pin the registry ref to the manifest digest — the sandbox service's
+  # immutability validation requires a @sha256 template.
+  _manifest_digest="$(curl -skI \
+    -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+    "https://127.0.0.1:$ZOT_PORT/v2/openbox-sandboxes-dev/manifests/latest" \
+    | tr -d '\r' | awk -F': ' 'tolower($1)=="docker-content-digest" {print $2}' | head -1)"
+  if [[ -z "$_manifest_digest" ]]; then
+    err "could not read the manifest digest from the local registry"
+    kill "$ZOT_PID" 2>/dev/null || true
+    die "local image registry has no manifest digest"
+  fi
+  SANDBOX_IMAGE="127.0.0.1:$ZOT_PORT/openbox-sandboxes-dev@$_manifest_digest"
   info "dev image resolves via the local registry ($SANDBOX_IMAGE) — no container runtime"
 fi
 info "Generating local PKI into $TLS_DIR"
