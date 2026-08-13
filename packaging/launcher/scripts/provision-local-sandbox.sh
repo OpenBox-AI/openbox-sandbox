@@ -238,7 +238,7 @@ if [[ "$USE_VM_CACHE" == "1" ]]; then
   done
 fi
 if [[ -n "$_cache_candidate" ]]; then
-  CACHE_IMAGE_ID="$(tar -xzOf "$_cache_candidate" "images/cache-image" 2>/dev/null | head -1 || true)"
+  CACHE_IMAGE_ID="$(tar -xzOf "$_cache_candidate" "./cache-image" 2>/dev/null | head -1 || true)"
   if [[ -n "$CACHE_IMAGE_ID" ]]; then
     SANDBOX_IMAGE="$CACHE_IMAGE_ID"
     info "prepared cache carries the image identity ($CACHE_IMAGE_ID) — runtime not needed"

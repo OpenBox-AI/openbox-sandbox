@@ -26,6 +26,8 @@ mkdir -p "$OUT"
 # the sandbox image without touching any container runtime.
 printf '%s' "$OPENBOX_SANDBOX_IMAGE" > "$CACHE_DIR/cache-image"
 echo "capturing $CACHE_DIR -> $OUT/$NAME.tar.gz"
-tar -czf "$OUT/$NAME.tar.gz" -C "$(dirname "$CACHE_DIR")" "$(basename "$CACHE_DIR")"
+# Tar the CONTENTS of the images dir — extraction targets the driver's
+# images dir directly, so no nested images/ prefix may exist in the tar.
+tar -czf "$OUT/$NAME.tar.gz" -C "$CACHE_DIR" .
 shasum -a 256 "$OUT/$NAME.tar.gz"
 echo "done — upload to both releases: gh release upload v0.1.0 v0.1.0-dev $OUT/$NAME.tar.gz"
