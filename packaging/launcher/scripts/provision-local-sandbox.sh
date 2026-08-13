@@ -642,6 +642,15 @@ stop_scoped_vm_drivers() {
   done
 }
 
+# Stop a wizard-started local image registry (zot) if one is running.
+if [[ -f "$STATE_ROOT/zot/zot.pid" ]]; then
+  _zot_pid="$(cat "$STATE_ROOT/zot/zot.pid" 2>/dev/null || true)"
+  if [[ -n "$_zot_pid" ]] && kill -0 "$_zot_pid" 2>/dev/null; then
+    kill "$_zot_pid" 2>/dev/null || true
+    info "stopped local image registry (zot pid=$_zot_pid)"
+  fi
+  rm -f "$STATE_ROOT/zot/zot.pid"
+fi
 info "Teardown (always)"
 stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$(basename "$SANDBOX_BIN")" "" "binary-name"
 sweep_matching_listeners "$SANDBOX_PORT" "$(basename "$SANDBOX_BIN")"
@@ -666,6 +675,10 @@ provision_error_cleanup() {
     stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$(basename "$SANDBOX_BIN")" "" "binary-name"
     stop_pid_file "$GATEWAY_PID_FILE" "gateway" "$GATEWAY_BIN" "$GATEWAY_CONFIG" "gateway-config"
     stop_scoped_vm_drivers
+    if [[ -n "${ZOT_PID:-}" ]] && kill -0 "$ZOT_PID" 2>/dev/null; then
+      kill "$ZOT_PID" 2>/dev/null || true
+      rm -f "$STATE_ROOT/zot/zot.pid"
+    fi
   fi
 }
 if [[ "$TEARDOWN_ONLY" == "1" ]]; then
