@@ -164,6 +164,17 @@ const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
     ("--allow-degraded-landlock", "OPENBOX_ALLOW_DEGRADED_LANDLOCK"),
     ("--container-runtime", "CONTAINER_RUNTIME"),
     ("--bin-override", "OPENSHELL_BIN_OVERRIDE"),
+    ("--gateway-bin", "OPENBOX_GATEWAY_BIN"),
+    ("--cli-bin", "OPENBOX_CLI_BIN"),
+    ("--driver-bin", "OPENBOX_DRIVER_BIN"),
+    ("--vm-cache-tar", "OPENBOX_VM_CACHE_TAR"),
+    ("--vm-cache-hit-timeout", "OPENBOX_VM_CACHE_HIT_TIMEOUT"),
+    ("--warm-create-timeout", "OPENBOX_WARM_CREATE_TIMEOUT"),
+    ("--warm-get-timeout", "OPENBOX_WARM_GET_TIMEOUT"),
+    ("--warm-delete-timeout", "OPENBOX_WARM_DELETE_TIMEOUT"),
+    ("--gateway-log-level", "OPENBOX_GATEWAY_LOG_LEVEL"),
+    ("--krun-log-level", "OPENBOX_KRUN_LOG_LEVEL"),
+    ("--driver-rust-log", "OPENBOX_DRIVER_RUST_LOG"),
 ];
 
 /// Boolean `--flag` → env=value pairs for provision options.
@@ -779,6 +790,18 @@ PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --fla
   --max-connections N    (64)
   --drain-timeout-ms N   (30000)
   --allow-degraded-landlock BOOL (true)
+  --vm-cache-tar PATH    (auto per platform: prepared-vm-cache-<platform>.tar.gz)
+  --use-vm-cache / --no-vm-cache (default: use the shipped cache; runtime is fallback)
+  --vm-cache-hit-timeout S (30)
+  --warm-create-timeout S (300)
+  --warm-get-timeout S   (10)
+  --warm-delete-timeout S (30)
+  --gateway-log-level LVL (info; debug shows the driver pull/unpack detail)
+  --krun-log-level N     (1; 3=info 4=debug for the VM boot log)
+  --driver-rust-log LVL  (RUST_LOG passthrough to the VM driver)
+  --gateway-bin PATH     (cwd/bundle by default)
+  --cli-bin PATH         (cwd/bundle by default)
+  --driver-bin PATH      (cwd/bundle by default)
   --vm-driver-state-dir PATH (auto per user+gateway)
   --tls-dir PATH         (~/.local/state/openshell/tls)
   --runtime-mtls-dir PATH (~/.config/openbox-sandbox/runtime-mtls)
