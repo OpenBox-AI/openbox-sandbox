@@ -1206,7 +1206,7 @@ elif [[ -x "$CLI_BIN" ]]; then
   done
   if [[ "$warmed" == "1" ]]; then
     if [[ "$cache_prepared" == "1" ]]; then
-      ok "prepared VM cache hit — warm completed in ${elapsed}s without a container runtime"
+      ok "prepared VM cache hit — warm completed in ${elapsed}s (no image pull or build)"
     else
       ok "cache warmed: $warm_name"
     fi
