@@ -863,6 +863,8 @@ elif [[ -x "$CLI_BIN" ]]; then
     die "container runtime '$RUNTIME' is installed but not running — start Docker Desktop (or your runtime) before provisioning"
   fi
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
+  # Rotate previous warm logs — only the current run's log is kept.
+  find "$STATE_ROOT" -maxdepth 1 -name 'warm-*.log' -type f ! -newermt '-1 minute' -delete 2>/dev/null || true
   warm_name="w$(date +%s)"
   warm_log="${STATE_ROOT}/warm-${warm_name}.log"
   warm_start="$(date +%s)"
