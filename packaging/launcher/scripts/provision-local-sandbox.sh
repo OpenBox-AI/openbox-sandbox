@@ -236,57 +236,10 @@ if [[ "$POLICY_ID" == *allow* && -z "$DEV_TAR" ]] \
    && ! docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
   die "dev policy selected ($POLICY_ID) but no dev image is available — download the dev image tar first: ./obs update --all"
 fi
-# Resolve strategy for the dev image, in order of preference:
-#   1. REGISTRY MODE (runtime-agnostic): a bundled zot serves the shipped OCI
-#      layout at 127.0.0.1; the driver resolves through its registry path.
-#      No Docker, no Podman, no installs.
-#   2. Container-engine load: the dev tar is loaded into docker/podman so the
-#      driver's local-engine resolve succeeds. Fallback only.
-_oci_layout=""
-if [[ "$USE_VM_CACHE" == "1" ]]; then
-  case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64) _oci_default="openbox-sandbox-dev-darwin-arm64-oci.tar.gz" ;;
-    Linux-x86_64) _oci_default="openbox-sandbox-dev-linux-x86_64-oci.tar.gz" ;;
-    *) _oci_default="" ;;
-  esac
-  for _c in "$LAUNCHER_DIR/$_oci_default" "$(pwd)/$_oci_default"; do
-    [[ -f "$_c" ]] && _oci_layout="$_c" && break
-  done
-  ZOT_BIN=""
-  for _z in "$LAUNCHER_DIR/zot" "$(pwd)/zot"; do
-    [[ -x "$_z" ]] && ZOT_BIN="$_z" && break
-  done
-fi
-
-if [[ -n "$_oci_layout" && -n "$ZOT_BIN" ]]; then
-  ZOT_DIR="$STATE_ROOT/zot"
-  ZOT_PORT="${OPENBOX_ZOT_PORT:-15000}"
-  mkdir -p "$ZOT_DIR/layout" "$ZOT_DIR/run"
-  info "runtime-agnostic image registry: serving the shipped OCI layout via zot on 127.0.0.1:$ZOT_PORT"
-  tar -xzf "$_oci_layout" -C "$ZOT_DIR/layout" \
-    || die "failed to extract the OCI layout ($_oci_layout)"
-  cat > "$ZOT_DIR/zot-config.json" <<ZOTEOF
-{
-  "storage": { "rootDirectory": "$ZOT_DIR/layout" },
-  "http": { "address": "127.0.0.1", "port": "$ZOT_PORT" },
-  "log": { "level": "error" }
-}
-ZOTEOF
-  "$ZOT_BIN" serve "$ZOT_DIR/zot-config.json" > "$ZOT_DIR/zot.log" 2>&1 &
-  ZOT_PID=$!
-  echo "$ZOT_PID" > "$ZOT_DIR/zot.pid"
-  for _i in $(seq 1 20); do
-    curl -sf "http://127.0.0.1:$ZOT_PORT/v2/" >/dev/null 2>&1 && break
-    sleep 0.5
-  done
-  if ! curl -sf "http://127.0.0.1:$ZOT_PORT/v2/" >/dev/null 2>&1; then
-    err "zot did not come up (log: $ZOT_DIR/zot.log)"
-    kill "$ZOT_PID" 2>/dev/null || true
-    die "local image registry failed to start"
-  fi
-  SANDBOX_IMAGE="127.0.0.1:$ZOT_PORT/openbox-sandboxes-dev:latest"
-  info "dev image resolves via the local registry ($SANDBOX_IMAGE) — no container runtime"
-fi
+# Registry-mode assets are discovered later (after teardown); declared here so
+# the dev-tar fallback can test their presence.
+ZOT_BIN="${OPENBOX_ZOT_BIN:-}"
+_oci_layout="${OPENBOX_OCI_LAYOUT:-}"
 
 if [[ -n "$DEV_TAR" ]] && [[ -z "$ZOT_BIN" || -z "$_oci_layout" ]]; then
   info "dev release detected ($DEV_TAR) — loading the dev sandbox image so the driver can resolve it locally (registry mode unavailable)"
@@ -773,6 +726,56 @@ EOF
 fi
 
 # ─── 2. Generate local PKI ──────────────────────────────────────────────────
+# Resolve strategy for the dev image, in order of preference:
+#   1. REGISTRY MODE (runtime-agnostic): a bundled zot serves the shipped OCI
+#      layout at 127.0.0.1; the driver resolves through its registry path.
+#      No Docker, no Podman, no installs.
+#   2. Container-engine load: the dev tar is loaded into docker/podman so the
+#      driver's local-engine resolve succeeds. Fallback only.
+if [[ "$USE_VM_CACHE" == "1" && -z "$_oci_layout" ]]; then
+  case "$(uname -s)-$(uname -m)" in
+    Darwin-arm64) _oci_default="openbox-sandbox-dev-darwin-arm64-oci.tar.gz" ;;
+    Linux-x86_64) _oci_default="openbox-sandbox-dev-linux-x86_64-oci.tar.gz" ;;
+    *) _oci_default="" ;;
+  esac
+  for _c in "$LAUNCHER_DIR/$_oci_default" "$(pwd)/$_oci_default"; do
+    [[ -f "$_c" ]] && _oci_layout="$_c" && break
+  done
+  ZOT_BIN=""
+  for _z in "$LAUNCHER_DIR/zot" "$(pwd)/zot"; do
+    [[ -x "$_z" ]] && ZOT_BIN="$_z" && break
+  done
+fi
+
+if [[ -n "$_oci_layout" && -n "$ZOT_BIN" ]]; then
+  ZOT_DIR="$STATE_ROOT/zot"
+  ZOT_PORT="${OPENBOX_ZOT_PORT:-15000}"
+  mkdir -p "$ZOT_DIR/layout" "$ZOT_DIR/run"
+  info "runtime-agnostic image registry: serving the shipped OCI layout via zot on 127.0.0.1:$ZOT_PORT"
+  tar -xzf "$_oci_layout" -C "$ZOT_DIR/layout" \
+    || die "failed to extract the OCI layout ($_oci_layout)"
+  cat > "$ZOT_DIR/zot-config.json" <<ZOTEOF
+{
+  "storage": { "rootDirectory": "$ZOT_DIR/layout" },
+  "http": { "address": "127.0.0.1", "port": "$ZOT_PORT" },
+  "log": { "level": "error" }
+}
+ZOTEOF
+  "$ZOT_BIN" serve "$ZOT_DIR/zot-config.json" > "$ZOT_DIR/zot.log" 2>&1 &
+  ZOT_PID=$!
+  echo "$ZOT_PID" > "$ZOT_DIR/zot.pid"
+  for _i in $(seq 1 20); do
+    curl -sf "http://127.0.0.1:$ZOT_PORT/v2/" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  if ! curl -sf "http://127.0.0.1:$ZOT_PORT/v2/" >/dev/null 2>&1; then
+    err "zot did not come up (log: $ZOT_DIR/zot.log)"
+    kill "$ZOT_PID" 2>/dev/null || true
+    die "local image registry failed to start"
+  fi
+  SANDBOX_IMAGE="127.0.0.1:$ZOT_PORT/openbox-sandboxes-dev:latest"
+  info "dev image resolves via the local registry ($SANDBOX_IMAGE) — no container runtime"
+fi
 info "Generating local PKI into $TLS_DIR"
 mkdir -p "$TLS_DIR"
 "$GATEWAY_BIN" generate-certs \
