@@ -77,6 +77,23 @@ port_listening() {
     (echo >/dev/tcp/127.0.0.1/"$port") >/dev/null 2>&1
   fi
 }
+resolve_runtime() {
+  RUNTIME="${CONTAINER_RUNTIME:-}"
+  if [[ -n "$RUNTIME" ]]; then
+    command -v "$RUNTIME" >/dev/null 2>&1 && return 0
+    return 1
+  fi
+  if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
+    RUNTIME="docker"
+    return 0
+  fi
+  if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then
+    RUNTIME="podman"
+    return 0
+  fi
+  return 1
+}
+
 info() { printf '  ==> %s\n' "$*" >&2; }
 ok()   { printf '  [ok] %s\n' "$*" >&2; }
 err()  { printf '  [err] %s\n' "$*" >&2; }
@@ -203,22 +220,6 @@ if [[ -n "$DEV_TAR" ]]; then
   # Container runtime selection (the VM driver speaks the Docker-compatible
   # API: Docker first, then rootless Podman — researched from driver.rs
   # connect_local_container_engine). Explicit CONTAINER_RUNTIME wins.
-  resolve_runtime() {
-    RUNTIME="${CONTAINER_RUNTIME:-}"
-    if [[ -n "$RUNTIME" ]]; then
-      command -v "$RUNTIME" >/dev/null 2>&1 && return 0
-      return 1
-    fi
-    if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
-      RUNTIME="docker"
-      return 0
-    fi
-    if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then
-      RUNTIME="podman"
-      return 0
-    fi
-    return 1
-  }
   if ! resolve_runtime; then
     if command -v brew >/dev/null 2>&1 && [[ "$(uname -s)" == "Darwin" ]]; then
       RUNTIME_LOG="${STATE_ROOT}/brew-podman.log"
