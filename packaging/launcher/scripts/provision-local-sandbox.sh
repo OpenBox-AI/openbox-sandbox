@@ -188,6 +188,10 @@ else
     break
   done
 fi
+if [[ "$POLICY_ID" == *allow* && -z "$DEV_TAR" ]] \
+   && ! docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
+  die "dev policy selected ($POLICY_ID) but no dev image is available — download the dev image tar first: ./obs update --all"
+fi
 if [[ -n "$DEV_TAR" ]]; then
   info "dev release detected ($DEV_TAR) — loading dev sandbox image"
   # Pre-flight: a down Docker daemon is the most common failure here.
@@ -1000,7 +1004,8 @@ elif [[ -x "$CLI_BIN" ]]; then
       break
     fi
     if printf '%s\n' "$status" | grep -qiE 'error|failed'; then
-      err "warm sandbox entered a terminal error state — see $warm_log"
+      err "warm sandbox entered a terminal error state; log content ($warm_log):"
+      tail -n 20 "$warm_log" 2>/dev/null >&2 || true
       break
     fi
     sleep "$WARM_POLL_INTERVAL"
