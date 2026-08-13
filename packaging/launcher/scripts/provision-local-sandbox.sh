@@ -208,6 +208,7 @@ SANDBOX_IMAGE="${OPENBOX_SANDBOX_IMAGE:-ghcr.io/nvidia/openshell-community/sandb
 # below writes its logs under them, before the full defaults block runs.
 STATE_ROOT="${OPENBOX_STATE_ROOT:-$HOME/.local/state/openbox-sandbox}"
 CONFIG_ROOT="${OPENBOX_CONFIG_ROOT:-$HOME/.config/openbox-sandbox}"
+USE_VM_CACHE="${OPENBOX_USE_VM_CACHE:-1}"
 
 DEV_IMAGE_NAME="${OPENBOX_DEV_IMAGE_NAME:-openbox-sandboxes-dev}"
 case "$(uname -s)-$(uname -m)" in
@@ -231,9 +232,11 @@ if [[ "$POLICY_ID" == *allow* && -z "$DEV_TAR" ]] \
   die "dev policy selected ($POLICY_ID) but no dev image is available — download the dev image tar first: ./obs update --all"
 fi
 _cache_candidate=""
-for _c in "$LAUNCHER_DIR/$VM_CACHE_TAR" "$(pwd)/$VM_CACHE_TAR"; do
-  [[ -f "$_c" ]] && _cache_candidate="$_c" && break
-done
+if [[ "$USE_VM_CACHE" == "1" ]]; then
+  for _c in "$LAUNCHER_DIR/$VM_CACHE_TAR" "$(pwd)/$VM_CACHE_TAR"; do
+    [[ -f "$_c" ]] && _cache_candidate="$_c" && break
+  done
+fi
 if [[ -n "$_cache_candidate" ]]; then
   CACHE_IMAGE_ID="$(tar -xzOf "$_cache_candidate" "images/cache-image" 2>/dev/null | head -1 || true)"
   if [[ -n "$CACHE_IMAGE_ID" ]]; then
@@ -241,8 +244,8 @@ if [[ -n "$_cache_candidate" ]]; then
     info "prepared cache carries the image identity ($CACHE_IMAGE_ID) — runtime not needed"
   fi
 fi
-if [[ -n "$DEV_TAR" ]] && [[ -z "$_cache_candidate" ]]; then
-  info "dev release detected ($DEV_TAR) and no prepared cache — loading dev sandbox image (runtime fallback)"
+if [[ -n "$DEV_TAR" ]] && [[ -z "$_cache_candidate" || -z "$CACHE_IMAGE_ID" ]]; then
+  info "dev release detected ($DEV_TAR) and no usable cache — loading dev sandbox image (runtime fallback)"
   # Container runtime selection (the VM driver speaks the Docker-compatible
   # API: Docker first, then rootless Podman — researched from driver.rs
   # connect_local_container_engine). Explicit CONTAINER_RUNTIME wins.
@@ -306,7 +309,6 @@ GATEWAY_READY_INTERVAL="${OPENBOX_GATEWAY_READY_INTERVAL:-0.5}"
 SERVICE_READY_POLLS="${OPENBOX_SERVICE_READY_POLLS:-40}"
 SERVICE_READY_INTERVAL="${OPENBOX_SERVICE_READY_INTERVAL:-0.25}"
 VM_CACHE_TAR="${OPENBOX_VM_CACHE_TAR:-}"
-USE_VM_CACHE="${OPENBOX_USE_VM_CACHE:-1}"
 VM_CACHE_HIT_TIMEOUT="${OPENBOX_VM_CACHE_HIT_TIMEOUT:-30}"
 WARM_POLL_COUNT="${OPENBOX_WARM_POLL_COUNT:-240}"
 WARM_POLL_INTERVAL="${OPENBOX_WARM_POLL_INTERVAL:-5}"
