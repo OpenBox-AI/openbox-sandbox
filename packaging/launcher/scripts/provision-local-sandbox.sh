@@ -950,24 +950,33 @@ elif [[ -x "$CLI_BIN" ]]; then
   # The VM driver builds the ext4 rootfs with mkfs.ext4 AND fixes ownership
   # with debugfs (both from e2fsprogs) — checked against the pinned driver's
   # own candidate paths. Fail fast BEFORE the multi-minute image pull.
-  MKFS=""
-  DEBUGFS=""
-  for _tool in mkfs.ext4 mke2fs debugfs; do
-    for _root in "" /opt/homebrew/opt/e2fsprogs /usr/local/opt/e2fsprogs; do
-      for _sub in sbin bin; do
-        _cand="${_root:+$_root/$_sub/}$_tool"
-        [[ -x "$_cand" ]] || continue
-        [[ "$_tool" != "debugfs" ]] && MKFS="$_cand"
-        [[ "$_tool" == "debugfs" ]] && DEBUGFS="$_cand"
-        break 2
+  find_e2fs_tools() {
+    MKFS=""
+    DEBUGFS=""
+    for _tool in mkfs.ext4 mke2fs debugfs; do
+      for _root in "" /opt/homebrew/opt/e2fsprogs /usr/local/opt/e2fsprogs; do
+        for _sub in sbin bin; do
+          _cand="${_root:+$_root/$_sub/}$_tool"
+          [[ -x "$_cand" ]] || continue
+          [[ "$_tool" != "debugfs" ]] && MKFS="$_cand"
+          [[ "$_tool" == "debugfs" ]] && DEBUGFS="$_cand"
+          break 2
+        done
       done
     done
-  done
-  if [[ -z "$MKFS" ]]; then
-    die "mkfs.ext4 (e2fsprogs) is required by the VM driver — install it first: brew install e2fsprogs"
-  fi
-  if [[ -z "$DEBUGFS" ]]; then
-    die "debugfs (e2fsprogs) is required by the VM driver — install it first: brew install e2fsprogs"
+  }
+  find_e2fs_tools
+  if [[ -z "$MKFS" || -z "$DEBUGFS" ]]; then
+    if command -v brew >/dev/null 2>&1; then
+      warn "e2fsprogs (mkfs.ext4 + debugfs) missing — installing via Homebrew (may take a few minutes)"
+      brew install e2fsprogs \
+        || die "brew install e2fsprogs failed — install it manually and re-run"
+      find_e2fs_tools
+    fi
+    if [[ -z "$MKFS" || -z "$DEBUGFS" ]]; then
+      die "e2fsprogs (mkfs.ext4 + debugfs) is required by the VM driver — install it manually: brew install e2fsprogs"
+    fi
+    ok "e2fsprogs ready (mkfs=$MKFS debugfs=$DEBUGFS)"
   fi
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
   if [[ "$SANDBOX_IMAGE" == ghcr.io/* ]]; then
