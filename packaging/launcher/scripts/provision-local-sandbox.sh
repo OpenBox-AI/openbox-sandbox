@@ -159,10 +159,29 @@ else
   done
 fi
 LAUNCHER_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Policy resolution is hermetic: an explicit env path wins; otherwise look in
-# the launcher directory (release assets ship next to obs), then the working
-# directory, then the source-tree defaults. Stray files elsewhere are ignored.
-POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
+# Release line: explicit env/flag wins, else the dev image tar decides, else
+# base. The POLICY FILES are templates — the line selects the default template,
+# never the other way around.
+if [[ -n "${OPENBOX_RELEASE_LINE:-}" ]]; then
+  RELEASE_LINE="$OPENBOX_RELEASE_LINE"
+elif [[ -f "$LAUNCHER_DIR/$_dev_tar_default" || -f "$(pwd)/$_dev_tar_default" ]]; then
+  RELEASE_LINE="dev"
+else
+  RELEASE_LINE="base"
+fi
+info "release line: $RELEASE_LINE (set OPENBOX_RELEASE_LINE or use --dev/--base to override)"
+
+# Policy template resolution: an explicit policy file always wins; otherwise
+# the channel selects the default template (dev -> allow, base -> deny).
+# BOTH templates are downloaded by the launcher, so the choice is never
+# blocked on which file happens to be present.
+case "$RELEASE_LINE" in
+  dev)  DEFAULT_POLICY_TEMPLATE="policy-allow-network-dev.yaml"
+        DEFAULT_POLICY_ID="openbox-allow-network-dev" ;;
+  *)    DEFAULT_POLICY_TEMPLATE="policy-deny-network-dev.yaml"
+        DEFAULT_POLICY_ID="openbox-deny-network-dev" ;;
+esac
+POLICY_ID="${OPENBOX_POLICY_ID:-$DEFAULT_POLICY_ID}"
 if [[ -n "${OPENBOX_POLICY_FILE:-}" && "${OPENBOX_POLICY_FILE}" == /* ]]; then
   POLICY_FILE="$OPENBOX_POLICY_FILE"
   case "$(basename "$POLICY_FILE")" in
@@ -170,19 +189,15 @@ if [[ -n "${OPENBOX_POLICY_FILE:-}" && "${OPENBOX_POLICY_FILE}" == /* ]]; then
   esac
 else
   POLICY_FILE=""
-  POLICY_ID="${OPENBOX_POLICY_ID:-openbox-deny-network-dev}"
-  for _cand in       "${OPENBOX_POLICY_FILE:-}"       "$LAUNCHER_DIR/policy-allow-network-dev.yaml"       "$LAUNCHER_DIR/policy-deny-network-dev.yaml"       "$(pwd)/policy-allow-network-dev.yaml"       "$(pwd)/policy-deny-network-dev.yaml"       "$PROJECT_ROOT/deploy/policies/policy-deny-network-dev.yaml"; do
+  for _cand in "${OPENBOX_POLICY_FILE:-}" "$LAUNCHER_DIR/$DEFAULT_POLICY_TEMPLATE" "$(pwd)/$DEFAULT_POLICY_TEMPLATE" "$PROJECT_ROOT/deploy/policies/$DEFAULT_POLICY_TEMPLATE"; do
     [[ -n "$_cand" && -f "$_cand" ]] || continue
     POLICY_FILE="$(cd "$(dirname "$_cand")" && pwd)/$(basename "$_cand")"
     break
   done
   if [[ -z "$POLICY_FILE" ]]; then
-    die "no policy file found (checked launcher dir $LAUNCHER_DIR, cwd, and repo defaults) — set OPENBOX_POLICY_FILE"
+    die "no policy template found for the $RELEASE_LINE line (checked launcher dir $LAUNCHER_DIR, cwd, and repo defaults) — set OPENBOX_POLICY_FILE"
   fi
-  case "$(basename "$POLICY_FILE")" in
-    *allow*) POLICY_ID="${OPENBOX_POLICY_ID:-openbox-allow-network-dev}"
-             info "dev policy detected ($POLICY_FILE) — using allow-network" ;;
-  esac
+  info "policy template: $POLICY_FILE (id $POLICY_ID)"
 fi
 POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"

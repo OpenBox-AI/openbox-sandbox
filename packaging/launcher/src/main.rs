@@ -182,6 +182,10 @@ const PROVISION_FLAG_BOOLS: &[(&str, &str, &str)] = &[
     ("--no-start", "NO_START", "1"),
     ("--skip-warm-cache", "OPENBOX_WARM_CACHE", "0"),
     ("--force-warm-cache", "OPENBOX_WARM_CACHE", "1"),
+    ("--no-vm-cache", "OPENBOX_USE_VM_CACHE", "0"),
+    ("--use-vm-cache", "OPENBOX_USE_VM_CACHE", "1"),
+    ("--dev", "OPENBOX_RELEASE_LINE", "dev"),
+    ("--base", "OPENBOX_RELEASE_LINE", "base"),
 ];
 
 fn parse_provision_flags(
@@ -807,6 +811,9 @@ PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --fla
   --runtime-mtls-dir PATH (~/.config/openbox-sandbox/runtime-mtls)
   --openshell-meta-dir PATH (~/.config/openshell)
   --caller-subj SUBJ     (/CN=openbox-sandbox-runtime-caller)
+  --dev / --base         Select the release line explicitly (default: dev tar
+                          present -> dev, else base). Both policy templates
+                          are always downloaded; the line picks the default
   --no-start             Set NO_START=1 (write configs, start nothing)
   --skip-warm-cache      Set OPENBOX_WARM_CACHE=0
   --force-warm-cache     Set OPENBOX_WARM_CACHE=1

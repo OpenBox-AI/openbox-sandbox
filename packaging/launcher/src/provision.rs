@@ -86,34 +86,32 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     } else {
         ""
     };
-    let dev_channel = cwd.join("policy-allow-network-dev.yaml").is_file()
-        || (!dev_tar.is_empty() && cwd.join(dev_tar).is_file());
+    let dev_channel = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
+        Ok("dev") => true,
+        Ok(_) => false,
+        Err(_) => !dev_tar.is_empty() && cwd.join(dev_tar).is_file(),
+    };
     let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
     info(&format!(
-        "release line detected: {} ({tag}){}",
+        "release line: {} ({tag}) — the {} policy template is the default; both templates are downloaded",
         if dev_channel { "dev" } else { "base" },
-        if dev_channel {
-            " — markers: allow policy or dev image tar present"
-        } else {
-            " — markers: neither allow policy nor dev image tar present"
-        }
+        if dev_channel { "allow-network" } else { "deny-network" }
     ));
     if !cwd.join(svc_name).is_file() {
         info(&format!("{svc_name} missing — fetching from {tag}"));
         let _ = gh_download_pattern(&gh, tag, svc_name);
     }
-    if dev_channel {
-        if !cwd.join("policy-allow-network-dev.yaml").is_file() {
-            info("allow policy missing — fetching from the dev release");
-            let _ = gh_download_pattern(&gh, tag, "policy-allow-network-dev.yaml");
+    // Policy files are TEMPLATES — always fetch both; the release line only
+    // selects which one is the default, never which one may exist.
+    for template in ["policy-allow-network-dev.yaml", "policy-deny-network-dev.yaml"] {
+        if !cwd.join(template).is_file() {
+            info(&format!("policy template {template} missing — fetching from {tag}"));
+            let _ = gh_download_pattern(&gh, tag, template);
         }
-        if !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
-            info(&format!("{dev_tar} missing — fetching from the dev release"));
-            let _ = gh_download_pattern(&gh, tag, dev_tar);
-        }
-    } else if !cwd.join("policy-deny-network-dev.yaml").is_file() {
-        info("deny policy missing — fetching from the base release");
-        let _ = gh_download_pattern(&gh, tag, "policy-deny-network-dev.yaml");
+    }
+    if dev_channel && !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
+        info(&format!("{dev_tar} missing — fetching from the dev release"));
+        let _ = gh_download_pattern(&gh, tag, dev_tar);
     }
     // The prepared VM cache ships for BOTH channels — always self-heal it.
     if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
@@ -408,6 +406,11 @@ pub fn run_provision(
     keep_pki: bool,
     overrides: Vec<(String, String)>,
 ) -> ExitCode {
+    // Apply flag overrides to this process too — channel detection and the
+    // asset fetches must see the same values the provision script will.
+    for (key, value) in &overrides {
+        std::env::set_var(key, value);
+    }
     if let Err(code) = auto_fetch_bundle() {
         return code;
     }
