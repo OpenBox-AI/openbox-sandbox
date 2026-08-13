@@ -947,18 +947,27 @@ elif [[ -x "$CLI_BIN" ]]; then
   if ! "$RUNTIME" ps >/dev/null 2>&1; then
     die "container runtime '$RUNTIME' is installed but not running — start Docker Desktop (or your runtime) before provisioning"
   fi
-  # The VM driver builds the ext4 rootfs with mkfs.ext4 (e2fsprogs) — fail
-  # fast BEFORE the multi-minute image pull instead of after it.
+  # The VM driver builds the ext4 rootfs with mkfs.ext4 AND fixes ownership
+  # with debugfs (both from e2fsprogs) — checked against the pinned driver's
+  # own candidate paths. Fail fast BEFORE the multi-minute image pull.
   MKFS=""
-  for _cand in "$(command -v mkfs.ext4 2>/dev/null)" \
-               /usr/local/opt/e2fsprogs/bin/mkfs.ext4 \
-               /opt/homebrew/opt/e2fsprogs/bin/mkfs.ext4 \
-               /usr/local/opt/e2fsprogs/sbin/mkfs.ext4 \
-               /opt/homebrew/opt/e2fsprogs/sbin/mkfs.ext4; do
-    [[ -n "$_cand" && -x "$_cand" ]] && MKFS="$_cand" && break
+  DEBUGFS=""
+  for _tool in mkfs.ext4 mke2fs debugfs; do
+    for _root in "" /opt/homebrew/opt/e2fsprogs /usr/local/opt/e2fsprogs; do
+      for _sub in sbin bin; do
+        _cand="${_root:+$_root/$_sub/}$_tool"
+        [[ -x "$_cand" ]] || continue
+        [[ "$_tool" != "debugfs" ]] && MKFS="$_cand"
+        [[ "$_tool" == "debugfs" ]] && DEBUGFS="$_cand"
+        break 2
+      done
+    done
   done
   if [[ -z "$MKFS" ]]; then
     die "mkfs.ext4 (e2fsprogs) is required by the VM driver — install it first: brew install e2fsprogs"
+  fi
+  if [[ -z "$DEBUGFS" ]]; then
+    die "debugfs (e2fsprogs) is required by the VM driver — install it first: brew install e2fsprogs"
   fi
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
   if [[ "$SANDBOX_IMAGE" == ghcr.io/* ]]; then
