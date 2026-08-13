@@ -33,6 +33,7 @@ mod provision;
 mod publish;
 mod pin;
 mod scripts;
+mod update;
 
 /// One OpenShell compute driver the launcher can detect.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -113,6 +114,9 @@ enum CommandLine {
     Publish {
         release_dir: String,
         tag: String,
+    },
+    Update {
+        release: Option<String>,
     },
     Launch,
 }
@@ -260,6 +264,24 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
             ensure_options(&args[1..], &[])?;
             Ok(CommandLine::Status)
         }
+        "update" => {
+            let mut release = None;
+            for arg in &args[1..] {
+                if let Some(value) = arg.strip_prefix("--release=") {
+                    release = Some(value.to_owned());
+                } else if arg == "--release" {
+                    let Some(value) = args.get(2).cloned() else {
+                        return Err("--release requires a value".to_owned());
+                    };
+                    release = Some(value);
+                } else if arg.starts_with('-') {
+                    return Err(format!("unknown update option '{arg}'"));
+                } else if release.is_none() {
+                    release = Some(arg.clone());
+                }
+            }
+            Ok(CommandLine::Update { release })
+        }
         "publish" => {
             if args.len() < 2 {
                 return Err("usage: obs publish <release-dir> [tag]".to_owned());
@@ -337,6 +359,7 @@ fn main() -> ExitCode {
         Ok(CommandLine::Status) => return provision::run_status(),
         Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
         Ok(CommandLine::Publish { release_dir, tag }) => return publish::run(&release_dir, &tag),
+        Ok(CommandLine::Update { release }) => return update::run(release.as_deref()),
         Ok(CommandLine::Launch) => {}
         Err(message) => {
             err(&message);
@@ -700,6 +723,9 @@ USAGE:
   obs verify                   Prove mTLS create→ready→exec→delete live.
   obs status                   Report stack readiness.
   obs publish <dir> [tag]      Publish a release dir to GitHub Releases.
+  obs update [TAG]            Download the platform assets for TAG (default:
+                              latest release) into the current dir, verify
+                              SHA256SUMS, and replace obs.
   obs [OPTIONS]                Start the external OpenShell gateway.
 
 MODULES:
