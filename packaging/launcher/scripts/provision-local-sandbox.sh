@@ -943,6 +943,10 @@ elif [[ -x "$CLI_BIN" ]]; then
     die "container runtime '$RUNTIME' is installed but not running — start Docker Desktop (or your runtime) before provisioning"
   fi
   info "warming VM driver image cache ($SANDBOX_IMAGE)..."
+  if [[ "$SANDBOX_IMAGE" == ghcr.io/* ]]; then
+    warn "no dev image tar detected — the driver will PULL FROM ghcr.io on first warm"
+    warn "if the pull fails (offline/slow network), download the dev image: ./obs update --all"
+  fi
   # Rotate previous warm logs — only the current run's log is kept.
   find "$STATE_ROOT" -maxdepth 1 -name 'warm-*.log' -type f ! -newermt '-1 minute' -delete 2>/dev/null || true
   warm_name="w$(date +%s)"
