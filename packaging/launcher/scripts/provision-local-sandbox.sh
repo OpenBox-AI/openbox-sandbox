@@ -254,7 +254,13 @@ if [[ "$USE_VM_CACHE" == "1" && ( -z "$ZOT_BIN" || -z "$_oci_layout" ) ]]; then
   fi
   if [[ -z "$ZOT_BIN" ]]; then
     for _z in "$LAUNCHER_DIR/zot" "$(pwd)/zot"; do
-      [[ -x "$_z" ]] && ZOT_BIN="$_z" && break
+      # The launcher downloads zot without the exec bit — accept any regular
+      # file and fix the mode.
+      if [[ -f "$_z" ]]; then
+        chmod +x "$_z" 2>/dev/null || true
+        ZOT_BIN="$_z"
+        break
+      fi
     done
   fi
 fi
