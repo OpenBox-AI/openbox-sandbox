@@ -1,8 +1,3 @@
 fn main() {
-    for name in &[
-        "fetch-openshell-deps.sh",
-        "provision-local-sandbox.sh",
-    ] {
-        println!("cargo:rerun-if-changed=scripts/{name}");
-    }
+    println!("cargo:rerun-if-env-changed=OPENBOX_CHANNEL");
 }
