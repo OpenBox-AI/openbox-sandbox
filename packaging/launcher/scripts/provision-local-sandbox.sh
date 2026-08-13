@@ -587,6 +587,19 @@ if [[ "$ARG_UNINSTALL" == "1" ]]; then
   exit 0
 fi
 
+# ─── 1. Platform pre-flight ─────────────────────────────────────────────────
+if [[ "$(uname -s)" == "Linux" ]]; then
+  # KVM: the driver opens /dev/kvm directly (runtime.rs check_kvm_access).
+  if [[ ! -r /dev/kvm ]]; then
+    die "/dev/kvm is not accessible — KVM is required for microVMs on Linux. Fix: usermod -aG kvm $USER, log out and back in, or check your udev rules"
+  fi
+  # glibc: the release binaries are glibc-built (docs reject musl/Alpine).
+  if ! ldd --version 2>/dev/null | grep -qi glibc; then
+    die "glibc 2.28+ is required — this system appears to be musl-based (Alpine or similar), which the release binaries do not support"
+  fi
+  info "Linux pre-flight ok (/dev/kvm readable, glibc present)"
+fi
+
 # ─── 1. Codesign VM driver (macOS) ──────────────────────────────────────────
 if [[ "$(uname -s)" == "Darwin" ]]; then
   if ! command -v codesign >/dev/null 2>&1; then
@@ -954,7 +967,8 @@ elif [[ -x "$CLI_BIN" ]]; then
     MKFS=""
     DEBUGFS=""
     for _tool in mkfs.ext4 mke2fs debugfs; do
-      for _root in "" /opt/homebrew/opt/e2fsprogs /usr/local/opt/e2fsprogs; do
+      for _root in "" /opt/homebrew/opt/e2fsprogs /usr/local/opt/e2fsprogs \
+                   /usr/sbin /usr/local/sbin /sbin; do
         for _sub in sbin bin; do
           _cand="${_root:+$_root/$_sub/}$_tool"
           [[ -x "$_cand" ]] || continue
