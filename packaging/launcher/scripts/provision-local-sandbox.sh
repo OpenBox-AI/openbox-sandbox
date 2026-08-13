@@ -379,7 +379,7 @@ process_command() {
 
 process_alive() {
   local state
-  state="$(ps -p "$1" -o stat= 2>/dev/null | awk 'NF { print; exit }')"
+  state="$(ps -p "$1" -o stat= 2>/dev/null | awk 'NF { print; exit }' || true)"
   [[ -n "$state" && "$state" != Z* ]]
 }
 
@@ -540,6 +540,7 @@ echo "" >&2
 provision_error_cleanup() {
   local rc=$?
   trap - EXIT  # disarm first: a validated-stop refusal may die() inside cleanup
+  trap - ERR   # teardown steps may legitimately probe dead pids; no trap noise
   if [[ "$rc" != "0" ]]; then
     warn "provision failed (exit $rc); tearing down wizard-owned processes started this run"
     stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$(basename "$SANDBOX_BIN")" "" "binary-name"
