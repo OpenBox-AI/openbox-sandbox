@@ -334,4 +334,59 @@ fi
 wait "$scoped_driver_pid" 2>/dev/null || true
 grep -q "stopping wizard-scoped VM driver pid=$scoped_driver_pid" "$TMP/stderr"
 
-printf 'provision source-marker and teardown-ownership tests passed\n'
+# ── set -u execution coverage: run every arg path; ANY 'unbound variable'
+#    crash fails the suite (this is the class that shipped three times).
+check_unbound() {
+  if grep -qiE 'unbound variable' "$TMP/stderr" 2>/dev/null; then
+    echo 'unbound variable crash detected:' >&2
+    grep -iE 'unbound variable' "$TMP/stderr" >&2 || true
+    exit 1
+  fi
+}
+
+# --help
+if ! bash "$PROVISION" --help >"$TMP/stdout" 2>"$TMP/stderr"; then
+  echo 'expected --help to succeed' >&2
+  exit 1
+fi
+check_unbound
+
+# --teardown-only with no stack
+HOME="$TMP/home" OPENBOX_STATE_ROOT="$TMP/teardown-state" OPENBOX_CONFIG_ROOT="$TMP/teardown-config" \
+  OPENBOX_SANDBOX_PORT="$(free_tcp_port)" OPENSHELL_SERVER_PORT="$(free_tcp_port)" \
+  OPENSHELL_BIN_OVERRIDE="$TMP/bin" OPENBOX_SANDBOX_BIN="$TMP/missing-svc" \
+  bash "$PROVISION" --teardown-only >"$TMP/stdout" 2>"$TMP/stderr"
+check_unbound
+
+# --purge-cache alone must be rejected (not crash)
+if HOME="$TMP/home" bash "$PROVISION" --purge-cache >"$TMP/stdout" 2>"$TMP/stderr"; then
+  echo 'expected standalone --purge-cache to be rejected' >&2
+  exit 1
+fi
+check_unbound
+grep -q -- '--purge-cache requires --uninstall or --clean-rerun' "$TMP/stderr"
+
+# --clean-rerun --purge-cache with a missing service binary (early die path)
+HOME="$TMP/home" OPENBOX_STATE_ROOT="$TMP/purge-state" OPENBOX_CONFIG_ROOT="$TMP/purge-config" \
+  OPENBOX_SANDBOX_PORT="$(free_tcp_port)" OPENSHELL_SERVER_PORT="$(free_tcp_port)" \
+  OPENSHELL_BIN_OVERRIDE="$TMP/bin" OPENBOX_SANDBOX_BIN="$TMP/missing-svc" \
+  bash "$PROVISION" --clean-rerun --purge-cache >"$TMP/stdout" 2>"$TMP/stderr" \
+  && { echo 'expected missing-svc provision to fail' >&2; exit 1; }
+check_unbound
+
+# Registry-mode start with a broken zot (the startup-failure die path)
+mkdir -p "$TMP/regtest"
+cat > "$TMP/regtest/zot" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod 0755 "$TMP/regtest/zot"
+printf '' > "$TMP/regtest/openbox-sandbox-dev-darwin-arm64-oci.tar.gz"
+HOME="$TMP/home" OPENBOX_STATE_ROOT="$TMP/reg-state" OPENBOX_CONFIG_ROOT="$TMP/reg-config" \
+  OPENBOX_SANDBOX_PORT="$(free_tcp_port)" OPENSHELL_SERVER_PORT="$(free_tcp_port)" \
+  OPENSHELL_BIN_OVERRIDE="$TMP/bin" OPENBOX_SANDBOX_BIN="$TMP/missing-svc" \
+  bash "$PROVISION" --clean-rerun >"$TMP/stdout" 2>"$TMP/stderr" \
+  && { echo 'expected broken-zot provision to fail' >&2; exit 1; }
+check_unbound
+
+printf 'provision source-marker and teardown-ownership tests passed\n' 
