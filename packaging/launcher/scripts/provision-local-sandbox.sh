@@ -772,9 +772,19 @@ if [[ -n "$_oci_layout" && -n "$ZOT_BIN" ]]; then
     -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" >/dev/null 2>&1 \
     || die "failed to generate the registry TLS certificate"
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    security add-trusted-cert -d -r trustRoot \
-      -k "$HOME/Library/Keychains/login.keychain-db" "$ZOT_DIR/tls/cert.pem" >/dev/null 2>&1 \
-      || warn "could not trust the registry CA in the keychain — the driver may reject the registry certificate"
+    if ! security add-trusted-cert -d -r trustRoot \
+        -k "$HOME/Library/Keychains/login.keychain-db" "$ZOT_DIR/tls/cert.pem" >/dev/null 2>&1; then
+      # SSH sessions commonly have a locked login keychain — fall back to the
+      # system keychain via sudo (prompts once).
+      if ! sudo -n security add-trusted-cert -d -r trustRoot \
+          -k /Library/Keychains/System.keychain "$ZOT_DIR/tls/cert.pem" >/dev/null 2>&1; then
+        warn "could not trust the registry CA automatically — run once:"
+        warn "  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $ZOT_DIR/tls/cert.pem"
+        warn "or unlock the login keychain (security unlock-keychain) and re-provision"
+      else
+        info "registry CA trusted via the system keychain"
+      fi
+    fi
   else
     mkdir -p "$STATE_ROOT/certs"
     cp "$ZOT_DIR/tls/cert.pem" "$STATE_ROOT/certs/openbox-registry-ca.crt"
