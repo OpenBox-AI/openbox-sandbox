@@ -119,15 +119,35 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Verify the downloaded assets against the published sums (only the files
-    // present in this directory are checked).
-    let sums = Command::new("shasum")
-        .args(["-a", "256", "-c", "SHA256SUMS", "--ignore-missing"])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-    if !matches!(sums, Ok(s) if s.success()) {
-        crate::err("SHA256SUMS verification failed — deleting nothing, inspect the output");
+    // Verify ONLY what update downloaded (the obs binary). The user's dir may
+    // hold other assets (stale cache, service binary) whose sums legitimately
+    // differ — they are provision's business, not update's.
+    let sums_txt = std::fs::read_to_string("SHA256SUMS").unwrap_or_default();
+    let expected = sums_txt
+        .lines()
+        .find(|l| l.ends_with(&format!("  {obs_name}")))
+        .and_then(|l| l.split_whitespace().next())
+        .unwrap_or("")
+        .to_owned();
+    if expected.is_empty() {
+        crate::err("SHA256SUMS has no entry for this platform's obs — refusing to replace");
+        return ExitCode::FAILURE;
+    }
+    let actual = Command::new("shasum")
+        .args(["-a", "256", obs_name])
+        .output();
+    let actual = match actual {
+        Ok(o) => String::from_utf8_lossy(&o.stdout)
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_owned(),
+        Err(_) => String::new(),
+    };
+    if actual != expected {
+        crate::err(&format!(
+            "obs checksum mismatch (expected {expected}, got {actual}) — deleting nothing"
+        ));
         return ExitCode::FAILURE;
     }
 
