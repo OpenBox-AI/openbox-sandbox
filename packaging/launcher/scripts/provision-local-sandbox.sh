@@ -79,6 +79,7 @@ port_listening() {
 }
 info() { printf '  ==> %s\n' "$*" >&2; }
 ok()   { printf '  [ok] %s\n' "$*" >&2; }
+err()  { printf '  [err] %s\n' "$*" >&2; }
 warn() { printf '  [warn] %s\n' "$*" >&2; }
 
 # ─── Arg parsing (before binary checks; uninstall needs no bundle) ──────────
@@ -520,7 +521,6 @@ stop_scoped_vm_drivers() {
 info "Teardown (always)"
 stop_pid_file "$SANDBOX_PID_FILE" "sandbox service" "$(basename "$SANDBOX_BIN")" "" "binary-name"
 sweep_matching_listeners "$SANDBOX_PORT" "$(basename "$SANDBOX_BIN")"
-sweep_matching_listeners "$SANDBOX_PORT" "$(basename "$SANDBOX_BIN")"
 stop_pid_file "$GATEWAY_PID_FILE" "gateway" "$GATEWAY_BIN" "$GATEWAY_CONFIG" "gateway-config"
 assert_port_free "$SANDBOX_PORT" "sandbox service"
 assert_port_free "$PORT" "gateway"
@@ -747,7 +747,14 @@ else
     fi
     sleep "$GATEWAY_READY_INTERVAL"
   done
-  [[ "$gateway_ready" == "1" ]] || die "gateway failed to become ready; see $GATEWAY_LOG"
+  if [[ "$gateway_ready" != "1" ]]; then
+    err "gateway failed to become ready after ${GATEWAY_READY_POLLS} polls; log content ($GATEWAY_LOG):"
+    tail -n 20 "$GATEWAY_LOG" 2>/dev/null >&2 || true
+    if ! process_alive "$(cat "$GATEWAY_PID_FILE" 2>/dev/null || echo 0)"; then
+      err "the gateway process is no longer alive — it exited during startup"
+    fi
+    die "gateway failed to become ready"
+  fi
 fi
 
 # ─── 4. Runtime-caller mTLS pair (signed by gateway CA) ─────────────────────
@@ -869,7 +876,11 @@ else
     fi
     sleep "$SERVICE_READY_INTERVAL"
   done
-  [[ "$service_ready" == "1" ]] || die "sandbox service failed to become ready; see $SERVICE_LOG"
+  if [[ "$service_ready" != "1" ]]; then
+    err "sandbox service failed to become ready after ${SERVICE_READY_POLLS} polls; log content ($SERVICE_LOG):"
+    tail -n 20 "$SERVICE_LOG" 2>/dev/null >&2 || true
+    die "sandbox service failed to become ready"
+  fi
   OPENBOX_SANDBOX_CONFIG="$SERVICE_CONFIG" "$SANDBOX_BIN" --check-config >/dev/null 2>&1 || \
     die "running service rejected --check-config"
   ok "running service validates --check-config"
@@ -943,7 +954,8 @@ elif [[ -x "$CLI_BIN" ]]; then
   # sandbox after the CLI gives up, so a create that exits non-zero is not a
   # failure: poll the sandbox by name and reap it either way.
   run_with_timeout "${OPENBOX_WARM_CREATE_TIMEOUT:-300}" \
-    "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >"$warm_log" 2>&1
+    "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >"$warm_log" 2>&1 \
+    || warn "warm sandbox create exited non-zero (CLI timeout or validation failure); see $warm_log — polling by name"
   warmed=0
   # Cold-cache create can take 10-15 min (image pull/extract + rootfs build
   # + microVM boot on small hosts); poll up to 20 min with visible progress.
