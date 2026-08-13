@@ -290,11 +290,18 @@ if [[ -z "$GATEWAY_BIN" || -z "$CLI_BIN" || -z "$DRIVER_BIN" ]] \
     fi
   done
 fi
-if [[ -z "$GATEWAY_BIN" ]]; then
-  GATEWAY_BIN="$BUNDLE_DIR/bin/openshell-gateway"
-  CLI_BIN="$BUNDLE_DIR/bin/openshell"
-  DRIVER_BIN="$BUNDLE_DIR/libexec/openshell-driver-vm"
+# Fall back to the bundle dir for ANY still-missing binary — finding only the
+# gateway in the cwd must not leave the CLI/driver empty.
+if [[ -z "$GATEWAY_BIN" || -z "$CLI_BIN" || -z "$DRIVER_BIN" ]]; then
+  GATEWAY_BIN="${GATEWAY_BIN:-$BUNDLE_DIR/bin/openshell-gateway}"
+  CLI_BIN="${CLI_BIN:-$BUNDLE_DIR/bin/openshell}"
+  DRIVER_BIN="${DRIVER_BIN:-$BUNDLE_DIR/libexec/openshell-driver-vm}"
 fi
+for _bin in "$GATEWAY_BIN" "$CLI_BIN" "$DRIVER_BIN"; do
+  if [[ ! -x "$_bin" ]]; then
+    die "OpenShell binary missing: $_bin — re-run so the launcher can fetch the bundle"
+  fi
+done
 
 VM_DRIVER_STATE_DIR="${OPENSHELL_VM_DRIVER_STATE_DIR:-$HOME/.local/state/openshell-vm-driver-${USER:-user}-${GATEWAY_NAME}}"
 TLS_DIR="${OPENSHELL_LOCAL_TLS_DIR:-$HOME/.local/state/openshell/tls}"
