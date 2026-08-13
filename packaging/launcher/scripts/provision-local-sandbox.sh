@@ -935,7 +935,8 @@ elif [[ -x "$CLI_BIN" ]]; then
   # boot) can exceed that on small hosts. The gateway keeps provisioning the
   # sandbox after the CLI gives up, so a create that exits non-zero is not a
   # failure: poll the sandbox by name and reap it either way.
-  "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >"$warm_log" 2>&1     || warn "warm sandbox create exited non-zero (CLI 300s provisioning limit or validation failure); see $warm_log — polling by name"
+  run_with_timeout "${OPENBOX_WARM_CREATE_TIMEOUT:-300}" \
+    "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >"$warm_log" 2>&1
   warmed=0
   # Cold-cache create can take 10-15 min (image pull/extract + rootfs build
   # + microVM boot on small hosts); poll up to 20 min with visible progress.
@@ -986,7 +987,7 @@ elif [[ -x "$CLI_BIN" ]]; then
   elif [[ ! -s "$warm_log" ]] && [[ "$(grep -ciE 'error|failed|validation' "$warm_log" 2>/dev/null || true)" -eq 0 ]]; then
     warn "warm sandbox did not reach ready in ${elapsed}s; first request may be slow"
   fi
-  "$CLI_BIN" sandbox delete "$warm_name" >/dev/null 2>&1 \
+  run_with_timeout "${OPENBOX_WARM_DELETE_TIMEOUT:-30}" "$CLI_BIN" sandbox delete "$warm_name" >/dev/null 2>&1 \
     || warn "warm sandbox $warm_name delete failed (gateway will reap it)"
 else
   warn "cache warm skipped (no CLI at $CLI_BIN)"
