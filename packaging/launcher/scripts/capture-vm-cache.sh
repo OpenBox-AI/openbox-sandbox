@@ -22,6 +22,9 @@ case "$(uname -s)-$(uname -m)" in
   *) echo "error: unsupported platform"; exit 1 ;;
 esac
 mkdir -p "$OUT"
+# The cache must carry its own image identity — the wizard reads this to set
+# the sandbox image without touching any container runtime.
+printf '%s' "$OPENBOX_SANDBOX_IMAGE" > "$CACHE_DIR/cache-image"
 echo "capturing $CACHE_DIR -> $OUT/$NAME.tar.gz"
 tar -czf "$OUT/$NAME.tar.gz" -C "$(dirname "$CACHE_DIR")" "$(basename "$CACHE_DIR")"
 shasum -a 256 "$OUT/$NAME.tar.gz"

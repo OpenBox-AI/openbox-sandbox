@@ -230,7 +230,18 @@ if [[ "$POLICY_ID" == *allow* && -z "$DEV_TAR" ]] \
    && ! docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
   die "dev policy selected ($POLICY_ID) but no dev image is available — download the dev image tar first: ./obs update --all"
 fi
-if [[ -n "$DEV_TAR" ]] && [[ ! -f "$LAUNCHER_DIR/$VM_CACHE_TAR" && ! -f "$(pwd)/$VM_CACHE_TAR" ]]; then
+_cache_candidate=""
+for _c in "$LAUNCHER_DIR/$VM_CACHE_TAR" "$(pwd)/$VM_CACHE_TAR"; do
+  [[ -f "$_c" ]] && _cache_candidate="$_c" && break
+done
+if [[ -n "$_cache_candidate" ]]; then
+  CACHE_IMAGE_ID="$(tar -xzOf "$_cache_candidate" "images/cache-image" 2>/dev/null | head -1 || true)"
+  if [[ -n "$CACHE_IMAGE_ID" ]]; then
+    SANDBOX_IMAGE="$CACHE_IMAGE_ID"
+    info "prepared cache carries the image identity ($CACHE_IMAGE_ID) — runtime not needed"
+  fi
+fi
+if [[ -n "$DEV_TAR" ]] && [[ -z "$_cache_candidate" ]]; then
   info "dev release detected ($DEV_TAR) and no prepared cache — loading dev sandbox image (runtime fallback)"
   # Container runtime selection (the VM driver speaks the Docker-compatible
   # API: Docker first, then rootless Podman — researched from driver.rs
