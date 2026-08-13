@@ -920,17 +920,34 @@ elif [[ -x "$CLI_BIN" ]]; then
   # Only a sandbox that reached ready (or was reaped after running) is a warm
   # cache; a create that never materialized is surfaced, not swallowed.
   last_phase=""
+  seen_once=0
+  heartbeat=0
   for _ in $(seq 1 "$WARM_POLL_COUNT"); do
     elapsed=$(( $(date +%s) - warm_start ))
     status="$("$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
-      info "warm sandbox $warm_name already completed and reaped (elapsed ${elapsed}s)"
-      warmed=1
-      break
+      # "Not found" only means completed-and-reaped AFTER we saw the sandbox
+      # at least once. Before that it means the gateway has not registered it
+      # yet — keep polling.
+      if [[ "$seen_once" == "1" ]]; then
+        info "warm sandbox $warm_name completed and reaped (elapsed ${elapsed}s)"
+        warmed=1
+        break
+      fi
+      status=""
     }
-    phase="$(printf '%s\n' "$status" | grep -oiE 'provisioning|pulling|booting|ready|running|deleting|error' | head -1)"
-    if [[ -n "$phase" && "$phase" != "$last_phase" ]]; then
-      info "warm progress: phase=$phase elapsed=${elapsed}s"
-      last_phase="$phase"
+    if [[ -n "$status" ]]; then
+      seen_once=1
+      phase="$(printf '%s\n' "$status" | grep -oiE 'provisioning|pulling|booting|starting|creating|ready|running|deleting|error' | head -1)"
+      if [[ -n "$phase" && "$phase" != "$last_phase" ]]; then
+        info "warm progress: phase=$phase elapsed=${elapsed}s"
+        last_phase="$phase"
+        heartbeat=0
+      fi
+    fi
+    # Heartbeat so the user sees liveness even inside one long phase.
+    heartbeat=$((heartbeat + 1))
+    if (( heartbeat % 6 == 0 )); then
+      info "still warming… elapsed=${elapsed}s phase=${last_phase:-waiting-for-gateway}"
     fi
     if printf '%s\n' "$status" | grep -qiE 'ready|running|deleting'; then
       warmed=1
