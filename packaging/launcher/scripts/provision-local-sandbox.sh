@@ -209,6 +209,11 @@ POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
 SANDBOX_IMAGE="${OPENBOX_SANDBOX_IMAGE:-ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e}"
 # v0.1.0-dev releases ship the dev image tar next to obs — auto-detect it.
+# STATE_ROOT/CONFIG_ROOT are hoisted here: the dev-image/runtime section
+# below writes its logs under them, before the full defaults block runs.
+STATE_ROOT="${OPENBOX_STATE_ROOT:-$HOME/.local/state/openbox-sandbox}"
+CONFIG_ROOT="${OPENBOX_CONFIG_ROOT:-$HOME/.config/openbox-sandbox}"
+
 DEV_IMAGE_NAME="${OPENBOX_DEV_IMAGE_NAME:-openbox-sandboxes-dev}"
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) _cache_default="prepared-vm-cache-darwin-arm64.tar.gz" ;;
@@ -272,8 +277,6 @@ if [[ -n "$DEV_TAR" ]]; then
 fi
 PORT="${OPENSHELL_SERVER_PORT:-17670}"
 GATEWAY_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
-STATE_ROOT="${OPENBOX_STATE_ROOT:-$HOME/.local/state/openbox-sandbox}"
-CONFIG_ROOT="${OPENBOX_CONFIG_ROOT:-$HOME/.config/openbox-sandbox}"
 SANDBOX_PORT="${OPENBOX_SANDBOX_PORT:-17443}"
 LOG_LEVEL="${OPENSHELL_LOG_LEVEL:-info}"
 NO_START="${NO_START:-0}"
@@ -1035,6 +1038,10 @@ elif [[ -x "$CLI_BIN" ]]; then
   # The VM driver builds the ext4 rootfs with mkfs.ext4 AND fixes ownership
   # with debugfs (both from e2fsprogs) — checked against the pinned driver's
   # own candidate paths. Fail fast BEFORE the multi-minute image pull.
+  # Declared at top level so the static audit sees them bound before use;
+  # find_e2fs_tools fills them.
+  MKFS=""
+  DEBUGFS=""
   find_e2fs_tools() {
     MKFS=""
     DEBUGFS=""

@@ -1,8 +1,48 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ── Static use-before-define audit (set -u class bugs) ───────────────────────
+# Top-level uses of $VAR must come after a top-level VAR= assignment, unless
+# the use is a ${VAR:-default} / ${VAR:+alt} expansion (safe under set -u) or
+# a builtin. Function bodies are excluded (they execute after the definitions
+# that set their inputs).
+audit_use_before_define() {
+  local provision="$1" line var
+  python3 - "$provision" <<'PY'
+import re, sys
+lines = open(sys.argv[1]).read().split('\n')
+assign, issues, depth, in_func = {}, [], 0, False
+BUILTINS = {'BASH_VERSION','LINENO','HOME','USER','PATH','PWD','RANDOM','SECONDS'}
+for i, l in enumerate(lines, 1):
+    st = l.strip()
+    if depth == 0 and re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*\(\)\s*\{', st):
+        in_func = True
+    if depth == 0 and not in_func and st and not st.startswith('#'):
+        for m in re.finditer(r'^([A-Z][A-Z0-9_]*)=', st):
+            assign.setdefault(m.group(1), i)
+        for m in re.finditer(r'\$\{([A-Z][A-Z0-9_]*)\}(?![:+-])', l):
+            v = m.group(1)
+            if v in BUILTINS: continue
+            if assign.get(v, 10**9) > i:
+                issues.append(f"line {i}: {v} used before top-level assignment")
+        for m in re.finditer(r'\$(?!\{)([A-Z][A-Z0-9_]*)', l):
+            v = m.group(1)
+            if v in BUILTINS: continue
+            if assign.get(v, 10**9) > i:
+                issues.append(f"line {i}: {v} used before top-level assignment")
+    depth += l.count('{'); depth -= l.count('}')
+    if depth == 0 and in_func: in_func = False
+    depth = max(0, depth)
+if issues:
+    print('\n'.join(issues)); sys.exit(1)
+PY
+  [[ $? -eq 0 ]] || { echo "use-before-define audit failed" >&2; exit 1; }
+}
+
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROVISION="$SCRIPT_DIR/provision-local-sandbox.sh"
+audit_use_before_define "$PROVISION"
 TMP="$(mktemp -d)"
 PIDS=()
 cleanup() {
