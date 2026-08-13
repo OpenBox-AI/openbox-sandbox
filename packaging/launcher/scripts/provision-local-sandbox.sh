@@ -344,6 +344,13 @@ assert_port_free() {
       [[ -n "$pid" ]] || continue
       command_line="$(process_command "$pid")"
       warn "listener pid=$pid command=${command_line:-unknown}"
+      case "$command_line" in
+        *homebrew*openshell*|*"brew"*)
+          err "a Homebrew openshell is serving this port — stop it first:"
+          err "  brew services stop openshell   # or: kill $pid"
+          ;;
+        *) err "stop the process above and re-run" ;;
+      esac
     done <<<"$pids"
     die "$label port $port remains occupied after validated PID teardown"
   fi
