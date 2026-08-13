@@ -968,9 +968,15 @@ elif [[ -x "$CLI_BIN" ]]; then
   find_e2fs_tools
   if [[ -z "$MKFS" || -z "$DEBUGFS" ]]; then
     if command -v brew >/dev/null 2>&1; then
-      warn "e2fsprogs (mkfs.ext4 + debugfs) missing — installing via Homebrew (may take a few minutes)"
-      brew install e2fsprogs \
-        || die "brew install e2fsprogs failed — install it manually and re-run"
+      BREW_LOG="${STATE_ROOT}/brew-e2fsprogs.log"
+      mkdir -p "$STATE_ROOT"
+      info "installing e2fsprogs via Homebrew (may take a few minutes; log: $BREW_LOG)"
+      if ! brew install e2fsprogs >"$BREW_LOG" 2>&1; then
+        err "brew install failed — log tail ($BREW_LOG):"
+        tail -n 15 "$BREW_LOG" 2>/dev/null >&2 || true
+        die "brew install e2fsprogs failed — install it manually and re-run"
+      fi
+      ok "e2fsprogs installed (full log: $BREW_LOG)"
       find_e2fs_tools
     fi
     if [[ -z "$MKFS" || -z "$DEBUGFS" ]]; then
