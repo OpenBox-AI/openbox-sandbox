@@ -960,7 +960,7 @@ elif [[ -x "$CLI_BIN" ]]; then
     }
     if [[ -n "$status" ]]; then
       seen_once=1
-      phase="$(printf '%s\n' "$status" | grep -oiE 'provisioning|pulling|booting|starting|creating|ready|running|deleting|error' | head -1)"
+      phase="$(printf '%s\n' "$status" | grep -oiE 'provisioning|pulling|booting|starting|creating|ready|running|deleting|error' | head -1 || true)"
       if [[ -n "$phase" && "$phase" != "$last_phase" ]]; then
         info "warm progress: phase=$phase elapsed=${elapsed}s"
         last_phase="$phase"
