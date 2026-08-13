@@ -183,7 +183,19 @@ else
 fi
 if [[ -n "$DEV_TAR" ]]; then
   info "dev release detected ($DEV_TAR) — loading dev sandbox image"
-  LOAD_OUTPUT="$(gunzip -c "$DEV_TAR" | docker load 2>&1)" || die "dev image load failed"
+  # Pre-flight: a down Docker daemon is the most common failure here.
+  RUNTIME="${CONTAINER_RUNTIME:-docker}"
+  if ! command -v "$RUNTIME" >/dev/null 2>&1; then
+    die "container runtime '$RUNTIME' is not installed — install Docker (or set CONTAINER_RUNTIME)"
+  fi
+  if ! "$RUNTIME" ps >/dev/null 2>&1; then
+    die "container runtime '$RUNTIME' is not running — start Docker Desktop (or your runtime) and re-run"
+  fi
+  LOAD_OUTPUT="$(gunzip -c "$DEV_TAR" | "$RUNTIME" load 2>&1)" || {
+    err "dev image load failed — runtime output:"
+    printf '%s\n' "$LOAD_OUTPUT" >&2
+    die "dev image load failed"
+  }
   # The digest comes from the tar itself via docker load's reported image ID —
   # never from the mutable ':latest' tag, which can drift across machines.
   DEV_DIGEST="$(printf '%s\n' "$LOAD_OUTPUT" | sed -n 's/.*Loaded image ID: sha256:\([a-f0-9]\+\).*/sha256:\1/p' | head -1)"
