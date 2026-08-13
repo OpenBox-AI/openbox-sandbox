@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 if [[ -z "${BASH_VERSION:-}" ]]; then
-  echo "error: this script requires bash — run it as: bash $(basename "$0")" >&2
+  # Re-exec under bash when invoked from another interpreter (zsh, sh, ...).
+  if command -v bash >/dev/null 2>&1; then
+    exec bash "$0" "$@"
+  fi
+  echo "error: bash is required but not found on PATH" >&2
   exit 1
 fi
 # SPDX-License-Identifier: Apache-2.0
