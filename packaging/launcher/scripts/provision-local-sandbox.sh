@@ -1352,7 +1352,7 @@ elif [[ -x "$CLI_BIN" ]]; then
       warn "warm sandbox did not reach ready in ${elapsed}s; first request may be slow"
     fi
   fi
-  kill "$warm_tail_pid" 2>/dev/null || true
+  # (The warm_attempt function kills its own log-tailer.)
   run_with_timeout "${OPENBOX_WARM_DELETE_TIMEOUT:-30}" "$CLI_BIN" sandbox delete "$warm_name" >/dev/null 2>&1 \
     || warn "warm sandbox $warm_name delete failed (gateway will reap it)"
 else
