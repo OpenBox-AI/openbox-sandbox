@@ -80,21 +80,28 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
     } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
         "obs-linux-x86_64"
     } else {
-        "obs"
+        crate::err("no release assets for this platform (darwin-arm64 and linux-x86_64 are published)");
+        return ExitCode::FAILURE;
     };
 
     // Default: only obs + the checksums needed to verify it. --all adds the
-    // service binary, policies, and the dev image tar.
+    // service binary, policies, and the dev image tar — scoped to the release
+    // line so patterns that can't exist on the target tag are never tried.
+    let is_dev = release.contains("-dev");
     let mut patterns: Vec<&str> = vec![obs_name, "SHA256SUMS"];
     if all {
-        patterns.extend([
-            svc,
-            "policy-allow-network-dev.yaml",
-            "policy-deny-network-dev.yaml",
-            if dev_tar.is_empty() { "" } else { dev_tar },
-        ]);
+        patterns.push(svc);
+        patterns.push(if is_dev {
+            "policy-allow-network-dev.yaml"
+        } else {
+            "policy-deny-network-dev.yaml"
+        });
+        if is_dev && !dev_tar.is_empty() {
+            patterns.push(dev_tar);
+        }
     }
     for pattern in patterns.iter().filter(|p| !p.is_empty()) {
+        crate::info(&format!("downloading {pattern}"));
         let status = Command::new(&gh)
             .args([
                 "release",
