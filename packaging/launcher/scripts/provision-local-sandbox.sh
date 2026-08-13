@@ -145,7 +145,13 @@ POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
 SANDBOX_IMAGE="${OPENBOX_SANDBOX_IMAGE:-ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e}"
 # v0.1.0-dev releases ship the dev image tar next to obs — auto-detect it.
-DEV_TAR="${OPENBOX_SANDBOX_DEV_TAR:-openbox-sandbox-dev-darwin-arm64.tar.gz}"
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
+  Linux-x86_64) _dev_tar_default="openbox-sandbox-dev-linux-x86_64.tar.gz" ;;
+  Linux-aarch64|Linux-arm64) _dev_tar_default="openbox-sandbox-dev-linux-aarch64.tar.gz" ;;
+  *) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
+esac
+DEV_TAR="${OPENBOX_SANDBOX_DEV_TAR:-$_dev_tar_default}"
 if [[ -f "$DEV_TAR" ]] || docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
   if [[ -f "$DEV_TAR" ]]; then
     info "dev release detected ($DEV_TAR) — loading dev sandbox image"

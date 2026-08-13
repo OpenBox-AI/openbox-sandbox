@@ -71,6 +71,10 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     };
     let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
         "openbox-sandbox-darwin-arm64"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "openbox-sandbox-linux-x86_64"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "aarch64") {
+        "openbox-sandbox-linux-aarch64"
     } else {
         "openbox-sandbox"
     };
