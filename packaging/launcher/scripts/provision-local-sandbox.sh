@@ -977,6 +977,9 @@ elif [[ -x "$CLI_BIN" ]]; then
   run_with_timeout "${OPENBOX_WARM_CREATE_TIMEOUT:-300}" \
     "$CLI_BIN" sandbox create --name "$warm_name" -- /bin/true >"$warm_log" 2>&1 \
     || warn "warm sandbox create exited non-zero (CLI timeout or validation failure); see $warm_log — polling by name"
+  # Stream the create log live — the layer-by-layer pull progress lands here.
+  tail -n +1 -f "$warm_log" >&2 &
+  warm_tail_pid=$!
   warmed=0
   # Cold-cache create can take 10-15 min (image pull/extract + rootfs build
   # + microVM boot on small hosts); poll up to 20 min with visible progress.
@@ -1028,6 +1031,7 @@ elif [[ -x "$CLI_BIN" ]]; then
   elif [[ ! -s "$warm_log" ]] && [[ "$(grep -ciE 'error|failed|validation' "$warm_log" 2>/dev/null || true)" -eq 0 ]]; then
     warn "warm sandbox did not reach ready in ${elapsed}s; first request may be slow"
   fi
+  kill "$warm_tail_pid" 2>/dev/null || true
   run_with_timeout "${OPENBOX_WARM_DELETE_TIMEOUT:-30}" "$CLI_BIN" sandbox delete "$warm_name" >/dev/null 2>&1 \
     || warn "warm sandbox $warm_name delete failed (gateway will reap it)"
 else
