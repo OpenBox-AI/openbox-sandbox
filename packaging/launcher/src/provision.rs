@@ -80,19 +80,35 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     };
     let policy_name = "policy-deny-network-dev.yaml";
     // Already present — pin it and let the wizard proceed.
-    // The service binary and policy are SEPARATE release assets, NOT inside
-    // the OpenShell bundle dir. Do NOT mark the bundle as ready unless both
-    // actually exist on disk.
-    let ready = bundle_dir.join("bin/openshell-gateway").is_file()
-        && bundle_dir.join("bin/openshell").is_file()
-        && bundle_dir.join("libexec/openshell-driver-vm").is_file()
-        && bundle_dir.join(svc_name).is_file()
-        && bundle_dir.join(policy_name).is_file();
+    // The service binary and policy are SEPARATE release assets that land
+    // either inside the bundle dir (fetched) or in the CWD next to obs
+    // (downloaded release layout). Check both before fetching anything.
+    let bundle_bin = bundle_dir.join("bin");
+    let openshell_ready = bundle_bin.join("openshell-gateway").is_file()
+        && bundle_bin.join("openshell").is_file()
+        && bundle_dir.join("libexec/openshell-driver-vm").is_file();
+    let svc_bin = if bundle_dir.join(svc_name).is_file() {
+        bundle_dir.join(svc_name)
+    } else if cwd.join(svc_name).is_file() {
+        cwd.join(svc_name)
+    } else {
+        bundle_dir.join(svc_name)
+    };
+    let policy_file = if cwd.join("policy-allow-network-dev.yaml").is_file() {
+        cwd.join("policy-allow-network-dev.yaml")
+    } else if cwd.join(policy_name).is_file() {
+        cwd.join(policy_name)
+    } else if bundle_dir.join(policy_name).is_file() {
+        bundle_dir.join(policy_name)
+    } else {
+        bundle_dir.join(policy_name)
+    };
+    let ready = openshell_ready && svc_bin.is_file() && policy_file.is_file();
     if ready {
         unsafe {
             std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir);
-            std::env::set_var("OPENBOX_SANDBOX_BIN", &bundle_dir.join(svc_name));
-            std::env::set_var("OPENBOX_POLICY_FILE", &bundle_dir.join(policy_name));
+            std::env::set_var("OPENBOX_SANDBOX_BIN", &svc_bin);
+            std::env::set_var("OPENBOX_POLICY_FILE", &policy_file);
         }
         return Ok(());
     }
@@ -119,7 +135,11 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     // The sandbox service binary must also be available to the wizard. In a
     // standalone release it ships as a per-arch release asset alongside the
     // split bundle dirs; fetch it into the bundle dir when missing.
-    let svc_bin = bundle_dir.join(svc_name);
+    let svc_bin = if cwd.join(svc_name).is_file() {
+        cwd.join(svc_name)
+    } else {
+        bundle_dir.join(svc_name)
+    };
     if !svc_bin.is_file() {
         if let Some(gh) = which_gh() {
             info(&format!("sandbox service missing — fetching {svc_name}"));
