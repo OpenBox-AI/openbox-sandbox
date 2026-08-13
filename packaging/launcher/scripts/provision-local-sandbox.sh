@@ -445,6 +445,21 @@ sweep_matching_listeners() {
   done <<<"$pids"
 }
 
+# Portable timeout: run "$@" for at most $1 seconds. macOS lacks the GNU
+# `timeout` binary; a wedged gateway must never hang the wizard silently.
+run_with_timeout() {
+  local secs="$1"; shift
+  "$@" &
+  local pid=$!
+  ( sleep "$secs"; kill -9 "$pid" 2>/dev/null ) &
+  local killer=$!
+  wait "$pid" 2>/dev/null
+  local rc=$?
+  kill "$killer" 2>/dev/null
+  wait "$killer" 2>/dev/null
+  return "$rc"
+}
+
 assert_port_free() {
   local port="$1" label="$2" pids pid command_line
   if command -v lsof >/dev/null 2>&1; then
@@ -931,7 +946,7 @@ elif [[ -x "$CLI_BIN" ]]; then
   heartbeat=0
   for _ in $(seq 1 "$WARM_POLL_COUNT"); do
     elapsed=$(( $(date +%s) - warm_start ))
-    status="$("$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
+    status="$(run_with_timeout "${OPENBOX_WARM_GET_TIMEOUT:-10}" "$CLI_BIN" sandbox get "$warm_name" 2>/dev/null)" || {
       # "Not found" only means completed-and-reaped AFTER we saw the sandbox
       # at least once. Before that it means the gateway has not registered it
       # yet — keep polling.
