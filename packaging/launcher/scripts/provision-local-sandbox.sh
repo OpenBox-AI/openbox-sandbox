@@ -194,14 +194,43 @@ if [[ "$POLICY_ID" == *allow* && -z "$DEV_TAR" ]] \
 fi
 if [[ -n "$DEV_TAR" ]]; then
   info "dev release detected ($DEV_TAR) — loading dev sandbox image"
-  # Pre-flight: a down Docker daemon is the most common failure here.
-  RUNTIME="${CONTAINER_RUNTIME:-docker}"
-  if ! command -v "$RUNTIME" >/dev/null 2>&1; then
-    die "container runtime '$RUNTIME' is not installed — install Docker (or set CONTAINER_RUNTIME)"
+  # Container runtime selection (the VM driver speaks the Docker-compatible
+  # API: Docker first, then rootless Podman — researched from driver.rs
+  # connect_local_container_engine). Explicit CONTAINER_RUNTIME wins.
+  resolve_runtime() {
+    RUNTIME="${CONTAINER_RUNTIME:-}"
+    if [[ -n "$RUNTIME" ]]; then
+      command -v "$RUNTIME" >/dev/null 2>&1 && return 0
+      return 1
+    fi
+    if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then
+      RUNTIME="docker"
+      return 0
+    fi
+    if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then
+      RUNTIME="podman"
+      return 0
+    fi
+    return 1
+  }
+  if ! resolve_runtime; then
+    if command -v brew >/dev/null 2>&1 && [[ "$(uname -s)" == "Darwin" ]]; then
+      RUNTIME_LOG="${STATE_ROOT}/brew-podman.log"
+      mkdir -p "$STATE_ROOT"
+      info "no usable container runtime — installing Podman via Homebrew (log: $RUNTIME_LOG)"
+      brew install podman >"$RUNTIME_LOG" 2>&1 \
+        || { tail -n 15 "$RUNTIME_LOG" >&2 || true; die "podman install failed — see $RUNTIME_LOG"; }
+      info "initializing the Podman machine (first start may take a few minutes)"
+      podman machine init >/dev/null 2>&1 || true
+      podman machine start >/dev/null 2>&1 \
+        || die "podman machine start failed — run 'podman machine init && podman machine start' manually"
+      ok "podman installed and running"
+      RUNTIME="podman"
+    else
+      die "no container runtime available — install Docker or Podman and re-run"
+    fi
   fi
-  if ! "$RUNTIME" ps >/dev/null 2>&1; then
-    die "container runtime '$RUNTIME' is not running — start Docker Desktop (or your runtime) and re-run"
-  fi
+  info "container runtime: $RUNTIME"
   LOAD_OUTPUT="$(gunzip -c "$DEV_TAR" | "$RUNTIME" load 2>&1)" || {
     err "dev image load failed — runtime output:"
     printf '%s\n' "$LOAD_OUTPUT" >&2
@@ -951,14 +980,10 @@ if [[ "${OPENBOX_WARM_CACHE:-1}" == "0" ]]; then
 elif [[ "$NO_START" == "1" ]]; then
   info "cache warm skipped (NO_START=1; stack not started)"
 elif [[ -x "$CLI_BIN" ]]; then
-  # The VM driver pulls sandbox images through a container runtime.
-  # Fail fast with a clear error when no runtime is available.
-  RUNTIME="${CONTAINER_RUNTIME:-docker}"
-  if ! command -v "$RUNTIME" >/dev/null 2>&1; then
-    die "container runtime '$RUNTIME' is required for the sandbox image pull — install Docker or set CONTAINER_RUNTIME (e.g. CONTAINER_RUNTIME=podman)"
-  fi
-  if ! "$RUNTIME" ps >/dev/null 2>&1; then
-    die "container runtime '$RUNTIME' is installed but not running — start Docker Desktop (or your runtime) before provisioning"
+  # The VM driver pulls sandbox images through a container runtime —
+  # reuse the same docker/podman resolution as the dev-image load.
+  if ! resolve_runtime; then
+    die "no container runtime available — install Docker or Podman and re-run"
   fi
   # The VM driver builds the ext4 rootfs with mkfs.ext4 AND fixes ownership
   # with debugfs (both from e2fsprogs) — checked against the pinned driver's
