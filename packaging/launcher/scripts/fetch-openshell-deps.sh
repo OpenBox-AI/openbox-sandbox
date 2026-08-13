@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+if [[ -z "${BASH_VERSION:-}" ]]; then
+  echo "error: this script requires bash — run it as: bash $(basename "$0")" >&2
+  exit 1
+fi
 # Fetch the pinned OpenShell release into a bundle directory so the launcher can
 # resolve it via $OPENBOX_BUNDLE_DIR. This is the supply-chain-safe alternative
 # to `brew install openshell` (which tracks latest and can drift off the pin).

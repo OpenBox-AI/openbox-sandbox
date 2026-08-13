@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+if [[ -z "${BASH_VERSION:-}" ]]; then
+  echo "error: this script requires bash — run it as: bash $(basename "$0")" >&2
+  exit 1
+fi
 # SPDX-License-Identifier: Apache-2.0
 #
 # provision-local-sandbox.sh — atomic local dogfood sandbox stack.
