@@ -99,11 +99,105 @@ ok()   { printf '  [ok] %s\n' "$*" >&2; }
 err()  { printf '  [err] %s\n' "$*" >&2; }
 warn() { printf '  [warn] %s\n' "$*" >&2; }
 
+channel_tag() {
+  case "$RELEASE_LINE" in
+    dev) printf '%s\n' "v0.1.0-dev" ;;
+    *)   printf '%s\n' "v0.1.0" ;;
+  esac
+}
+
+resolve_sums_file() {
+  local candidate tag
+  for candidate in "$LAUNCHER_DIR/SHA256SUMS" "$(pwd)/SHA256SUMS"; do
+    if [[ -f "$candidate" ]]; then
+      SUMS_FILE="$candidate"
+      return 0
+    fi
+  done
+  SUMS_FILE=""
+  command -v gh >/dev/null 2>&1 || return 1
+  tag="$(channel_tag)"
+  if gh release download "$tag" --repo OpenBox-AI/openbox-sandbox \
+      --pattern SHA256SUMS --clobber >/dev/null 2>&1; then
+    SUMS_FILE="$(pwd)/SHA256SUMS"
+    return 0
+  fi
+  return 1
+}
+
+expect_sha() {
+  local name="$1"
+  resolve_sums_file >/dev/null 2>&1 || true
+  [[ -n "$SUMS_FILE" && -f "$SUMS_FILE" ]] || return 0
+  awk -v n="$name" '$2 == n { print $1; exit }' "$SUMS_FILE" 2>/dev/null || true
+}
+
+verify_asset() {
+  local path="$1" name="$2" expected actual tag asset_dir downloaded_sha was_executable
+  VERIFY_ASSET_ERROR=""
+  if [[ -z "$path" || ! -f "$path" ]]; then
+    VERIFY_ASSET_ERROR="$name is missing at ${path:-<empty path>}"
+    return 1
+  fi
+
+  resolve_sums_file >/dev/null 2>&1 || true
+  expected=""
+  if [[ -n "$SUMS_FILE" && -f "$SUMS_FILE" ]]; then
+    expected="$(awk -v n="$name" '$2 == n { print $1; exit }' "$SUMS_FILE" 2>/dev/null || true)"
+  fi
+  if [[ -z "$expected" ]]; then
+    warn "no published checksum for $name — using local copy"
+    return 0
+  fi
+
+  actual="$(sha256_hex "$path")"
+  [[ "$actual" == "$expected" ]] && return 0
+
+  VERIFY_ASSET_ERROR="sha256 mismatch for $name: expected $expected, got $actual"
+  warn "$VERIFY_ASSET_ERROR — removing and re-downloading"
+  was_executable=0
+  [[ -x "$path" ]] && was_executable=1
+  rm -f "$path"
+  if ! command -v gh >/dev/null 2>&1; then
+    VERIFY_ASSET_ERROR="$VERIFY_ASSET_ERROR; gh is unavailable for re-download"
+    return 1
+  fi
+
+  tag="$(channel_tag)"
+  asset_dir="$(cd "$(dirname "$path")" && pwd)"
+  if ! gh release download "$tag" --repo OpenBox-AI/openbox-sandbox \
+      --pattern "$name" --clobber --dir "$asset_dir" >/dev/null 2>&1; then
+    VERIFY_ASSET_ERROR="$VERIFY_ASSET_ERROR; re-download from $tag failed"
+    return 1
+  fi
+  if [[ ! -f "$path" && -f "$asset_dir/$name" ]]; then
+    mv "$asset_dir/$name" "$path"
+  fi
+  if [[ ! -f "$path" ]]; then
+    VERIFY_ASSET_ERROR="$VERIFY_ASSET_ERROR; re-download from $tag did not produce $path"
+    return 1
+  fi
+  if [[ "$was_executable" == "1" ]]; then
+    chmod +x "$path" 2>/dev/null || true
+  fi
+
+  downloaded_sha="$(sha256_hex "$path")"
+  if [[ "$downloaded_sha" != "$expected" ]]; then
+    warn "sha256 mismatch for re-downloaded $name: expected $expected, got $downloaded_sha"
+    rm -f "$path"
+    VERIFY_ASSET_ERROR="sha256 mismatch for re-downloaded $name: expected $expected, got $downloaded_sha"
+    return 1
+  fi
+  ok "$name checksum verified after re-download ($expected)"
+  return 0
+}
+
 # ─── Arg parsing (before binary checks; uninstall needs no bundle) ──────────
 ARG_UNINSTALL=0
 ARG_CLEAN_RERUN=0
 ARG_KEEP_PKI=0
 ARG_PURGE_CACHE="${OPENBOX_PURGE_CACHE:-0}"
+VERIFY_PROVISION_ASSETS=1
 for arg in "$@"; do
   case "$arg" in
     --uninstall)     ARG_UNINSTALL=1 ;;
@@ -121,9 +215,17 @@ fi
 if [[ "$ARG_PURGE_CACHE" == "1" && "$ARG_UNINSTALL" != "1" && "$ARG_CLEAN_RERUN" != "1" ]]; then
   die "--purge-cache requires --uninstall or --clean-rerun"
 fi
+if [[ "$ARG_UNINSTALL" == "1" || "${OPENBOX_TEARDOWN_ONLY:-0}" == "1" ]]; then
+  VERIFY_PROVISION_ASSETS=0
+fi
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHER_DIR="$SCRIPT_DIR"
+RELEASE_LINE="${OPENBOX_RELEASE_LINE:-base}"
+SUMS_FILE=""
+VERIFY_ASSET_ERROR=""
+info "release line: $RELEASE_LINE (the launcher passes the binary's channel; --dev/--base override)"
 # Standalone (embedded-script) mode has no source checkout: operators must
 # provide the policy path explicitly; PROJECT_ROOT then only supplies the
 # checked-in defaults for source-tree runs.
@@ -163,18 +265,19 @@ else
     break
   done
 fi
+if [[ "$VERIFY_PROVISION_ASSETS" == "1" ]] \
+    && ! verify_asset "$SANDBOX_BIN" "$(basename "$SANDBOX_BIN")" \
+    && [[ "$VERIFY_ASSET_ERROR" != *" is missing at "* ]]; then
+  die "required service binary verification failed: $VERIFY_ASSET_ERROR"
+fi
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
   Linux-x86_64) _dev_tar_default="openbox-sandbox-dev-linux-x86_64.tar.gz" ;;
   Linux-aarch64|Linux-arm64) _dev_tar_default="openbox-sandbox-dev-linux-aarch64.tar.gz" ;;
   *) _dev_tar_default="openbox-sandbox-dev-darwin-arm64.tar.gz" ;;
 esac
-LAUNCHER_DIR="$(cd "$(dirname "$0")" && pwd)"
-# Release line: explicit env/flag wins, else the dev image tar decides, else
-# base. The POLICY FILES are templates — the line selects the default template,
-# never the other way around.
-RELEASE_LINE="${OPENBOX_RELEASE_LINE:-base}"
-info "release line: $RELEASE_LINE (the launcher passes the binary's channel; --dev/--base override)"
+# Release line: explicit env/flag wins. The POLICY FILES are templates — the
+# line selects the default template, never the other way around.
 
 # Policy template resolution: an explicit policy file always wins; otherwise
 # the channel selects the default template (dev -> allow, base -> deny).
@@ -205,6 +308,10 @@ else
   fi
   info "policy template: $POLICY_FILE (id $POLICY_ID)"
 fi
+if [[ "$VERIFY_PROVISION_ASSETS" == "1" ]]; then
+  verify_asset "$POLICY_FILE" "$(basename "$POLICY_FILE")" \
+    || die "required policy verification failed: $VERIFY_ASSET_ERROR"
+fi
 POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-darwin-dev-1}"
 SANDBOX_IMAGE="${OPENBOX_SANDBOX_IMAGE:-ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e}"
@@ -232,6 +339,10 @@ else
     break
   done
 fi
+if [[ "$VERIFY_PROVISION_ASSETS" == "1" && -n "$DEV_TAR" ]]; then
+  verify_asset "$DEV_TAR" "$(basename "$DEV_TAR")" \
+    || die "required dev tar verification failed: $VERIFY_ASSET_ERROR"
+fi
 if [[ "$POLICY_ID" == *allow* && -z "$DEV_TAR" ]] \
    && ! docker image inspect openbox-sandboxes-dev:latest >/dev/null 2>&1; then
   die "dev policy selected ($POLICY_ID) but no dev image is available — download the dev image tar first: ./obs update --all"
@@ -241,22 +352,21 @@ fi
 # after teardown (its lifetime spans the warm).
 ZOT_BIN="${OPENBOX_ZOT_BIN:-}"
 _oci_layout="${OPENBOX_OCI_LAYOUT:-}"
+_oci_default=""
+_zot_default=""
+ZOT_CHECKSUM_NAME=""
 ZOT_PID=""
+case "$(uname -s)-$(uname -m)" in
+  Darwin-arm64)
+    _oci_default="openbox-sandbox-dev-darwin-arm64-oci.tar.gz"
+    _zot_default="zot-darwin-arm64"
+    ;;
+  Linux-x86_64)
+    _oci_default="openbox-sandbox-dev-linux-x86_64-oci.tar.gz"
+    _zot_default="zot-linux-x86_64"
+    ;;
+esac
 if [[ "$USE_VM_CACHE" == "1" && ( -z "$ZOT_BIN" || -z "$_oci_layout" ) ]]; then
-  case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64)
-      _oci_default="openbox-sandbox-dev-darwin-arm64-oci.tar.gz"
-      _zot_default="zot-darwin-arm64"
-      ;;
-    Linux-x86_64)
-      _oci_default="openbox-sandbox-dev-linux-x86_64-oci.tar.gz"
-      _zot_default="zot-linux-x86_64"
-      ;;
-    *)
-      _oci_default=""
-      _zot_default=""
-      ;;
-  esac
   if [[ -z "$_oci_layout" ]]; then
     for _c in "$LAUNCHER_DIR/$_oci_default" "$(pwd)/$_oci_default"; do
       [[ -f "$_c" ]] && _oci_layout="$_c" && break
@@ -268,12 +378,31 @@ if [[ "$USE_VM_CACHE" == "1" && ( -z "$ZOT_BIN" || -z "$_oci_layout" ) ]]; then
       # Release assets download without the exec bit — accept any regular
       # file and fix the mode. Bare "zot" remains a compatibility fallback.
       if [[ -f "$_z" ]]; then
-        chmod +x "$_z" 2>/dev/null || true
         ZOT_BIN="$_z"
         break
       fi
     done
   fi
+fi
+if [[ "$VERIFY_PROVISION_ASSETS" == "1" && -n "$_oci_layout" ]]; then
+  if ! verify_asset "$_oci_layout" "$(basename "$_oci_layout")"; then
+    warn "OCI layout verification failed ($VERIFY_ASSET_ERROR) — falling back to the container runtime path"
+    _oci_layout=""
+  fi
+fi
+if [[ "$VERIFY_PROVISION_ASSETS" == "1" && -n "$ZOT_BIN" ]]; then
+  ZOT_CHECKSUM_NAME="$(basename "$ZOT_BIN")"
+  if [[ -z "$(expect_sha "$ZOT_CHECKSUM_NAME")" && -n "$_zot_default" \
+      && "$ZOT_CHECKSUM_NAME" != "$_zot_default" && -n "$(expect_sha "$_zot_default")" ]]; then
+    ZOT_CHECKSUM_NAME="$_zot_default"
+  fi
+  if ! verify_asset "$ZOT_BIN" "$ZOT_CHECKSUM_NAME"; then
+    warn "zot verification failed ($VERIFY_ASSET_ERROR) — falling back to the container runtime path"
+    ZOT_BIN=""
+  fi
+fi
+if [[ -n "$ZOT_BIN" ]]; then
+  chmod +x "$ZOT_BIN" 2>/dev/null || true
 fi
 
 if [[ -n "$DEV_TAR" ]] && [[ -z "$ZOT_BIN" || -z "$_oci_layout" ]] && [[ -z "${OPENBOX_SANDBOX_IMAGE:-}" ]]; then
@@ -1187,40 +1316,12 @@ try_shipped_vm_cache() {
   done
   [[ -f "$VM_CACHE_TAR" ]] || return 1
 
-  # Verify the local tar against the channel's published checksum: match ->
-  # use it; mismatch -> remove + re-download; either failing -> runtime path.
-  case "$RELEASE_LINE" in
-    dev) CHANNEL_TAG="v0.1.0-dev" ;;
-    *)   CHANNEL_TAG="v0.1.0" ;;
-  esac
-  SUMS_FILE=""
-  for _s in "$LAUNCHER_DIR/SHA256SUMS" "$(pwd)/SHA256SUMS"; do
-    [[ -f "$_s" ]] && SUMS_FILE="$_s" && break
-  done
-  if [[ -z "$SUMS_FILE" ]] && command -v gh >/dev/null 2>&1; then
-    gh release download "$CHANNEL_TAG" --repo OpenBox-AI/openbox-sandbox \
-      --pattern SHA256SUMS --clobber >/dev/null 2>&1 \
-      && SUMS_FILE="$(pwd)/SHA256SUMS"
+  # Verify through the same channel-locked path as every other release asset.
+  # A mismatch is removed and re-downloaded; any failure takes the runtime path.
+  if ! verify_asset "$VM_CACHE_TAR" "$(basename "$VM_CACHE_TAR")"; then
+    warn "prepared cache verification failed ($VERIFY_ASSET_ERROR) — falling back to the runtime path"
+    return 1
   fi
-  if [[ -n "$SUMS_FILE" ]]; then
-    CACHE_NAME="$(basename "$VM_CACHE_TAR")"
-    EXPECTED_SHA="$(awk -v n="$CACHE_NAME" '$2 == n { print $1; exit }' "$SUMS_FILE" 2>/dev/null || true)"
-    if [[ -n "$EXPECTED_SHA" ]]; then
-      LOCAL_SHA="$(sha256_hex "$VM_CACHE_TAR")"
-      if [[ "$LOCAL_SHA" != "$EXPECTED_SHA" ]]; then
-        warn "local prepared cache sha mismatch (expected $EXPECTED_SHA, got $LOCAL_SHA) — removing and re-downloading"
-        rm -f "$VM_CACHE_TAR"
-        if command -v gh >/dev/null 2>&1; then
-          gh release download "$CHANNEL_TAG" --repo OpenBox-AI/openbox-sandbox \
-            --pattern "$CACHE_NAME" --clobber >/dev/null 2>&1 \
-            || { warn "cache re-download failed — falling back to the runtime path"; return 1; }
-        else
-          return 1
-        fi
-      fi
-    fi
-  fi
-  [[ -f "$VM_CACHE_TAR" ]] || { warn "prepared cache unavailable — falling back to the runtime path"; return 1; }
 
   info "prepared VM cache found ($VM_CACHE_TAR) — extracting into $VM_DRIVER_STATE_DIR/images"
   mkdir -p "$VM_DRIVER_STATE_DIR/images"
