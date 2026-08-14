@@ -243,9 +243,18 @@ ZOT_BIN="${OPENBOX_ZOT_BIN:-}"
 _oci_layout="${OPENBOX_OCI_LAYOUT:-}"
 if [[ "$USE_VM_CACHE" == "1" && ( -z "$ZOT_BIN" || -z "$_oci_layout" ) ]]; then
   case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64) _oci_default="openbox-sandbox-dev-darwin-arm64-oci.tar.gz" ;;
-    Linux-x86_64) _oci_default="openbox-sandbox-dev-linux-x86_64-oci.tar.gz" ;;
-    *) _oci_default="" ;;
+    Darwin-arm64)
+      _oci_default="openbox-sandbox-dev-darwin-arm64-oci.tar.gz"
+      _zot_default="zot-darwin-arm64"
+      ;;
+    Linux-x86_64)
+      _oci_default="openbox-sandbox-dev-linux-x86_64-oci.tar.gz"
+      _zot_default="zot-linux-x86_64"
+      ;;
+    *)
+      _oci_default=""
+      _zot_default=""
+      ;;
   esac
   if [[ -z "$_oci_layout" ]]; then
     for _c in "$LAUNCHER_DIR/$_oci_default" "$(pwd)/$_oci_default"; do
@@ -253,9 +262,10 @@ if [[ "$USE_VM_CACHE" == "1" && ( -z "$ZOT_BIN" || -z "$_oci_layout" ) ]]; then
     done
   fi
   if [[ -z "$ZOT_BIN" ]]; then
-    for _z in "$LAUNCHER_DIR/zot" "$(pwd)/zot"; do
-      # The launcher downloads zot without the exec bit — accept any regular
-      # file and fix the mode.
+    for _z in "$LAUNCHER_DIR/$_zot_default" "$(pwd)/$_zot_default" \
+      "$LAUNCHER_DIR/zot" "$(pwd)/zot"; do
+      # Release assets download without the exec bit — accept any regular
+      # file and fix the mode. Bare "zot" remains a compatibility fallback.
       if [[ -f "$_z" ]]; then
         chmod +x "$_z" 2>/dev/null || true
         ZOT_BIN="$_z"
@@ -314,7 +324,10 @@ if [[ -n "$DEV_TAR" ]] && [[ -z "$ZOT_BIN" || -z "$_oci_layout" ]] && [[ -z "${O
     die "the image tar may be malformed or the runtime refused the load"
   fi
   info "dev image digest: $DEV_DIGEST"
-  SANDBOX_IMAGE="$DEV_IMAGE_NAME@$DEV_DIGEST"
+  # A docker-save archive has no RepoDigest, so inspecting name@image-ID fails
+  # and makes the VM driver fall back to Docker Hub. Resolve the loaded image
+  # by its local tag; the driver still keys the prepared cache by its image ID.
+  SANDBOX_IMAGE="$DEV_IMAGE_NAME:latest"
 fi
 PORT="${OPENSHELL_SERVER_PORT:-17670}"
 GATEWAY_NAME="${OPENSHELL_GATEWAY_NAME:-openshell}"
@@ -673,12 +686,12 @@ state_clean() {
   rm -rf -- "$STATE_ROOT"
   rm -rf -- "$CONFIG_ROOT"
   rm -rf -- "$GATEWAY_META_DIR"
-  if [[ "$ARG_UNINSTALL" == "1" ]]; then
-    # Uninstall = full removal, including the prepared image cache.
+  if [[ "$ARG_UNINSTALL" == "1" || "$ARG_PURGE_CACHE" == "1" ]]; then
+    # Uninstall and explicit --purge-cache remove prepared images too.
     rm -rf -- "$VM_DRIVER_STATE_DIR"
   else
-    # --clean-rerun preserves the prepared image cache — the cache is only
-    # removed by the user; the driver's identity check ignores stale entries.
+    # A normal --clean-rerun preserves the prepared image cache; the driver's
+    # identity check ignores stale entries.
     find "$VM_DRIVER_STATE_DIR" -mindepth 1 -maxdepth 1 ! -name images -exec rm -rf {} + 2>/dev/null || true
   fi
   if [[ "$ARG_KEEP_PKI" == "1" ]]; then
@@ -711,7 +724,10 @@ if [[ "$(uname -s)" == "Linux" ]]; then
     die "/dev/kvm is not accessible — KVM is required for microVMs on Linux. Fix: usermod -aG kvm $USER, log out and back in, or check your udev rules"
   fi
   # glibc: the release binaries are glibc-built (docs reject musl/Alpine).
-  if ! ldd --version 2>/dev/null | grep -qi glibc; then
+  # Amazon Linux identifies it as "GNU libc" in ldd output, so prefer the
+  # portable getconf query and retain ldd as a fallback.
+  if ! getconf GNU_LIBC_VERSION 2>/dev/null | grep -qi '^glibc ' \
+     && ! ldd --version 2>/dev/null | grep -Eqi 'glibc|GNU libc'; then
     die "glibc 2.28+ is required — this system appears to be musl-based (Alpine or similar), which the release binaries do not support"
   fi
   info "Linux pre-flight ok (/dev/kvm readable, glibc present)"
@@ -1221,16 +1237,19 @@ elif [[ -x "$CLI_BIN" ]]; then
     MKFS=""
     DEBUGFS=""
     for _tool in mkfs.ext4 mke2fs debugfs; do
-      for _root in "" /opt/homebrew/opt/e2fsprogs /usr/local/opt/e2fsprogs \
-                   /usr/sbin /usr/local/sbin /sbin; do
-        for _sub in sbin bin; do
-          _cand="${_root:+$_root/$_sub/}$_tool"
-          [[ -x "$_cand" ]] || continue
-          [[ "$_tool" != "debugfs" ]] && MKFS="$_cand"
-          [[ "$_tool" == "debugfs" ]] && DEBUGFS="$_cand"
-          break 2
+      _cand="$(command -v "$_tool" 2>/dev/null || true)"
+      if [[ -z "$_cand" ]]; then
+        for _root in /opt/homebrew/opt/e2fsprogs /usr/local/opt/e2fsprogs; do
+          for _sub in sbin bin; do
+            [[ -x "$_root/$_sub/$_tool" ]] || continue
+            _cand="$_root/$_sub/$_tool"
+            break 2
+          done
         done
-      done
+      fi
+      [[ -n "$_cand" ]] || continue
+      [[ "$_tool" != "debugfs" ]] && MKFS="$_cand"
+      [[ "$_tool" == "debugfs" ]] && DEBUGFS="$_cand"
     done
   }
   find_e2fs_tools

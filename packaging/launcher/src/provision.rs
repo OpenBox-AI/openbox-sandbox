@@ -86,6 +86,13 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     } else {
         ""
     };
+    let zot = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "zot-darwin-arm64"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "zot-linux-x86_64"
+    } else {
+        ""
+    };
     let dev_channel = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
         Ok("dev") => true,
         Ok(_) => false,
@@ -129,9 +136,11 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
             info(&format!("{oci_layout} missing — fetching from v0.1.0-dev"));
             let _ = gh_download_pattern(&gh, "v0.1.0-dev", oci_layout);
         }
-        if !cwd.join("zot").is_file() {
-            info("zot (local image registry) missing — fetching from v0.1.0-dev");
-            let _ = gh_download_pattern(&gh, "v0.1.0-dev", "zot");
+        if !zot.is_empty() && !cwd.join(zot).is_file() {
+            info(&format!(
+                "{zot} (local image registry) missing — fetching from v0.1.0-dev"
+            ));
+            let _ = gh_download_pattern(&gh, "v0.1.0-dev", zot);
         }
     } else {
         if !cwd.join("policy-deny-network-dev.yaml").is_file() {

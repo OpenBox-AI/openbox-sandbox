@@ -917,6 +917,7 @@ mod tests {
         assert_eq!(
             parse_command(&args(&["provision", "--clean-rerun", "--keep-pki"])),
             Ok(CommandLine::Provision {
+                overrides: Vec::new(),
                 clean_rerun: true,
                 keep_pki: true,
             })
