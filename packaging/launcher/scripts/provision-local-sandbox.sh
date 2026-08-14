@@ -241,6 +241,7 @@ fi
 # after teardown (its lifetime spans the warm).
 ZOT_BIN="${OPENBOX_ZOT_BIN:-}"
 _oci_layout="${OPENBOX_OCI_LAYOUT:-}"
+ZOT_PID=""
 if [[ "$USE_VM_CACHE" == "1" && ( -z "$ZOT_BIN" || -z "$_oci_layout" ) ]]; then
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64)
@@ -788,18 +789,34 @@ if [[ -n "$_oci_layout" && -n "$ZOT_BIN" ]]; then
     -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" >/dev/null 2>&1 \
     || die "failed to generate the registry TLS certificate"
   if [[ "$(uname -s)" == "Darwin" ]]; then
-    if ! security add-trusted-cert -d -r trustRoot \
-        -k "$HOME/Library/Keychains/login.keychain-db" "$ZOT_DIR/tls/cert.pem" >/dev/null 2>&1; then
-      # SSH sessions commonly have a locked login keychain — fall back to the
-      # system keychain via sudo (prompts once).
-      if ! sudo -n security add-trusted-cert -d -r trustRoot \
+    # Trust the wizard CA so the driver's TLS verification passes. Order:
+    #   1. login keychain (silent; works in GUI sessions)
+    #   2. system keychain via sudo — INTERACTIVE prompt (the wizard runs in
+    #      the user's terminal, so sudo can ask for the password; SSH sessions
+    #      with a locked login keychain land here)
+    #   3. explicit die with the exact one-time command
+    _trusted=0
+    if security verify-cert -c "$ZOT_DIR/tls/cert.pem" -p ssl >/dev/null 2>&1 \
+       || security add-trusted-cert -d -r trustRoot \
+          -k "$HOME/Library/Keychains/login.keychain-db" "$ZOT_DIR/tls/cert.pem" >/dev/null 2>&1; then
+      _trusted=1
+    fi
+    if [[ "$_trusted" != "1" ]]; then
+      info "registry CA needs system trust — prompting for sudo (this unlocks the local image registry)"
+      if sudo -p "sudo password required to trust the local image registry CA: " \
+          security add-trusted-cert -d -r trustRoot \
           -k /Library/Keychains/System.keychain "$ZOT_DIR/tls/cert.pem" >/dev/null 2>&1; then
-        warn "could not trust the registry CA automatically — run once:"
-        warn "  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $ZOT_DIR/tls/cert.pem"
-        warn "or unlock the login keychain (security unlock-keychain) and re-provision"
-      else
         info "registry CA trusted via the system keychain"
+        _trusted=1
       fi
+    fi
+    if [[ "$_trusted" != "1" ]]; then
+      err "the registry CA could not be trusted"
+      err "run once, then re-provision:"
+      err "  sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain $ZOT_DIR/tls/cert.pem"
+      err "or unlock the login keychain: security unlock-keychain"
+      kill "$ZOT_PID" 2>/dev/null || true
+      die "local image registry certificate is untrusted"
     fi
   else
     mkdir -p "$STATE_ROOT/certs"
