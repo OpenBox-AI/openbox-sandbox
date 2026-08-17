@@ -109,6 +109,9 @@ if [[ "$ARG_UNINSTALL" == 1 || "${OPENBOX_TEARDOWN_ONLY:-0}" == 1 ]]; then ok "n
 
 [[ -x "$SANDBOX_BIN" ]] || die "openbox-sandbox service not found at $SANDBOX_BIN"
 [[ -f "$POLICY_FILE" ]] || die "channel policy not found at $POLICY_FILE"
+if [[ "$(uname -s)" == Darwin ]] && [[ ! -x /usr/bin/sandbox-exec ]]; then
+  die "/usr/bin/sandbox-exec is required for the native srt provider on macOS (it ships with macOS; contact Apple support if missing)"
+fi
 if [[ "$(uname -s)" == Linux ]] && ! command -v bwrap >/dev/null 2>&1; then
   die "bubblewrap is required for the native srt provider (install package: bubblewrap)"
 fi
