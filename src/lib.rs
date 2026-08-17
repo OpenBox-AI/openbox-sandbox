@@ -41,12 +41,13 @@ pub use protocol::{
 pub use runtime_contract::{
     Argv, CleanupFailure, CleanupFailureCode, CleanupState, CleanupTarget, CommandTimeout,
     CreateFailure, CreateFailureCode, CreateRequest, CreatedSandbox, CreationState, DeleteOutcome,
-    DispatchState, ExecCompleted, ExecFailure, ExecFailureCode, ExecRequest, FailureTimeout,
-    ObservedExitCode, ObservedTimeout, OpaqueProviderHandle, OperationContext, OperationDeadline,
-    OperatorDetail, OutputByteCounts, OutputLimitKind, OutputLimits, PolicyDocument,
-    PolicyIdentity, ProviderCapability, ReadinessFailure, ReadinessFailureCode, ReadySandbox,
-    RequestOwnedId, SANDBOX_WORKDIR, SandboxRuntime, Sha256Digest, TemplateIdentity,
-    ValidationCode, ValidationError,
+    DispatchState, EgressDecision, EgressDecisionKind, ExecCompleted, ExecFailure, ExecFailureCode,
+    ExecRequest, FailureTimeout, ObservedExitCode, ObservedTimeout, OpaqueProviderHandle,
+    OperationContext, OperationDeadline, OperatorDetail, OutputByteCounts, OutputLimitKind,
+    OutputLimits, PolicyDocument, PolicyIdentity, ProviderCapability, ReadinessFailure,
+    ReadinessFailureCode, ReadySandbox, RequestOwnedId, SANDBOX_WORKDIR, SandboxEvidence,
+    SandboxRuntime, Sha256Digest, TemplateIdentity, ValidationCode, ValidationError,
+    ViolationCategory, ViolationEvidence,
 };
 pub use service::{
     AuthValueError, CallerFingerprint, CallerIdentity, CallerRole, DurableRecord, DurableStage,

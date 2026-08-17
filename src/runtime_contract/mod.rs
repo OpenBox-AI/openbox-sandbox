@@ -25,7 +25,10 @@ pub use request::{
     OutputLimits, PolicyDocument, PolicyIdentity, RequestOwnedId, SANDBOX_WORKDIR, Sha256Digest,
     TemplateIdentity,
 };
-pub use result::{DeleteOutcome, ExecCompleted, ObservedExitCode, OutputByteCounts};
+pub use result::{
+    DeleteOutcome, EgressDecision, EgressDecisionKind, ExecCompleted, ObservedExitCode,
+    OutputByteCounts, SandboxEvidence, ViolationCategory, ViolationEvidence,
+};
 pub use runtime::SandboxRuntime;
 pub use state::{
     CleanupState, CleanupTarget, CreatedSandbox, CreationState, DispatchState, FailureTimeout,

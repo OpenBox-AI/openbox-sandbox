@@ -6,7 +6,9 @@
 
 #[cfg(test)]
 mod conformance_tests;
+mod monitor;
 mod policy;
+mod proxy;
 
 use core::fmt;
 use std::path::{Path, PathBuf};
@@ -26,11 +28,12 @@ use crate::{
     ExecRequest, FailureTimeout, ObservedExitCode, ObservedTimeout, OpaqueProviderHandle,
     OperationContext, OperatorDetail, OutputByteCounts, OutputLimitKind, PolicyIdentity,
     ProviderCapability, ReadinessFailure, ReadinessFailureCode, ReadySandbox, RequestOwnedId,
-    SandboxRuntime, Sha256Digest,
+    SandboxEvidence, SandboxRuntime, Sha256Digest,
 };
 
-use policy::verify_compiled_profile;
+use policy::{NetworkAccess, compiled_network_access, verify_compiled_profile};
 pub use policy::{compile_srt_policy, sha256_file};
+use proxy::ProxyHandle;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SrtConfigError {
@@ -246,27 +249,52 @@ impl SandboxRuntime for SrtRuntime {
             .expect("pre-dispatch provider failure is valid"));
         }
 
-        let mut command = native_command(&self.config, &workspace, &request).map_err(|_| {
+        let network = compiled_network_access(&self.config.profile_path).map_err(|_| {
             ExecFailure::not_dispatched(
                 target.clone(),
                 ExecFailureCode::Provider,
-                detail("native sandbox runner is unavailable"),
+                detail("pinned native network policy could not be loaded"),
             )
             .expect("pre-dispatch provider failure is valid")
         })?;
+        let proxy = match &network {
+            NetworkAccess::Deny => None,
+            NetworkAccess::Allowlist(endpoints) => {
+                Some(ProxyHandle::start(endpoints.clone()).await.map_err(|_| {
+                    ExecFailure::not_dispatched(
+                        target.clone(),
+                        ExecFailureCode::Provider,
+                        detail("native policy proxy could not bind loopback"),
+                    )
+                    .expect("pre-dispatch provider failure is valid")
+                })?)
+            }
+        };
+        let mut command = native_command(&self.config, &workspace, &request, proxy.as_ref())
+            .map_err(|_| {
+                ExecFailure::not_dispatched(
+                    target.clone(),
+                    ExecFailureCode::Provider,
+                    detail("native sandbox runner is unavailable"),
+                )
+                .expect("pre-dispatch provider failure is valid")
+            })?;
         command
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env_clear();
-        let mut child = command.spawn().map_err(|_| {
-            ExecFailure::not_dispatched(
-                target.clone(),
+            .stderr(Stdio::piped());
+        let Ok(mut child) = command.spawn() else {
+            if let Some(proxy) = proxy {
+                let _ = proxy.finish().await;
+            }
+            return Err(ExecFailure::not_dispatched(
+                target,
                 ExecFailureCode::Transport,
                 detail("native sandbox process could not be spawned"),
             )
-            .expect("spawn failure is before dispatch")
-        })?;
+            .expect("spawn failure is before dispatch"));
+        };
+        let process_id = child.id();
         let stdout = child.stdout.take().expect("configured stdout pipe");
         let stderr = child.stderr.take().expect("configured stderr pipe");
         let stdout_count = Arc::new(AtomicU64::new(0));
@@ -321,6 +349,20 @@ impl SandboxRuntime for SrtRuntime {
         }
         let stdout_result = stdout_task.await.unwrap_or_default();
         let stderr_result = stderr_task.await.unwrap_or_default();
+        let violation = if let Some(process_id) = process_id {
+            monitor::collect(
+                process_id,
+                u64::from(request.timeout().seconds()).saturating_add(30),
+            )
+            .await
+        } else {
+            None
+        };
+        let egress_decisions = match proxy {
+            Some(proxy) => proxy.finish().await,
+            None => Vec::new(),
+        };
+        let sandbox_evidence = SandboxEvidence::new(egress_decisions, violation);
         let counts = OutputByteCounts::new(
             stdout_count.load(Ordering::Relaxed),
             stderr_count.load(Ordering::Relaxed),
@@ -355,14 +397,16 @@ impl SandboxRuntime for SrtRuntime {
                     stdout_result.bytes,
                     stderr_result.bytes,
                     ObservedTimeout::NotObserved,
-                ))
+                )
+                .with_sandbox_evidence(sandbox_evidence))
             }
             WaitOutcome::CommandTimeout => Ok(ExecCompleted::new(
                 ObservedExitCode::new(124).expect("124 is a nonnegative exit code"),
                 stdout_result.bytes,
                 stderr_result.bytes,
                 ObservedTimeout::Confirmed,
-            )),
+            )
+            .with_sandbox_evidence(sandbox_evidence)),
             WaitOutcome::Deadline => Err(ExecFailure::possibly_dispatched(
                 target,
                 ExecFailureCode::Deadline,
@@ -438,27 +482,27 @@ fn native_command(
     config: &SrtConfig,
     workspace: &Path,
     request: &ExecRequest,
+    proxy: Option<&ProxyHandle>,
 ) -> Result<Command, SrtConfigError> {
     let argv = request.argv().as_slice();
     if cfg!(target_os = "macos") {
         let mut command = Command::new("/usr/bin/sandbox-exec");
         command
+            .env_clear()
             .arg("-D")
             .arg(format!(
                 "WORKSPACE_ROOT={}",
                 config.workspace_root.to_string_lossy()
             ))
             .arg("-D")
-            .arg(format!("WORKSPACE={}", workspace.to_string_lossy()))
-            .arg("-D")
-            .arg(if dev_curl_is_admitted(config, argv) {
-                "ALLOW_NETWORK=1"
-            } else {
-                "ALLOW_NETWORK=0"
-            })
-            .arg("-f")
-            .arg(&config.profile_path)
-            .arg("--");
+            .arg(format!("WORKSPACE={}", workspace.to_string_lossy()));
+        if let Some(proxy) = proxy {
+            command
+                .arg("-D")
+                .arg(format!("PROXY_ENDPOINT=localhost:{}", proxy.port()));
+            set_proxy_environment(&mut command, proxy);
+        }
+        command.arg("-f").arg(&config.profile_path).arg("--");
         command
             .arg(&argv[0])
             .args(&argv[1..])
@@ -466,13 +510,14 @@ fn native_command(
         Ok(command)
     } else if cfg!(target_os = "linux") {
         let mut command = Command::new("bwrap");
-        command.args(["--die-with-parent", "--new-session", "--unshare-all"]);
-        // bubblewrap cannot express a destination allow-list by itself. Keep an
-        // isolated network namespace for every command except the one exact
-        // curl argv admitted by the compiled dev template; that argv contains
-        // only the pinned example.com HTTPS target and runs with an empty env.
-        if !dev_curl_is_admitted(config, argv) {
-            command.arg("--unshare-net");
+        command
+            .env_clear()
+            .args(["--die-with-parent", "--new-session", "--unshare-all"]);
+        // A deny policy always receives a private network namespace. For an
+        // allowlist policy, standard HTTP clients are forced through the same
+        // fail-closed proxy. See the documented bwrap address-filter caveat.
+        if proxy.is_some() {
+            command.arg("--share-net");
         }
         command.args(["--proc", "/proc", "--dev", "/dev"]);
         for path in ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"] {
@@ -485,41 +530,30 @@ fn native_command(
             .arg(workspace)
             .arg("/sandbox")
             .arg("--chdir")
-            .arg("/sandbox")
-            .arg("--")
-            .arg(&argv[0])
-            .args(&argv[1..]);
+            .arg("/sandbox");
+        if let Some(proxy) = proxy {
+            set_proxy_environment(&mut command, proxy);
+        }
+        command.arg("--").arg(&argv[0]).args(&argv[1..]);
         Ok(command)
     } else {
         Err(SrtConfigError::UnsupportedPlatform)
     }
 }
 
-fn dev_curl_is_admitted(config: &SrtConfig, argv: &[String]) -> bool {
-    const EXPECTED: [&str; 7] = [
-        "/usr/bin/curl",
-        "-s",
-        "-o",
-        "/dev/null",
-        "-w",
-        r#"{"http_status":%{http_code},"local_ip":"%{local_ip}","remote_ip":"%{remote_ip}"}"#,
-        "https://example.com/",
-    ];
-    if argv.iter().map(String::as_str).ne(EXPECTED) {
-        return false;
+fn set_proxy_environment(command: &mut Command, proxy: &ProxyHandle) {
+    let url = proxy.proxy_url();
+    for name in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        command.env(name, &url);
     }
-    let Ok(bytes) = std::fs::read(&config.profile_path) else {
-        return false;
-    };
-    if cfg!(target_os = "macos") {
-        return bytes
-            .windows(b"ALLOW_NETWORK".len())
-            .any(|value| value == b"ALLOW_NETWORK");
-    }
-    let Ok(profile) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return false;
-    };
-    profile["network"]["mode"] == "allowlist"
+    command.env("NO_PROXY", "").env("no_proxy", "");
 }
 
 enum WaitOutcome {

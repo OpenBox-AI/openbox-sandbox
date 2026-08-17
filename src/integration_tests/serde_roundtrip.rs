@@ -2,9 +2,10 @@
 
 use crate::{
     Argv, CleanupTarget, CommandTimeout, CreateFailure, CreateFailureCode, CreateRequest,
-    DispatchState, ExecCompleted, ExecFailure, ExecFailureCode, ExecRequest, FailureTimeout,
-    ObservedExitCode, ObservedTimeout, OperatorDetail, OutputByteCounts, OutputLimits,
-    PolicyDocument, PolicyIdentity, RequestOwnedId, Sha256Digest, TemplateIdentity,
+    DispatchState, EgressDecision, EgressDecisionKind, ExecCompleted, ExecFailure, ExecFailureCode,
+    ExecRequest, FailureTimeout, ObservedExitCode, ObservedTimeout, OperatorDetail,
+    OutputByteCounts, OutputLimits, PolicyDocument, PolicyIdentity, RequestOwnedId,
+    SandboxEvidence, Sha256Digest, TemplateIdentity, ViolationCategory, ViolationEvidence,
 };
 use serde_json::{Value, json};
 
@@ -122,6 +123,41 @@ fn raw_output_uses_exact_base64_and_rejects_negative_exit_sentinel() {
     let mut sentinel = encoded;
     sentinel["exit_code"] = json!(-1);
     assert!(serde_json::from_value::<ExecCompleted>(sentinel).is_err());
+}
+
+#[test]
+fn native_sandbox_evidence_round_trips_inside_the_existing_result() {
+    let completed = ExecCompleted::new(
+        ObservedExitCode::new(7).unwrap(),
+        Vec::new(),
+        Vec::new(),
+        ObservedTimeout::NotObserved,
+    )
+    .with_sandbox_evidence(SandboxEvidence::new(
+        vec![EgressDecision::new(
+            EgressDecisionKind::Denied,
+            "example.org".to_owned(),
+            443,
+        )],
+        Some(ViolationEvidence::new(
+            2,
+            vec![ViolationCategory::DeniedNetwork],
+        )),
+    ));
+    let encoded = serde_json::to_value(&completed).unwrap();
+    assert_eq!(
+        encoded["sandbox_evidence"]["egress_decisions"][0]["decision"],
+        "denied"
+    );
+    assert_eq!(
+        encoded["sandbox_evidence"]["egress_decisions"][0]["host"],
+        "example.org"
+    );
+    assert_eq!(encoded["sandbox_evidence"]["violation"]["count"], 2);
+    assert_eq!(
+        serde_json::from_value::<ExecCompleted>(encoded).unwrap(),
+        completed
+    );
 }
 
 #[test]

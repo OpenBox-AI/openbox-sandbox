@@ -4,6 +4,147 @@ use core::fmt;
 
 use crate::{ObservedTimeout, ValidationCode, ValidationError};
 
+/// A policy-proxy decision observed for one requested network target.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(rename_all = "snake_case")
+)]
+pub enum EgressDecisionKind {
+    /// The pinned policy allowlist admitted the target.
+    Allowed,
+    /// The pinned policy allowlist refused the target.
+    Denied,
+}
+
+/// Structured target and decision evidence emitted by the native proxy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(deny_unknown_fields)
+)]
+pub struct EgressDecision {
+    decision: EgressDecisionKind,
+    host: String,
+    port: u16,
+}
+
+impl EgressDecision {
+    /// Creates evidence for a normalized target host and port.
+    pub fn new(decision: EgressDecisionKind, host: String, port: u16) -> Self {
+        Self {
+            decision,
+            host,
+            port,
+        }
+    }
+
+    /// Returns whether the target was admitted or refused.
+    pub const fn decision(&self) -> EgressDecisionKind {
+        self.decision
+    }
+
+    /// Returns the normalized requested host.
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Returns the requested target port.
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+}
+
+/// Stable category for an operating-system sandbox denial.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(rename_all = "snake_case")
+)]
+pub enum ViolationCategory {
+    /// A file write operation was denied.
+    DeniedFileWrite,
+    /// A file read operation was denied.
+    DeniedFileRead,
+    /// A network operation was denied.
+    DeniedNetwork,
+    /// A process operation was denied.
+    DeniedProcess,
+    /// A denial outside the stable categories above was observed.
+    Other,
+}
+
+/// Aggregated operating-system sandbox violation evidence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(deny_unknown_fields)
+)]
+pub struct ViolationEvidence {
+    count: u64,
+    categories: Vec<ViolationCategory>,
+}
+
+impl ViolationEvidence {
+    /// Creates aggregated violation evidence.
+    pub fn new(count: u64, categories: Vec<ViolationCategory>) -> Self {
+        Self { count, categories }
+    }
+
+    /// Returns the number of observed violation records.
+    pub const fn count(&self) -> u64 {
+        self.count
+    }
+
+    /// Returns the distinct stable denial categories.
+    pub fn categories(&self) -> &[ViolationCategory] {
+        &self.categories
+    }
+}
+
+/// Provider-specific isolation evidence attached to an existing terminal result.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(deny_unknown_fields)
+)]
+pub struct SandboxEvidence {
+    egress_decisions: Vec<EgressDecision>,
+    violation: Option<ViolationEvidence>,
+}
+
+impl SandboxEvidence {
+    /// Creates evidence from proxy decisions and optional OS violation records.
+    pub fn new(
+        egress_decisions: Vec<EgressDecision>,
+        violation: Option<ViolationEvidence>,
+    ) -> Self {
+        Self {
+            egress_decisions,
+            violation,
+        }
+    }
+
+    /// Returns all proxy decisions observed during the command.
+    pub fn egress_decisions(&self) -> &[EgressDecision] {
+        &self.egress_decisions
+    }
+
+    /// Returns aggregated OS violation evidence when the platform supplied it.
+    pub const fn violation(&self) -> Option<&ViolationEvidence> {
+        self.violation.as_ref()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.egress_decisions.is_empty() && self.violation.is_none()
+    }
+}
+
 /// Immediate response to a delete request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(
@@ -116,6 +257,7 @@ pub struct ExecCompleted {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
     timeout: ObservedTimeout,
+    sandbox_evidence: SandboxEvidence,
 }
 
 impl ExecCompleted {
@@ -131,7 +273,23 @@ impl ExecCompleted {
             stdout,
             stderr,
             timeout,
+            sandbox_evidence: SandboxEvidence {
+                egress_decisions: Vec::new(),
+                violation: None,
+            },
         }
+    }
+
+    /// Attaches provider isolation evidence to this terminal result.
+    #[must_use]
+    pub fn with_sandbox_evidence(mut self, evidence: SandboxEvidence) -> Self {
+        self.sandbox_evidence = evidence;
+        self
+    }
+
+    /// Returns provider isolation evidence for this command.
+    pub const fn sandbox_evidence(&self) -> &SandboxEvidence {
+        &self.sandbox_evidence
     }
 
     /// Returns the real observed process exit.
@@ -178,6 +336,7 @@ impl fmt::Debug for ExecCompleted {
             .field("stdout_bytes", &self.stdout.len())
             .field("stderr_bytes", &self.stderr.len())
             .field("timeout", &self.timeout)
+            .field("sandbox_evidence", &self.sandbox_evidence)
             .finish()
     }
 }
@@ -198,6 +357,8 @@ struct ExecCompletedWire {
     )]
     stderr: Vec<u8>,
     timeout: ObservedTimeout,
+    #[serde(default, skip_serializing_if = "SandboxEvidence::is_empty")]
+    sandbox_evidence: SandboxEvidence,
 }
 
 #[cfg(feature = "serde")]
@@ -205,12 +366,10 @@ impl TryFrom<ExecCompletedWire> for ExecCompleted {
     type Error = ValidationError;
 
     fn try_from(value: ExecCompletedWire) -> Result<Self, Self::Error> {
-        Ok(Self::new(
-            value.exit_code,
-            value.stdout,
-            value.stderr,
-            value.timeout,
-        ))
+        Ok(
+            Self::new(value.exit_code, value.stdout, value.stderr, value.timeout)
+                .with_sandbox_evidence(value.sandbox_evidence),
+        )
     }
 }
 
@@ -222,6 +381,7 @@ impl From<ExecCompleted> for ExecCompletedWire {
             stdout: value.stdout,
             stderr: value.stderr,
             timeout: value.timeout,
+            sandbox_evidence: value.sandbox_evidence,
         }
     }
 }

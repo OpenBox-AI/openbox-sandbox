@@ -72,6 +72,17 @@ packaging/launcher/target/release/obs verify
 packaging/launcher/target/release/obs uninstall
 ```
 
+For the default native `srt` provider, provisioning compiles the selected
+release policy into an owner-only Seatbelt/bubblewrap profile and pins its hash.
+Network-enabled profiles cause the service to create an ephemeral localhost
+HTTP(S) proxy for each execution; no proxy port is persisted in launcher or
+service configuration. On macOS the compiled profile admits only that runtime
+port and the service attaches proxy decisions plus unified-log Seatbelt
+violation counts to terminal results. Linux has no unprivileged bubblewrap deny
+log, so violation evidence is omitted; see the root README for the Linux
+address-filter limitation. These changes require no launcher configuration or
+launcher binary update.
+
 `obs verify` first hashes the exact root service binary recorded in `agent.env`
 and requires it to match the provisioned adapter identity. It then runs the
 actual live proof: client → mTLS root service → external OpenShell gateway →

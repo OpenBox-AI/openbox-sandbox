@@ -55,10 +55,10 @@ pub fn compile_srt_policy(
     sha256_file(output)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NetworkAccess {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum NetworkAccess {
     Deny,
-    ExampleCurl,
+    Allowlist(Vec<(String, u16)>),
 }
 
 fn validate_policy_floor(policy: &SandboxPolicy) -> Result<NetworkAccess, SrtConfigError> {
@@ -117,30 +117,32 @@ fn validate_policy_floor(policy: &SandboxPolicy) -> Result<NetworkAccess, SrtCon
     {
         return Err(SrtConfigError::InvalidPolicy);
     }
-    Ok(NetworkAccess::ExampleCurl)
+    Ok(NetworkAccess::Allowlist(vec![(
+        DEV_NETWORK_HOST.to_owned(),
+        DEV_NETWORK_PORT,
+    )]))
 }
 
 fn compile_seatbelt(network: NetworkAccess) -> String {
     // Rule order matters: Seatbelt uses the later, more-specific workspace
     // allow to reopen only that directory after the workspace-root and user-home
-    // read denies. Seatbelt can filter TCP ports but not arbitrary remote hosts,
-    // so the allow rule is enabled only when the runtime has matched the policy's
-    // exact curl argv (including https://example.com/). Other argv use the same
-    // pinned profile with ALLOW_NETWORK=0 and retain deny-network behavior.
+    // read denies. The command can connect only to one runtime-selected localhost
+    // TCP endpoint; the out-of-sandbox proxy performs DNS and host filtering.
     let network_rule = match network {
-        NetworkAccess::Deny => "",
-        NetworkAccess::ExampleCurl => {
-            r#"(if (equal? (param "ALLOW_NETWORK") "1")
-    (begin
-        (allow network-outbound (literal "/private/var/run/mDNSResponder"))
-        (allow network-outbound (remote tcp "*:443"))
-        (allow network-outbound (remote udp "*:53"))
-        (allow network-outbound (remote tcp "*:53"))))
-"#
+        NetworkAccess::Deny => String::new(),
+        NetworkAccess::Allowlist(endpoints) => {
+            let metadata = endpoints
+                .iter()
+                .fold(String::new(), |mut output, (host, port)| {
+                    writeln!(output, ";; OPENBOX_EGRESS_ALLOW {host}:{port}")
+                        .expect("writing to String cannot fail");
+                    output
+                });
+            format!("{metadata}(allow network-outbound (remote tcp (param \"PROXY_ENDPOINT\")))\n")
         }
     };
     format!(
-        r#";; OpenBox native srt profile v1 (deployment compiled; never request generated)
+        r#";; OpenBox native srt profile v2 (deployment compiled; never request generated)
 (version 1)
 (define workspace-root (param "WORKSPACE_ROOT"))
 (define workspace (param "WORKSPACE"))
@@ -164,9 +166,11 @@ fn compile_seatbelt(network: NetworkAccess) -> String {
 fn compile_bwrap(workspace_root: &Path, network: NetworkAccess) -> String {
     let network = match network {
         NetworkAccess::Deny => serde_json::json!({"mode": "deny"}),
-        NetworkAccess::ExampleCurl => serde_json::json!({
+        NetworkAccess::Allowlist(endpoints) => serde_json::json!({
             "mode": "allowlist",
-            "endpoints": [{"host": DEV_NETWORK_HOST, "port": DEV_NETWORK_PORT}],
+            "endpoints": endpoints.into_iter().map(|(host, port)| {
+                serde_json::json!({"host": host, "port": port})
+            }).collect::<Vec<_>>(),
             "binaries": [DEV_NETWORK_BINARY]
         }),
     };
@@ -200,8 +204,17 @@ pub(super) fn verify_compiled_profile(
     if sha256_file(path)? != expected_sha256 {
         return Err(SrtConfigError::PolicyMismatch);
     }
-    if cfg!(target_os = "linux") {
-        let bytes = fs::read(path).map_err(|_| SrtConfigError::PolicyRead)?;
+    let bytes = fs::read(path).map_err(|_| SrtConfigError::PolicyRead)?;
+    if cfg!(target_os = "macos") {
+        let body = std::str::from_utf8(&bytes).map_err(|_| SrtConfigError::InvalidPolicy)?;
+        let access = parse_seatbelt_network(body)?;
+        if !body.starts_with(";; OpenBox native srt profile v2 ")
+            || (matches!(access, NetworkAccess::Deny) && body.contains("network-outbound"))
+            || body.matches("network-outbound").count() > 1
+        {
+            return Err(SrtConfigError::InvalidPolicy);
+        }
+    } else if cfg!(target_os = "linux") {
         let value: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(|_| SrtConfigError::InvalidPolicy)?;
         let valid_network = value["network"]["mode"] == "deny"
@@ -219,6 +232,70 @@ pub(super) fn verify_compiled_profile(
         }
     }
     Ok(())
+}
+
+pub(super) fn compiled_network_access(path: &Path) -> Result<NetworkAccess, SrtConfigError> {
+    let bytes = fs::read(path).map_err(|_| SrtConfigError::PolicyRead)?;
+    if cfg!(target_os = "macos") {
+        return parse_seatbelt_network(
+            std::str::from_utf8(&bytes).map_err(|_| SrtConfigError::InvalidPolicy)?,
+        );
+    }
+    if cfg!(target_os = "linux") {
+        let value: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| SrtConfigError::InvalidPolicy)?;
+        if value["network"]["mode"] == "deny" {
+            return Ok(NetworkAccess::Deny);
+        }
+        if value["network"]["mode"] == "allowlist" {
+            let endpoints = value["network"]["endpoints"]
+                .as_array()
+                .ok_or(SrtConfigError::InvalidPolicy)?
+                .iter()
+                .map(|endpoint| {
+                    let host = endpoint["host"]
+                        .as_str()
+                        .ok_or(SrtConfigError::InvalidPolicy)?
+                        .to_owned();
+                    let port = u16::try_from(
+                        endpoint["port"]
+                            .as_u64()
+                            .ok_or(SrtConfigError::InvalidPolicy)?,
+                    )
+                    .map_err(|_| SrtConfigError::InvalidPolicy)?;
+                    Ok((host, port))
+                })
+                .collect::<Result<Vec<_>, SrtConfigError>>()?;
+            return Ok(NetworkAccess::Allowlist(endpoints));
+        }
+    }
+    Err(SrtConfigError::UnsupportedPlatform)
+}
+
+fn parse_seatbelt_network(body: &str) -> Result<NetworkAccess, SrtConfigError> {
+    let endpoints = body
+        .lines()
+        .filter_map(|line| line.strip_prefix(";; OPENBOX_EGRESS_ALLOW "))
+        .map(|target| {
+            let (host, port) = target
+                .rsplit_once(':')
+                .ok_or(SrtConfigError::InvalidPolicy)?;
+            let port = port
+                .parse::<u16>()
+                .map_err(|_| SrtConfigError::InvalidPolicy)?;
+            if host.is_empty() {
+                return Err(SrtConfigError::InvalidPolicy);
+            }
+            Ok((host.to_owned(), port))
+        })
+        .collect::<Result<Vec<_>, SrtConfigError>>()?;
+    if endpoints.is_empty() {
+        Ok(NetworkAccess::Deny)
+    } else if body.contains("(allow network-outbound (remote tcp (param \"PROXY_ENDPOINT\")))") {
+        Ok(NetworkAccess::Allowlist(endpoints))
+    } else {
+        Err(SrtConfigError::InvalidPolicy)
+    }
 }
 
 #[cfg(test)]
@@ -258,13 +335,12 @@ mod tests {
     fn checked_in_dev_policy_compiles_only_the_example_curl_allow_list() {
         let body = compile_checked_in("policy-allow-network-dev.yaml");
         if cfg!(target_os = "macos") {
-            assert!(body.contains(r#"(if (equal? (param "ALLOW_NETWORK") "1")"#));
-            assert!(body.contains(
-                r#"(allow network-outbound (literal "/private/var/run/mDNSResponder"))"#
-            ));
-            assert!(body.contains(r#"(allow network-outbound (remote tcp "*:443"))"#));
-            assert!(body.contains(r#"(allow network-outbound (remote udp "*:53"))"#));
-            assert!(body.contains(r#"(allow network-outbound (remote tcp "*:53"))"#));
+            assert!(body.contains(";; OPENBOX_EGRESS_ALLOW example.com:443"));
+            assert!(
+                body.contains(r#"(allow network-outbound (remote tcp (param "PROXY_ENDPOINT")))"#)
+            );
+            assert!(!body.contains("mDNSResponder"));
+            assert!(!body.contains("*:443"));
             assert!(!body.contains("network-inbound"));
         } else {
             assert!(body.contains(r#"\"mode\": \"allowlist\""#));
