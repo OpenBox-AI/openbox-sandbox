@@ -186,14 +186,21 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
         info(&format!("{svc_name} missing — fetching from {tag}"));
         let _ = gh_download_pattern(&gh, tag, svc_name);
     }
-    // CHANNEL-LOCKED: everything comes from the channel's own tag only.
-    // dev -> v0.1.0-dev: allow template, dev cache, dev tar.
-    // base -> v0.1.0: deny template, base cache. No cross-channel fetches.
+    // TEMPLATES: ALL policy templates are always provided, regardless of the
+    // channel — the channel only selects the DEFAULT. Each template is fetched
+    // from the release that canonically carries it (allow -> dev tag,
+    // deny -> base tag), so no pattern is ever tried against a release that
+    // cannot have it.
+    if !cwd.join("policy-allow-network-dev.yaml").is_file() {
+        info("allow policy template missing — fetching from v0.1.0-dev");
+        let _ = gh_download_pattern(&gh, "v0.1.0-dev", "policy-allow-network-dev.yaml");
+    }
+    if !cwd.join("policy-deny-network-dev.yaml").is_file() {
+        info("deny policy template missing — fetching from v0.1.0");
+        let _ = gh_download_pattern(&gh, "v0.1.0", "policy-deny-network-dev.yaml");
+    }
+    // Channel-locked assets beyond the templates.
     if dev_channel {
-        if !cwd.join("policy-allow-network-dev.yaml").is_file() {
-            info("allow policy template missing — fetching from v0.1.0-dev");
-            let _ = gh_download_pattern(&gh, "v0.1.0-dev", "policy-allow-network-dev.yaml");
-        }
         if !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
             info(&format!("{dev_tar} missing — fetching from v0.1.0-dev"));
             let _ = gh_download_pattern(&gh, "v0.1.0-dev", dev_tar);
@@ -226,15 +233,9 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
                 warn(&format!("could not fetch pinned official zot: {error}"));
             }
         }
-    } else {
-        if !cwd.join("policy-deny-network-dev.yaml").is_file() {
-            info("deny policy template missing — fetching from v0.1.0");
-            let _ = gh_download_pattern(&gh, "v0.1.0", "policy-deny-network-dev.yaml");
-        }
-        if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
-            info(&format!("{vm_cache} missing — fetching from v0.1.0"));
-            let _ = gh_download_pattern(&gh, "v0.1.0", vm_cache);
-        }
+    } else if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
+        info(&format!("{vm_cache} missing — fetching from v0.1.0"));
+        let _ = gh_download_pattern(&gh, "v0.1.0", vm_cache);
     }
 }
 
