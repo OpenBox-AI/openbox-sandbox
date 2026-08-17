@@ -450,6 +450,12 @@ fn native_command(
             ))
             .arg("-D")
             .arg(format!("WORKSPACE={}", workspace.to_string_lossy()))
+            .arg("-D")
+            .arg(if dev_curl_is_admitted(config, argv) {
+                "ALLOW_NETWORK=1"
+            } else {
+                "ALLOW_NETWORK=0"
+            })
             .arg("-f")
             .arg(&config.profile_path)
             .arg("--");
@@ -460,16 +466,15 @@ fn native_command(
         Ok(command)
     } else if cfg!(target_os = "linux") {
         let mut command = Command::new("bwrap");
-        command.args([
-            "--die-with-parent",
-            "--new-session",
-            "--unshare-all",
-            "--unshare-net",
-            "--proc",
-            "/proc",
-            "--dev",
-            "/dev",
-        ]);
+        command.args(["--die-with-parent", "--new-session", "--unshare-all"]);
+        // bubblewrap cannot express a destination allow-list by itself. Keep an
+        // isolated network namespace for every command except the one exact
+        // curl argv admitted by the compiled dev template; that argv contains
+        // only the pinned example.com HTTPS target and runs with an empty env.
+        if !dev_curl_is_admitted(config, argv) {
+            command.arg("--unshare-net");
+        }
+        command.args(["--proc", "/proc", "--dev", "/dev"]);
         for path in ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc"] {
             if Path::new(path).exists() {
                 command.arg("--ro-bind").arg(path).arg(path);
@@ -488,6 +493,33 @@ fn native_command(
     } else {
         Err(SrtConfigError::UnsupportedPlatform)
     }
+}
+
+fn dev_curl_is_admitted(config: &SrtConfig, argv: &[String]) -> bool {
+    const EXPECTED: [&str; 7] = [
+        "/usr/bin/curl",
+        "-s",
+        "-o",
+        "/dev/null",
+        "-w",
+        r#"{"http_status":%{http_code},"local_ip":"%{local_ip}","remote_ip":"%{remote_ip}"}"#,
+        "https://example.com/",
+    ];
+    if argv.iter().map(String::as_str).ne(EXPECTED) {
+        return false;
+    }
+    let Ok(bytes) = std::fs::read(&config.profile_path) else {
+        return false;
+    };
+    if cfg!(target_os = "macos") {
+        return bytes
+            .windows(b"ALLOW_NETWORK".len())
+            .any(|value| value == b"ALLOW_NETWORK");
+    }
+    let Ok(profile) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    profile["network"]["mode"] == "allowlist"
 }
 
 enum WaitOutcome {

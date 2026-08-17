@@ -309,9 +309,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     } else {
         bundle_dir.join(svc_name)
     };
-    let policy_file = if cwd.join("policy-allow-network-dev.yaml").is_file() {
-        cwd.join("policy-allow-network-dev.yaml")
-    } else if cwd.join(policy_name).is_file() {
+    let policy_file = if cwd.join(policy_name).is_file() {
         cwd.join(policy_name)
     } else if bundle_dir.join(policy_name).is_file() {
         bundle_dir.join(policy_name)
@@ -619,11 +617,21 @@ fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
         }
     }
 
+    // Resolve the same channel-selected template used by the OpenShell path.
+    // An explicit operator policy still wins; otherwise dev is allow-list and
+    // base is deny-network, regardless of which other template is present.
+    let dev_channel = std::env::var("OPENBOX_RELEASE_LINE")
+        .map_or_else(|_| crate::channel() != "base", |line| line == "dev");
+    let policy_name = if dev_channel {
+        "policy-allow-network-dev.yaml"
+    } else {
+        "policy-deny-network-dev.yaml"
+    };
+    let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
     let mut policy = std::env::var_os("OPENBOX_POLICY_FILE").map(PathBuf::from);
     for candidate in [
-        cwd.join("policy-deny-network-dev.yaml"),
-        cwd.join("deploy/policies/policy-deny-network.yaml"),
-        cwd.join("deploy/policies/policy-deny-network-dev.yaml"),
+        cwd.join(policy_name),
+        cwd.join("deploy/policies").join(policy_name),
     ] {
         if policy.as_ref().is_none_or(|path| !path.is_file()) && candidate.is_file() {
             policy = Some(candidate);
@@ -631,13 +639,8 @@ fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
     }
     if policy.as_ref().is_none_or(|path| !path.is_file()) {
         if let Some(gh) = which_gh() {
-            let tag = if crate::channel() == "base" {
-                "v0.1.0"
-            } else {
-                "v0.1.0-dev"
-            };
             info(&format!(
-                "native srt policy missing — fetching policy-deny-network-dev.yaml from {tag}"
+                "native srt policy missing — fetching {policy_name} from {tag}"
             ));
             let _ = Command::new(gh)
                 .current_dir(&cwd)
@@ -648,18 +651,20 @@ fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
                     "--repo",
                     "OpenBox-AI/openbox-sandbox",
                     "--pattern",
-                    "policy-deny-network-dev.yaml",
+                    policy_name,
                     "--clobber",
                 ])
                 .status();
-            let downloaded = cwd.join("policy-deny-network-dev.yaml");
+            let downloaded = cwd.join(policy_name);
             if downloaded.is_file() {
                 policy = Some(downloaded);
             }
         }
     }
     let policy = policy.filter(|path| path.is_file()).ok_or_else(|| {
-        err("native srt deny-network policy is unavailable; refusing an unpinned default");
+        err(&format!(
+            "native srt channel policy {policy_name} is unavailable; refusing an unpinned default"
+        ));
         ExitCode::FAILURE
     })?;
     unsafe {

@@ -55,7 +55,6 @@ DRAIN_TIMEOUT_MS="${OPENBOX_DRAIN_TIMEOUT_MS:-30000}"
 CERT_DAYS="${OPENBOX_CERT_DAYS:-825}"
 RSA_BITS="${OPENBOX_RSA_BITS:-2048}"
 CALLER_SUBJ="${OPENBOX_CALLER_SUBJ:-/CN=openbox-sandbox-runtime-caller}"
-POLICY_ID="${OPENBOX_POLICY_ID:-openbox-native-srt-deny-network}"
 POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
 COMPAT_ID="${OPENBOX_COMPAT_ID:-native-srt-v1}"
 
@@ -63,9 +62,24 @@ if [[ -n "${OPENBOX_SANDBOX_BIN:-}" ]]; then SANDBOX_BIN="$OPENBOX_SANDBOX_BIN"
 elif [[ "$(uname -s)-$(uname -m)" == Darwin-arm64 && -x "$(pwd)/openbox-sandbox-darwin-arm64" ]]; then SANDBOX_BIN="$(pwd)/openbox-sandbox-darwin-arm64"
 elif [[ "$(uname -s)-$(uname -m)" == Linux-x86_64 && -x "$(pwd)/openbox-sandbox-linux-x86_64" ]]; then SANDBOX_BIN="$(pwd)/openbox-sandbox-linux-x86_64"
 else SANDBOX_BIN="$PROJECT_ROOT/target/release/openbox-sandbox"; fi
-if [[ -n "${OPENBOX_POLICY_FILE:-}" ]]; then POLICY_FILE="$OPENBOX_POLICY_FILE"
-elif [[ -f "$(pwd)/policy-deny-network-dev.yaml" ]]; then POLICY_FILE="$(pwd)/policy-deny-network-dev.yaml"
-else POLICY_FILE="$PROJECT_ROOT/deploy/policies/policy-deny-network.yaml"; fi
+if [[ "${OPENBOX_RELEASE_LINE:-base}" == dev ]]; then
+  DEFAULT_POLICY_TEMPLATE="policy-allow-network-dev.yaml"
+  DEFAULT_POLICY_ID="openbox-allow-network-dev"
+else
+  DEFAULT_POLICY_TEMPLATE="policy-deny-network-dev.yaml"
+  DEFAULT_POLICY_ID="openbox-deny-network-dev"
+fi
+if [[ -n "${OPENBOX_POLICY_FILE:-}" ]]; then
+  POLICY_FILE="$OPENBOX_POLICY_FILE"
+elif [[ -f "$(pwd)/$DEFAULT_POLICY_TEMPLATE" ]]; then
+  POLICY_FILE="$(pwd)/$DEFAULT_POLICY_TEMPLATE"
+else
+  POLICY_FILE="$PROJECT_ROOT/deploy/policies/$DEFAULT_POLICY_TEMPLATE"
+fi
+POLICY_ID="${OPENBOX_POLICY_ID:-$DEFAULT_POLICY_ID}"
+case "$(basename "$POLICY_FILE")" in
+  *allow*) POLICY_ID="${OPENBOX_POLICY_ID:-openbox-allow-network-dev}" ;;
+esac
 
 stop_service() {
   [[ -f "$SERVICE_PID_FILE" ]] || return 0
@@ -94,7 +108,7 @@ fi
 if [[ "$ARG_UNINSTALL" == 1 || "${OPENBOX_TEARDOWN_ONLY:-0}" == 1 ]]; then ok "native srt teardown/uninstall complete"; exit 0; fi
 
 [[ -x "$SANDBOX_BIN" ]] || die "openbox-sandbox service not found at $SANDBOX_BIN"
-[[ -f "$POLICY_FILE" ]] || die "deny-network policy not found at $POLICY_FILE"
+[[ -f "$POLICY_FILE" ]] || die "channel policy not found at $POLICY_FILE"
 if [[ "$(uname -s)" == Linux ]] && ! command -v bwrap >/dev/null 2>&1; then
   die "bubblewrap is required for the native srt provider (install package: bubblewrap)"
 fi
