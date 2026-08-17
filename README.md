@@ -65,7 +65,7 @@ from cross-platform `obs` launcher release assets.
 - bounded output, cancellation, draining, and conservative failure handling; and
 - a direct adapter for the pinned OpenShell gateway.
 
-It does **not** call governance services, start workflow frameworks, select policies or command profiles, execute commands on the host, or retry after possible command dispatch. Those decisions remain with the client.
+The `openbox-sandbox` service binary does **not** call governance services, interpret verdicts, or execute commands on the host. The library's `GovernedDispatcher` is the separate client-side enforcement boundary: it privately owns governance, host, and sandbox capabilities, and routes each immutable command at most once. The sandbox service remains provider-only.
 
 ## Build without installing
 

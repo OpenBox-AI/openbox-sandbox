@@ -14,21 +14,14 @@ const PROXY_TEMP_PATH: &str = "/tmp";
 // /app is deliberately absent — the released sandbox images do not ship /app
 // and OpenShell skips it via its runtime existence check. If a future image
 // adds /app the enriched policy diverges and readiness fails closed.
-const PROXY_BASELINE_READ_ONLY: &[&str] = &[
-    "/usr",
-    "/lib",
-    "/etc",
-    "/var/log",
-    "/proc",
-    "/dev/urandom",
-];
+const PROXY_BASELINE_READ_ONLY: &[&str] =
+    &["/usr", "/lib", "/etc", "/var/log", "/proc", "/dev/urandom"];
 const PROXY_BASELINE_READ_WRITE: &[&str] = &["/sandbox", "/tmp"];
 
 pub fn validate_image(template: &TemplateIdentity) -> Result<String, ()> {
     let image = template.as_str();
     let (repository, digest) = image.rsplit_once("@sha256:").ok_or_else(|| {
         eprintln!("ERROR: validate_image: missing @sha256: digest in template '{image}'");
-        ()
     })?;
     if repository.is_empty()
         || image.chars().any(char::is_whitespace)
@@ -74,7 +67,6 @@ pub fn parse_and_validate_policy(
             identity.id(),
             identity.version()
         );
-        ()
     })?;
     let policy = openshell_policy::parse_sandbox_policy(yaml).map_err(|_| {
         eprintln!(
@@ -82,7 +74,6 @@ pub fn parse_and_validate_policy(
             identity.id(),
             identity.version()
         );
-        ()
     })?;
     if u64::from(policy.version) != identity.version() {
         eprintln!(
@@ -127,15 +118,15 @@ fn meets_security_floor(policy: &SandboxPolicy, allow_degraded_landlock: bool) -
         && policy.network_middlewares.is_empty()
 }
 
-/// Mirror OpenShell's baseline-path enrichment for proxy-mode sandboxes.
+/// Mirror `OpenShell`'s baseline-path enrichment for proxy-mode sandboxes.
 ///
-/// OpenShell (crates/openshell-sandbox::enrich_proto_baseline_paths) adds
+/// `OpenShell` (`crates/openshell-sandbox::enrich_proto_baseline_paths`) adds
 /// baseline filesystem paths to policies that declare network policies, then
 /// syncs the enriched document back to the gateway as a NEW policy revision.
 /// The service must normalize identically so the readiness content check
 /// compares like-for-like (the stored effective policy vs. the expected
 /// policy). Paths already declared in either list are skipped, matching
-/// OpenShell's enrich_proto_baseline_paths_with.
+/// `OpenShell`'s `enrich_proto_baseline_paths_with`.
 fn apply_proxy_baseline_enrichment(policy: &mut SandboxPolicy) {
     if policy.network_policies.is_empty() {
         return;
@@ -151,7 +142,9 @@ fn apply_proxy_baseline_enrichment(policy: &mut SandboxPolicy) {
         }
     }
     for path in PROXY_BASELINE_READ_WRITE {
-        if !filesystem.read_write.iter().any(|p| p == path) {
+        if !filesystem.read_only.iter().any(|p| p == path)
+            && !filesystem.read_write.iter().any(|p| p == path)
+        {
             filesystem.read_write.push((*path).to_owned());
         }
     }

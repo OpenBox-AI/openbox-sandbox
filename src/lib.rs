@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+mod dispatcher;
 #[cfg(test)]
 mod integration_tests;
 mod openshell;
@@ -16,6 +17,15 @@ mod test_client;
 #[cfg(test)]
 mod test_support;
 
+pub use dispatcher::{
+    ActivityStarted, Command, CommandSizeLimits, DispatchId, DispatchReconciliationReport,
+    DispatcherBuildError, DispatcherConfig, EffectiveCommand, ErrorPhase, ExecutionOutcome,
+    GovernanceClient, GovernanceClientError, GovernanceOutcome, GovernanceRejection,
+    GovernanceVerdict, GovernedCleanupState, GovernedCommandResult, GovernedDispatchState,
+    GovernedDispatcher, GovernedError, GovernedErrorCode, HostExecutionFailure,
+    HostExecutionFailureCode, HostExecutor, IsolationSupport, SandboxAssetBundle, SelectedExecutor,
+    TimeoutState,
+};
 pub use openshell::{
     OPENSHELL_SOURCE_PIN, OpenShellConfig, OpenShellConnectError, OpenShellConnectErrorCode,
     OpenShellRuntime,

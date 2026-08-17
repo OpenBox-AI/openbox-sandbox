@@ -8,6 +8,7 @@
 
 mod boundary;
 mod client_conformance;
+mod dispatcher;
 mod failure_invariants;
 mod live_service;
 mod protocol;
