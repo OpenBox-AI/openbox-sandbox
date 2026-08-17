@@ -1199,6 +1199,8 @@ cat >"$SERVICE_CONFIG" <<EOF
     {"certificate_sha256": "${CALLER_FP}", "role": "runtime"}
   ],
   "state_directory": "${SANDBOX_STATE_DIR}",
+  "provider": "openshell",
+  "provider_capability": "attested",
   "asset_bundle": {
     "runtime_contract_version": 1,
     "adapter_build_sha256": "${ADAPTER_SHA}",

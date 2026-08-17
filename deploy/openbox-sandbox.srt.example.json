@@ -7,30 +7,25 @@
     {
       "certificate_sha256": "REPLACE_WITH_RUNTIME_CALLER_CERTIFICATE_SHA256",
       "role": "runtime"
-    },
-    {
-      "certificate_sha256": "REPLACE_WITH_ADMIN_CALLER_CERTIFICATE_SHA256",
-      "role": "administrator"
     }
   ],
   "state_directory": "/var/lib/openbox-sandbox/cleanup",
-  "provider": "openshell",
-  "provider_capability": "attested",
+  "provider": "srt",
+  "provider_capability": "enforced-locally",
+  "srt_profile_path": "/var/lib/openbox-sandbox/srt/policy.sb",
+  "srt_profile_sha256": "REPLACE_WITH_COMPILED_PROFILE_SHA256",
+  "srt_workspace_root": "/var/lib/openbox-sandbox/srt/workspaces",
   "asset_bundle": {
     "runtime_contract_version": 1,
     "adapter_build_sha256": "REPLACE_WITH_RUNNING_OPENBOX_SANDBOX_SHA256",
-    "template": "registry.example/openbox/sandbox@sha256:REPLACE_WITH_IMAGE_SHA256",
+    "template": "native://srt",
     "policy": {
-      "id": "openbox-deny-network",
+      "id": "openbox-native-srt-deny-network",
       "version": 1,
-      "sha256": "REPLACE_WITH_POLICY_SHA256"
+      "sha256": "REPLACE_WITH_DEPLOYMENT_POLICY_SHA256"
     },
-    "compatibility_id": "REPLACE_WITH_APPROVED_COMPATIBILITY_ID"
+    "compatibility_id": "native-srt-v1"
   },
-  "runtime_endpoint": "https://127.0.0.1:17670",
-  "runtime_mtls_directory": "/etc/openbox-sandbox/runtime-mtls",
-  "runtime_connect_timeout_ms": 10000,
-  "runtime_poll_interval_ms": 250,
   "reconcile_delete_deadline_ms": 60000,
   "reconcile_wait_deadline_ms": 60000,
   "maximum_connections": 64,

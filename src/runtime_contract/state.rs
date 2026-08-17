@@ -4,6 +4,20 @@ use core::fmt;
 
 use crate::{PolicyIdentity, RequestOwnedId, ValidationCode, ValidationError};
 
+/// The enforcement evidence a configured provider supplies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    feature = "serde",
+    derive(serde::Deserialize, serde::Serialize),
+    serde(rename_all = "kebab-case")
+)]
+pub enum ProviderCapability {
+    /// A remote provider attests the active policy identity.
+    Attested,
+    /// A local OS sandbox enforces a deployment-pinned policy profile.
+    EnforcedLocally,
+}
+
 /// The authoritative outcome class for sandbox creation failures.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(

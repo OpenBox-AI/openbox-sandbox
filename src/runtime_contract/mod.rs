@@ -29,6 +29,6 @@ pub use result::{DeleteOutcome, ExecCompleted, ObservedExitCode, OutputByteCount
 pub use runtime::SandboxRuntime;
 pub use state::{
     CleanupState, CleanupTarget, CreatedSandbox, CreationState, DispatchState, FailureTimeout,
-    ObservedTimeout, OpaqueProviderHandle, ReadySandbox,
+    ObservedTimeout, OpaqueProviderHandle, ProviderCapability, ReadySandbox,
 };
 pub use validation::{ValidationCode, ValidationError};

@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 
-use openbox_sandbox::{AssetBundleIdentity, CallerRole};
+use openbox_sandbox::{AssetBundleIdentity, CallerRole, ProviderCapability, Sha256Digest};
 use rustix::fs::{Mode, OFlags, open};
 use rustix::process::geteuid;
 use serde::de::{MapAccess, SeqAccess, Visitor};
@@ -23,16 +23,36 @@ pub struct ProcessConfig {
     pub authorized_callers: Vec<AuthorizedCaller>,
     pub state_directory: PathBuf,
     pub asset_bundle: AssetBundleIdentity,
-    pub runtime_endpoint: String,
-    pub runtime_mtls_directory: PathBuf,
-    pub runtime_connect_timeout_ms: u64,
-    pub runtime_poll_interval_ms: u64,
+    pub provider: ProviderKind,
+    pub provider_capability: ProviderCapability,
+    #[serde(default)]
+    pub runtime_endpoint: Option<String>,
+    #[serde(default)]
+    pub runtime_mtls_directory: Option<PathBuf>,
+    #[serde(default)]
+    pub runtime_connect_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub runtime_poll_interval_ms: Option<u64>,
+    #[serde(default)]
+    pub srt_profile_path: Option<PathBuf>,
+    #[serde(default)]
+    pub srt_profile_sha256: Option<Sha256Digest>,
+    #[serde(default)]
+    pub srt_workspace_root: Option<PathBuf>,
     pub reconcile_delete_deadline_ms: u64,
     pub reconcile_wait_deadline_ms: u64,
     pub maximum_connections: usize,
     pub drain_timeout_ms: u64,
     #[serde(default)]
     pub allow_degraded_landlock: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+pub enum ProviderKind {
+    #[serde(rename = "openshell")]
+    OpenShell,
+    #[serde(rename = "srt")]
+    Srt,
 }
 
 #[derive(Deserialize)]
@@ -81,6 +101,7 @@ pub fn load(path: &Path) -> Result<ProcessConfig, ConfigError> {
     Ok(config)
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
     if !config.bind_address.ip().is_loopback() {
         eprintln!("ERROR: config validation failed: bind_address is not loopback");
@@ -106,29 +127,79 @@ fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
         eprintln!("ERROR: config validation failed: maximum_connections exceeds 65536");
         return Err(ConfigError);
     }
-    if !valid_loopback_https_endpoint(&config.runtime_endpoint) {
-        eprintln!("ERROR: config validation failed: runtime_endpoint is not a valid loopback HTTPS endpoint");
-        return Err(ConfigError);
-    }
-    if config.runtime_mtls_directory.as_os_str().is_empty() {
-        eprintln!("ERROR: config validation failed: runtime_mtls_directory is empty");
-        return Err(ConfigError);
-    }
-    if config.runtime_connect_timeout_ms == 0 {
-        eprintln!("ERROR: config validation failed: runtime_connect_timeout_ms is 0");
-        return Err(ConfigError);
-    }
-    if config.runtime_connect_timeout_ms > 120_000 {
-        eprintln!("ERROR: config validation failed: runtime_connect_timeout_ms exceeds 120000");
-        return Err(ConfigError);
-    }
-    if config.runtime_poll_interval_ms == 0 {
-        eprintln!("ERROR: config validation failed: runtime_poll_interval_ms is 0");
-        return Err(ConfigError);
-    }
-    if config.runtime_poll_interval_ms > 60_000 {
-        eprintln!("ERROR: config validation failed: runtime_poll_interval_ms exceeds 60000");
-        return Err(ConfigError);
+    match config.provider {
+        ProviderKind::OpenShell => {
+            if config.provider_capability != ProviderCapability::Attested
+                || config.srt_profile_path.is_some()
+                || config.srt_profile_sha256.is_some()
+                || config.srt_workspace_root.is_some()
+            {
+                eprintln!(
+                    "ERROR: config validation failed: OpenShell capability/provider fields mismatch"
+                );
+                return Err(ConfigError);
+            }
+            let endpoint = config.runtime_endpoint.as_deref().ok_or(ConfigError)?;
+            if !valid_loopback_https_endpoint(endpoint) {
+                eprintln!(
+                    "ERROR: config validation failed: runtime_endpoint is not a valid loopback HTTPS endpoint"
+                );
+                return Err(ConfigError);
+            }
+            let mtls = config
+                .runtime_mtls_directory
+                .as_deref()
+                .ok_or(ConfigError)?;
+            if mtls.as_os_str().is_empty() {
+                eprintln!("ERROR: config validation failed: runtime_mtls_directory is empty");
+                return Err(ConfigError);
+            }
+            if config
+                .runtime_connect_timeout_ms
+                .is_none_or(|value| value == 0 || value > 120_000)
+            {
+                eprintln!(
+                    "ERROR: config validation failed: runtime_connect_timeout_ms is outside 1..=120000"
+                );
+                return Err(ConfigError);
+            }
+            if config
+                .runtime_poll_interval_ms
+                .is_none_or(|value| value == 0 || value > 60_000)
+            {
+                eprintln!(
+                    "ERROR: config validation failed: runtime_poll_interval_ms is outside 1..=60000"
+                );
+                return Err(ConfigError);
+            }
+        }
+        ProviderKind::Srt => {
+            if config.provider_capability != ProviderCapability::EnforcedLocally
+                || config.runtime_endpoint.is_some()
+                || config.runtime_mtls_directory.is_some()
+                || config.runtime_connect_timeout_ms.is_some()
+                || config.runtime_poll_interval_ms.is_some()
+            {
+                eprintln!(
+                    "ERROR: config validation failed: srt capability/provider fields mismatch"
+                );
+                return Err(ConfigError);
+            }
+            let profile = config.srt_profile_path.as_deref().ok_or(ConfigError)?;
+            let workspace = config.srt_workspace_root.as_deref().ok_or(ConfigError)?;
+            if config.srt_profile_sha256.is_none() || workspace.as_os_str().is_empty() {
+                eprintln!(
+                    "ERROR: config validation failed: srt profile pin or workspace is missing"
+                );
+                return Err(ConfigError);
+            }
+            validate_owner_file(profile, true).inspect_err(|_| {
+                eprintln!("ERROR: config validation failed: srt_profile_path validation failed");
+            })?;
+            validate_owner_directory(workspace).inspect_err(|_| {
+                eprintln!("ERROR: config validation failed: srt_workspace_root validation failed");
+            })?;
+        }
     }
     if config.reconcile_delete_deadline_ms == 0 {
         eprintln!("ERROR: config validation failed: reconcile_delete_deadline_ms is 0");
@@ -154,16 +225,23 @@ fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
         eprintln!("ERROR: config validation failed: drain_timeout_ms exceeds 120000");
         return Err(ConfigError);
     }
-    validate_owner_file(&config.server_certificate_path, false)
-        .inspect_err(|_| eprintln!("ERROR: config validation failed: server_certificate_path validation failed"))?;
-    validate_owner_file(&config.server_private_key_path, true)
-        .inspect_err(|_| eprintln!("ERROR: config validation failed: server_private_key_path validation failed"))?;
-    validate_owner_file(&config.client_ca_path, false)
-        .inspect_err(|_| eprintln!("ERROR: config validation failed: client_ca_path validation failed"))?;
-    validate_owner_directory(&config.state_directory)
-        .inspect_err(|_| eprintln!("ERROR: config validation failed: state_directory validation failed"))?;
-    validate_owner_directory(&config.runtime_mtls_directory)
-        .inspect_err(|_| eprintln!("ERROR: config validation failed: runtime_mtls_directory validation failed"))?;
+    validate_owner_file(&config.server_certificate_path, false).inspect_err(|_| {
+        eprintln!("ERROR: config validation failed: server_certificate_path validation failed");
+    })?;
+    validate_owner_file(&config.server_private_key_path, true).inspect_err(|_| {
+        eprintln!("ERROR: config validation failed: server_private_key_path validation failed");
+    })?;
+    validate_owner_file(&config.client_ca_path, false).inspect_err(|_| {
+        eprintln!("ERROR: config validation failed: client_ca_path validation failed");
+    })?;
+    validate_owner_directory(&config.state_directory).inspect_err(|_| {
+        eprintln!("ERROR: config validation failed: state_directory validation failed");
+    })?;
+    if let Some(runtime_mtls_directory) = &config.runtime_mtls_directory {
+        validate_owner_directory(runtime_mtls_directory).inspect_err(|_| {
+            eprintln!("ERROR: config validation failed: runtime_mtls_directory validation failed");
+        })?;
+    }
     Ok(())
 }
 
@@ -384,6 +462,8 @@ mod tests {
                 "role": "runtime"
             }],
             "state_directory": state,
+            "provider": "openshell",
+            "provider_capability": "attested",
             "asset_bundle": {
                 "runtime_contract_version": 1,
                 "adapter_build_sha256": "b".repeat(64),
@@ -469,6 +549,53 @@ mod tests {
         value["allow_degraded_landlock"] = serde_json::Value::Bool(true);
         write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
         assert!(load(&path).unwrap().allow_degraded_landlock);
+    }
+
+    #[test]
+    fn srt_provider_requires_explicit_local_capability_and_pinned_profile() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let (path, mut value) = fixture(&root);
+        let workspace = root.join("srt-workspaces");
+        let profile = root.join(if cfg!(target_os = "macos") {
+            "policy.sb"
+        } else {
+            "policy.json"
+        });
+        let policy = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("deploy/policies/policy-deny-network.yaml");
+        let profile_sha =
+            openbox_sandbox::compile_srt_policy(&policy, &profile, &workspace).unwrap();
+        std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o600)).unwrap();
+        value["provider"] = serde_json::Value::String("srt".to_owned());
+        value["provider_capability"] = serde_json::Value::String("enforced-locally".to_owned());
+        value.as_object_mut().unwrap().remove("runtime_endpoint");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("runtime_mtls_directory");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("runtime_connect_timeout_ms");
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("runtime_poll_interval_ms");
+        value["srt_profile_path"] =
+            serde_json::Value::String(profile.to_string_lossy().into_owned());
+        value["srt_profile_sha256"] = serde_json::Value::String(profile_sha);
+        value["srt_workspace_root"] =
+            serde_json::Value::String(workspace.to_string_lossy().into_owned());
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+        assert_eq!(load(&path).unwrap().provider, ProviderKind::Srt);
+
+        value["provider_capability"] = serde_json::Value::String("attested".to_owned());
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+        assert!(load(&path).is_err());
+        value.as_object_mut().unwrap().remove("provider_capability");
+        write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
+        assert!(load(&path).is_err());
     }
 
     #[test]

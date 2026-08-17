@@ -30,6 +30,10 @@ const SCRIPTS: &[(&str, &str)] = &[
         "provision-local-sandbox.sh",
         include_str!("../scripts/provision-local-sandbox.sh"),
     ),
+    (
+        "provision-native-srt.sh",
+        include_str!("../scripts/provision-native-srt.sh"),
+    ),
 ];
 
 /// Resolve a helper script path, materializing the embedded copy when no
@@ -91,8 +95,7 @@ pub fn resolve(name: &str) -> Result<PathBuf, String> {
                 .map_err(|e| format!("cannot secure script dir {}: {e}", dir.display()))?;
         }
         let temp = dir.join(format!("{name}.tmp"));
-        fs::write(&temp, bytes)
-            .map_err(|e| format!("cannot write embedded script {name}: {e}"))?;
+        fs::write(&temp, bytes).map_err(|e| format!("cannot write embedded script {name}: {e}"))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

@@ -29,9 +29,9 @@ use std::process::{Command, ExitCode};
 
 mod bundle;
 mod deps;
+mod pin;
 mod provision;
 mod publish;
-mod pin;
 mod scripts;
 mod update;
 
@@ -146,7 +146,9 @@ enum CommandLine {
 /// Value-taking `--flag` → env mapping for provision options. Every knob the
 /// provision script accepts via OPENBOX_* env has a CLI spelling.
 const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
+    ("--provider", "OPENBOX_PROVIDER"),
     ("--state-root", "OPENBOX_STATE_ROOT"),
+    ("--srt-workspace-root", "OPENBOX_SRT_WORKSPACE_ROOT"),
     ("--config-root", "OPENBOX_CONFIG_ROOT"),
     ("--project-root", "OPENBOX_PROJECT_ROOT"),
     ("--bundle-dir", "OPENSHELL_BUNDLE_DIR"),
@@ -176,13 +178,28 @@ const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
     ("--service-ready-interval", "OPENBOX_SERVICE_READY_INTERVAL"),
     ("--warm-poll-count", "OPENBOX_WARM_POLL_COUNT"),
     ("--warm-poll-interval", "OPENBOX_WARM_POLL_INTERVAL"),
-    ("--runtime-connect-timeout-ms", "OPENBOX_RUNTIME_CONNECT_TIMEOUT_MS"),
-    ("--runtime-poll-interval-ms", "OPENBOX_RUNTIME_POLL_INTERVAL_MS"),
-    ("--reconcile-delete-deadline-ms", "OPENBOX_RECONCILE_DELETE_DEADLINE_MS"),
-    ("--reconcile-wait-deadline-ms", "OPENBOX_RECONCILE_WAIT_DEADLINE_MS"),
+    (
+        "--runtime-connect-timeout-ms",
+        "OPENBOX_RUNTIME_CONNECT_TIMEOUT_MS",
+    ),
+    (
+        "--runtime-poll-interval-ms",
+        "OPENBOX_RUNTIME_POLL_INTERVAL_MS",
+    ),
+    (
+        "--reconcile-delete-deadline-ms",
+        "OPENBOX_RECONCILE_DELETE_DEADLINE_MS",
+    ),
+    (
+        "--reconcile-wait-deadline-ms",
+        "OPENBOX_RECONCILE_WAIT_DEADLINE_MS",
+    ),
     ("--max-connections", "OPENBOX_MAX_CONNECTIONS"),
     ("--drain-timeout-ms", "OPENBOX_DRAIN_TIMEOUT_MS"),
-    ("--allow-degraded-landlock", "OPENBOX_ALLOW_DEGRADED_LANDLOCK"),
+    (
+        "--allow-degraded-landlock",
+        "OPENBOX_ALLOW_DEGRADED_LANDLOCK",
+    ),
     ("--container-runtime", "CONTAINER_RUNTIME"),
     ("--bin-override", "OPENSHELL_BIN_OVERRIDE"),
     ("--gateway-bin", "OPENBOX_GATEWAY_BIN"),
@@ -200,6 +217,7 @@ const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
 
 /// Boolean `--flag` → env=value pairs for provision options.
 const PROVISION_FLAG_BOOLS: &[(&str, &str, &str)] = &[
+    ("--yes", "OPENBOX_YES", "1"),
     ("--no-start", "NO_START", "1"),
     ("--purge-cache", "OPENBOX_PURGE_CACHE", "1"),
     ("--skip-warm-cache", "OPENBOX_WARM_CACHE", "0"),
@@ -210,9 +228,7 @@ const PROVISION_FLAG_BOOLS: &[(&str, &str, &str)] = &[
     ("--base", "OPENBOX_RELEASE_LINE", "base"),
 ];
 
-fn parse_provision_flags(
-    args: &[String],
-) -> Result<(Vec<(String, String)>, bool, bool), String> {
+fn parse_provision_flags(args: &[String]) -> Result<(Vec<(String, String)>, bool, bool), String> {
     let mut overrides: Vec<(String, String)> = Vec::new();
     let mut clean_rerun = false;
     let mut keep_pki = false;
@@ -264,6 +280,15 @@ fn parse_provision_flags(
             return Err(format!(
                 "unknown provision option '{arg}' (see `obs provision --help`-listed flags)"
             ));
+        }
+    }
+    if let Some((_, provider)) = overrides
+        .iter()
+        .rev()
+        .find(|(key, _)| key == "OPENBOX_PROVIDER")
+    {
+        if !matches!(provider.as_str(), "srt" | "openshell") {
+            return Err("--provider must be srt or openshell".to_owned());
         }
     }
     if keep_pki && !clean_rerun {
@@ -399,7 +424,11 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Ok(CommandLine::Version) => {
-            println!("obs {} (release line: {})", env!("CARGO_PKG_VERSION"), channel());
+            println!(
+                "obs {} (release line: {})",
+                env!("CARGO_PKG_VERSION"),
+                channel()
+            );
             return ExitCode::SUCCESS;
         }
         Ok(CommandLine::Provision {
@@ -788,7 +817,8 @@ USAGE:
 MODULES:
   openbox-sandbox   Production-intent mTLS sandbox service (root crate).
   obs               Operator/developer launcher (this binary).
-  OpenShell         External gateway/driver runtime; never embedded.
+  Native srt        Default sandbox-exec/bubblewrap provider; no shell rebuild.
+  OpenShell         Explicit alternative external gateway/driver runtime.
 
 DOGFOOD LOOP (source checkout only):
   cargo build --release --bin openbox-sandbox
@@ -797,9 +827,13 @@ DOGFOOD LOOP (source checkout only):
   obs verify && obs uninstall
 
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
+  --provider NAME        srt (default, native OS sandbox) or openshell (explicit).
+  --yes                  Accept all non-privileged defaults non-interactively.
+                         The native srt path never requires sudo or CA trust.
   --clean-rerun          Also remove wizard-owned state before provisioning.
   --keep-pki             Preserve PKI (with --clean-rerun or uninstall).
   --state-root PATH      (~/.local/state/openbox-sandbox)
+  --srt-workspace-root PATH (/private/tmp/openbox-sandbox-<uid>/workspaces)
   --config-root PATH     (~/.config/openbox-sandbox)
   --sandbox-port N       (17443)
   --gateway-port N       (17670)
@@ -914,6 +948,18 @@ mod tests {
 
     #[test]
     fn provision_options_are_validated() {
+        assert_eq!(
+            parse_command(&args(&["provision", "--provider", "srt", "--yes"])),
+            Ok(CommandLine::Provision {
+                overrides: vec![
+                    ("OPENBOX_PROVIDER".to_owned(), "srt".to_owned()),
+                    ("OPENBOX_YES".to_owned(), "1".to_owned()),
+                ],
+                clean_rerun: false,
+                keep_pki: false,
+            })
+        );
+        assert!(parse_command(&args(&["provision", "--provider", "unknown"])).is_err());
         assert_eq!(
             parse_command(&args(&["provision", "--clean-rerun", "--keep-pki"])),
             Ok(CommandLine::Provision {

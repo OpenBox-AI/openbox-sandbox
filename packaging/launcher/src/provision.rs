@@ -44,7 +44,29 @@ fn repo_root() -> PathBuf {
 }
 
 fn wizard_script() -> Result<PathBuf, String> {
-    crate::scripts::resolve("provision-local-sandbox.sh")
+    if selected_provider() == "srt" {
+        crate::scripts::resolve("provision-native-srt.sh")
+    } else {
+        crate::scripts::resolve("provision-local-sandbox.sh")
+    }
+}
+
+fn selected_provider() -> String {
+    if let Ok(provider) = std::env::var("OPENBOX_PROVIDER") {
+        return provider;
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let config_root = std::env::var_os("OPENBOX_CONFIG_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".config/openbox-sandbox"));
+    if let Ok(body) = std::fs::read_to_string(config_root.join("service.json")) {
+        if body.contains("\"provider\": \"openshell\"") || !body.contains("\"provider\"") {
+            return "openshell".to_owned();
+        }
+    }
+    "srt".to_owned()
 }
 
 /// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
@@ -53,9 +75,13 @@ fn wizard_script() -> Result<PathBuf, String> {
 fn gh_download_pattern(gh: &str, tag: &str, pattern: &str) -> bool {
     let status = Command::new(gh)
         .args([
-            "release", "download", tag,
-            "--repo", "OpenBox-AI/openbox-sandbox",
-            "--pattern", pattern,
+            "release",
+            "download",
+            tag,
+            "--repo",
+            "OpenBox-AI/openbox-sandbox",
+            "--pattern",
+            pattern,
             "--clobber",
         ])
         .stdout(Stdio::inherit())
@@ -150,7 +176,11 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     info(&format!(
         "release line: {} ({tag}) — OpenBox assets fetch from this tag only ({} template)",
         if dev_channel { "dev" } else { "base" },
-        if dev_channel { "allow-network" } else { "deny-network" }
+        if dev_channel {
+            "allow-network"
+        } else {
+            "deny-network"
+        }
     ));
     if !cwd.join(svc_name).is_file() {
         info(&format!("{svc_name} missing — fetching from {tag}"));
@@ -208,7 +238,6 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     }
 }
 
-
 fn dev_tar_name(is_darwin_arm64: bool) -> &'static str {
     if is_darwin_arm64 {
         "openbox-sandbox-dev-darwin-arm64.tar.gz"
@@ -253,9 +282,11 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         Ok(_) => "policy-deny-network-dev.yaml",
         Err(_) => {
             if cwd.join("policy-allow-network-dev.yaml").is_file()
-                || cwd.join(dev_tar_name(
-                    cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-                )).is_file()
+                || cwd
+                    .join(dev_tar_name(
+                        cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
+                    ))
+                    .is_file()
             {
                 "policy-allow-network-dev.yaml"
             } else {
@@ -307,7 +338,10 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     let status = Command::new("bash")
         .arg(&script)
         .env("OUT", &bundle_dir)
-        .env("OPENBOX_OPENSHELL_VERSION", crate::pin::LOCKED_RELEASE_VERSION)
+        .env(
+            "OPENBOX_OPENSHELL_VERSION",
+            crate::pin::LOCKED_RELEASE_VERSION,
+        )
         .current_dir(&cwd)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -332,9 +366,11 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
                 Ok(_) => "v0.1.0",
                 Err(_) => {
                     if cwd.join("policy-allow-network-dev.yaml").is_file()
-                        || cwd.join(dev_tar_name(
-                            cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-                        )).is_file()
+                        || cwd
+                            .join(dev_tar_name(
+                                cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
+                            ))
+                            .is_file()
                     {
                         "v0.1.0-dev"
                     } else {
@@ -351,7 +387,9 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
                 .stderr(Stdio::inherit())
                 .status();
             if !matches!(dl, Ok(s) if s.success()) {
-                err(&format!("failed to fetch the sandbox service binary {svc_name}"));
+                err(&format!(
+                    "failed to fetch the sandbox service binary {svc_name}"
+                ));
                 return Err(ExitCode::FAILURE);
             }
             // gh release download does not preserve the executable bit;
@@ -423,9 +461,11 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
                 Ok(_) => "v0.1.0",
                 Err(_) => {
                     if cwd.join("policy-allow-network-dev.yaml").is_file()
-                        || cwd.join(dev_tar_name(
-                            cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-                        )).is_file()
+                        || cwd
+                            .join(dev_tar_name(
+                                cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
+                            ))
+                            .is_file()
                     {
                         "v0.1.0-dev"
                     } else {
@@ -511,6 +551,124 @@ fn which_gh() -> Option<PathBuf> {
     None
 }
 
+fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
+        "openbox-sandbox-darwin-arm64"
+    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
+        "openbox-sandbox-linux-x86_64"
+    } else {
+        "openbox-sandbox"
+    };
+    let mut service = std::env::var_os("OPENBOX_SANDBOX_BIN").map(PathBuf::from);
+    let candidate = cwd.join(svc_name);
+    if service.as_ref().is_none_or(|path| !path.is_file()) {
+        if candidate.is_file() {
+            service = Some(candidate.clone());
+        }
+    }
+    if service.as_ref().is_none_or(|path| !path.is_file()) {
+        if let Some(gh) = which_gh() {
+            let tag = if crate::channel() == "base" {
+                "v0.1.0"
+            } else {
+                "v0.1.0-dev"
+            };
+            info(&format!(
+                "native srt service missing — fetching {svc_name} from {tag}"
+            ));
+            let _ = Command::new(gh)
+                .current_dir(&cwd)
+                .args([
+                    "release",
+                    "download",
+                    tag,
+                    "--repo",
+                    "OpenBox-AI/openbox-sandbox",
+                    "--pattern",
+                    svc_name,
+                    "--clobber",
+                ])
+                .status();
+            if candidate.is_file() {
+                service = Some(candidate);
+            }
+        }
+    }
+    if service.as_ref().is_none_or(|path| !path.is_file()) && cwd.join("Cargo.toml").is_file() {
+        info("building native srt service from source");
+        let status = Command::new(which_cargo().unwrap_or_else(|| PathBuf::from("cargo")))
+            .current_dir(&cwd)
+            .args(["build", "--release", "--locked", "--bin", "openbox-sandbox"])
+            .status();
+        if matches!(status, Ok(value) if value.success()) {
+            service = Some(cwd.join("target/release/openbox-sandbox"));
+        }
+    }
+    let service = service.filter(|path| path.is_file()).ok_or_else(|| {
+        err("native srt service binary is unavailable; no fallback to OpenShell");
+        ExitCode::FAILURE
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        if let Ok(metadata) = std::fs::metadata(&service) {
+            let mut permissions = metadata.permissions();
+            permissions.set_mode(permissions.mode() | 0o111);
+            let _ = std::fs::set_permissions(&service, permissions);
+        }
+    }
+
+    let mut policy = std::env::var_os("OPENBOX_POLICY_FILE").map(PathBuf::from);
+    for candidate in [
+        cwd.join("policy-deny-network-dev.yaml"),
+        cwd.join("deploy/policies/policy-deny-network.yaml"),
+        cwd.join("deploy/policies/policy-deny-network-dev.yaml"),
+    ] {
+        if policy.as_ref().is_none_or(|path| !path.is_file()) && candidate.is_file() {
+            policy = Some(candidate);
+        }
+    }
+    if policy.as_ref().is_none_or(|path| !path.is_file()) {
+        if let Some(gh) = which_gh() {
+            let tag = if crate::channel() == "base" {
+                "v0.1.0"
+            } else {
+                "v0.1.0-dev"
+            };
+            info(&format!(
+                "native srt policy missing — fetching policy-deny-network-dev.yaml from {tag}"
+            ));
+            let _ = Command::new(gh)
+                .current_dir(&cwd)
+                .args([
+                    "release",
+                    "download",
+                    tag,
+                    "--repo",
+                    "OpenBox-AI/openbox-sandbox",
+                    "--pattern",
+                    "policy-deny-network-dev.yaml",
+                    "--clobber",
+                ])
+                .status();
+            let downloaded = cwd.join("policy-deny-network-dev.yaml");
+            if downloaded.is_file() {
+                policy = Some(downloaded);
+            }
+        }
+    }
+    let policy = policy.filter(|path| path.is_file()).ok_or_else(|| {
+        err("native srt deny-network policy is unavailable; refusing an unpinned default");
+        ExitCode::FAILURE
+    })?;
+    unsafe {
+        std::env::set_var("OPENBOX_SANDBOX_BIN", service);
+        std::env::set_var("OPENBOX_POLICY_FILE", policy);
+    }
+    Ok(())
+}
+
 /// `obs provision` — teardown and provision, optionally cleaning state first.
 pub fn run_provision(
     clean_rerun: bool,
@@ -527,7 +685,20 @@ pub fn run_provision(
     if std::env::var("OPENBOX_RELEASE_LINE").is_err() {
         std::env::set_var("OPENBOX_RELEASE_LINE", crate::channel());
     }
-    if let Err(code) = auto_fetch_bundle() {
+    if std::env::var("OPENBOX_PROVIDER").is_err() {
+        std::env::set_var("OPENBOX_PROVIDER", "srt");
+    }
+    let provider = selected_provider();
+    if !matches!(provider.as_str(), "srt" | "openshell") {
+        err("OPENBOX_PROVIDER must be srt or openshell");
+        return ExitCode::FAILURE;
+    }
+    let fetched = if provider == "srt" {
+        auto_fetch_srt_assets()
+    } else {
+        auto_fetch_bundle()
+    };
+    if let Err(code) = fetched {
         return code;
     }
     let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
@@ -537,10 +708,12 @@ pub fn run_provision(
     } else {
         "openbox-sandbox"
     };
-    ensure_release_assets(
-        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
-        svc_name,
-    );
+    if provider == "openshell" {
+        ensure_release_assets(
+            &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            svc_name,
+        );
+    }
     let script = match wizard_script() {
         Ok(s) => s,
         Err(reason) => {
@@ -549,7 +722,11 @@ pub fn run_provision(
         }
     };
     banner_phase("PROVISION");
-    info("teardown stale runs -> codesign -> gateway -> mTLS -> service -> agent.env");
+    if provider == "srt" {
+        info("provider=srt -> native profile -> local mTLS service -> smoke -> agent.env");
+    } else {
+        info("provider=openshell -> gateway -> mTLS -> service -> agent.env");
+    }
     let mut args = Vec::new();
     if clean_rerun {
         args.push("--clean-rerun");
@@ -646,6 +823,9 @@ pub fn run_verify() -> ExitCode {
                 err(&format!("cannot load agent environment: {error}"));
                 return ExitCode::FAILURE;
             }
+            if agent_env_selects_srt(&agent_env) {
+                cmd.env("OPENBOX_LIVE_SERVICE_CMD", "printf native-srt-ready");
+            }
             info(&format!("running prebuilt verify harness: {bin}"));
             return match cmd.status() {
                 Ok(s) if s.success() => {
@@ -681,6 +861,9 @@ pub fn run_verify() -> ExitCode {
     if let Err(error) = apply_agent_env(&mut cmd, &agent_env) {
         err(&format!("cannot load agent environment: {error}"));
         return ExitCode::FAILURE;
+    }
+    if agent_env_selects_srt(&agent_env) {
+        cmd.env("OPENBOX_LIVE_SERVICE_CMD", "printf native-srt-ready");
     }
     info("running `cargo test --lib live_service_create_exec_delete`");
     match cmd.status() {
@@ -719,6 +902,10 @@ pub fn run_status() -> ExitCode {
     let service_config = config_root.join("service.json");
     let gateway_log = state_root.join("gateway/gateway.log");
     let sandbox_log = state_root.join("sandbox-service.log");
+    let provider = std::fs::read_to_string(&service_config)
+        .ok()
+        .filter(|body| body.contains("\"provider\": \"srt\""))
+        .map_or("openshell", |_| "srt");
 
     // The wizard records the actual ports (OPENSHELL_SERVER_PORT and
     // OPENBOX_SANDBOX_PORT overrides are honored); read them back instead of
@@ -726,9 +913,12 @@ pub fn run_status() -> ExitCode {
     let gateway_port = read_gateway_port(&home).unwrap_or(17670);
     let sandbox_port = read_sandbox_port(&service_config).unwrap_or(17443);
 
-    port_phase(gateway_port, "gateway");
+    info(&format!("provider: {provider}"));
+    if provider == "openshell" {
+        port_phase(gateway_port, "gateway");
+        pid_phase(&gateway_pid_file, "gateway");
+    }
     port_phase(sandbox_port, "sandbox service");
-    pid_phase(&gateway_pid_file, "gateway");
     pid_phase(&sandbox_pid_file, "sandbox service");
     artifact_phase(&agent_env, "agent.env");
     artifact_phase(&service_config, "service.json");
@@ -736,7 +926,7 @@ pub fn run_status() -> ExitCode {
     info(&format!("state root:  {}", state_root.display()));
     info(&format!("gateway log: {}", gateway_log.display()));
     info(&format!("sandbox log: {}", sandbox_log.display()));
-    let all_up = port_open(gateway_port) && port_open(sandbox_port);
+    let all_up = port_open(sandbox_port) && (provider == "srt" || port_open(gateway_port));
     if all_up {
         ok("stack ready — run `obs verify` to exercise the lifecycle");
     } else {
@@ -840,6 +1030,13 @@ fn agent_env_path() -> PathBuf {
         .join("agent.env")
 }
 
+fn agent_env_selects_srt(env_path: &Path) -> bool {
+    std::fs::read_to_string(env_path).is_ok_and(|body| {
+        body.lines()
+            .any(|line| line.trim() == "OPENBOX_PROVIDER=srt")
+    })
+}
+
 fn apply_agent_env(cmd: &mut Command, env_path: &Path) -> Result<(), String> {
     // Parse the generated env file ourselves so verification needs no shell.
     let body = std::fs::read_to_string(env_path).map_err(|error| error.to_string())?;
@@ -935,11 +1132,7 @@ fn exec_bash(script: &Path, args: &[&str]) -> ExitCode {
     exec_bash_env(script, args, &[])
 }
 
-fn exec_bash_env(
-    script: &Path,
-    args: &[&str],
-    overrides: &[(String, String)],
-) -> ExitCode {
+fn exec_bash_env(script: &Path, args: &[&str], overrides: &[(String, String)]) -> ExitCode {
     let mut command = Command::new("bash");
     command
         .arg(script.to_str().unwrap_or(""))

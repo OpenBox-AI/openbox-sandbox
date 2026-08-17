@@ -12,6 +12,7 @@ mod openshell;
 mod protocol;
 mod runtime_contract;
 mod service;
+mod srt;
 #[cfg(test)]
 mod test_client;
 #[cfg(test)]
@@ -43,15 +44,16 @@ pub use runtime_contract::{
     DispatchState, ExecCompleted, ExecFailure, ExecFailureCode, ExecRequest, FailureTimeout,
     ObservedExitCode, ObservedTimeout, OpaqueProviderHandle, OperationContext, OperationDeadline,
     OperatorDetail, OutputByteCounts, OutputLimitKind, OutputLimits, PolicyDocument,
-    PolicyIdentity, ReadinessFailure, ReadinessFailureCode, ReadySandbox, RequestOwnedId,
-    SANDBOX_WORKDIR, SandboxRuntime, Sha256Digest, TemplateIdentity, ValidationCode,
-    ValidationError,
+    PolicyIdentity, ProviderCapability, ReadinessFailure, ReadinessFailureCode, ReadySandbox,
+    RequestOwnedId, SANDBOX_WORKDIR, SandboxRuntime, Sha256Digest, TemplateIdentity,
+    ValidationCode, ValidationError,
 };
 pub use service::{
     AuthValueError, CallerFingerprint, CallerIdentity, CallerRole, DurableRecord, DurableStage,
     DurableStore, ReconciliationReport, SandboxServiceBoundary, SandboxTlsServer, ServerError,
     StoreError, TlsServerConfig,
 };
+pub use srt::{SrtConfig, SrtConfigError, SrtRuntime, compile_srt_policy, sha256_file};
 #[cfg(test)]
 pub use test_support::{
     ConformanceCase, ConformanceFailure, ConformanceHarness, ConformanceObservation,

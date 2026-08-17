@@ -1,5 +1,12 @@
 # OpenBox Sandbox
 
+The default provider is `srt`: an OpenBox-owned native OS sandbox that invokes
+argv directly under macOS Seatbelt (`sandbox-exec`) or Linux bubblewrap. The
+name describes the SRT-style boundary; it is not Anthropic's Node/npm CLI.
+Profiles are compiled only during provisioning, pinned by SHA-256 in the
+service config, and verified before every execution. OpenShell remains an
+explicit alternative with `obs provision --provider openshell`.
+
 OpenBox Sandbox is the standalone, production-intent, framework-neutral sandbox runtime for running client-owned commands through OpenShell.
 
 ## Platform
