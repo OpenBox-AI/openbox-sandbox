@@ -28,6 +28,43 @@ use crate::bundle::Artifacts;
 /// The OpenShell version this launcher is built and tested against.
 pub const REQUIRED_VERSION: &str = "0.0.88";
 
+/// The official project-zot release used by registry-mode provisioning.
+pub const ZOT_VERSION: &str = "v2.1.20";
+
+/// One platform's pinned official zot asset and its local compatibility name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ZotPin {
+    pub asset: &'static str,
+    pub local_name: &'static str,
+    pub sha256: &'static str,
+}
+
+const ZOT_DARWIN_ARM64: ZotPin = ZotPin {
+    asset: "zot-darwin-arm64-minimal",
+    local_name: "zot-darwin-arm64",
+    sha256: "edeb86f0533d21305bbc775f23da0356a5ce3fd3dd4f614d3257f75ca2ef617a",
+};
+
+const ZOT_LINUX_X86_64: ZotPin = ZotPin {
+    asset: "zot-linux-amd64-minimal",
+    local_name: "zot-linux-x86_64",
+    sha256: "902ea958c4a59c0f5c4ac9fa2bbaad8716e80551bcaede7ab4ea998bf57190a6",
+};
+
+/// Resolve the official zot asset pin for a target platform.
+pub fn zot_pin_for(target_os: &str, target_arch: &str) -> Option<ZotPin> {
+    match (target_os, target_arch) {
+        ("macos", "aarch64") => Some(ZOT_DARWIN_ARM64),
+        ("linux", "x86_64") => Some(ZOT_LINUX_X86_64),
+        _ => None,
+    }
+}
+
+/// Resolve the official zot asset pin for the launcher build target.
+pub fn zot_pin() -> Option<ZotPin> {
+    zot_pin_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
 /// Reported by [`verify`]: the artifact that failed, and why.
 #[derive(Debug)]
 pub struct VerifyError {
@@ -155,14 +192,12 @@ pub const ROOT_PROTOCOL_MARKER: &str = "gf1690849";
 pub const LOCKED_RELEASE_VERSION: &str = "0.0.88";
 
 fn version_satisfies(found: &str, required: &str) -> bool {
-    found == required
-        || found == LOCKED_RELEASE_VERSION
-        || found.contains(ROOT_PROTOCOL_MARKER)
+    found == required || found == LOCKED_RELEASE_VERSION || found.contains(ROOT_PROTOCOL_MARKER)
 }
 
 /// sha256 of a file. Uses `shasum` on macOS (coreutil) and `sha256sum` on
 /// Linux (GNU coreutils). Kept dependency-free, like the rest of the launcher.
-fn check_sha256(path: &Path, expected: &str) -> Result<(), String> {
+pub(crate) fn check_sha256(path: &Path, expected: &str) -> Result<(), String> {
     let (cmd, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("shasum", &["-a", "256"])
     } else {
@@ -185,5 +220,33 @@ fn check_sha256(path: &Path, expected: &str) -> Result<(), String> {
         Err(format!(
             "sha256 mismatch: expected {expected}, found {digest}"
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{zot_pin_for, ZOT_VERSION};
+
+    #[test]
+    fn zot_release_is_pinned_per_supported_platform() {
+        assert_eq!(ZOT_VERSION, "v2.1.20");
+
+        let darwin = zot_pin_for("macos", "aarch64").expect("darwin-arm64 pin");
+        assert_eq!(darwin.asset, "zot-darwin-arm64-minimal");
+        assert_eq!(darwin.local_name, "zot-darwin-arm64");
+        assert_eq!(
+            darwin.sha256,
+            "edeb86f0533d21305bbc775f23da0356a5ce3fd3dd4f614d3257f75ca2ef617a"
+        );
+
+        let linux = zot_pin_for("linux", "x86_64").expect("linux-x86_64 pin");
+        assert_eq!(linux.asset, "zot-linux-amd64-minimal");
+        assert_eq!(linux.local_name, "zot-linux-x86_64");
+        assert_eq!(
+            linux.sha256,
+            "902ea958c4a59c0f5c4ac9fa2bbaad8716e80551bcaede7ab4ea998bf57190a6"
+        );
+
+        assert_eq!(zot_pin_for("linux", "aarch64"), None);
     }
 }

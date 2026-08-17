@@ -64,6 +64,60 @@ fn gh_download_pattern(gh: &str, tag: &str, pattern: &str) -> bool {
     matches!(status, Ok(st) if st.success())
 }
 
+fn fetch_pinned_zot(gh: &str, cwd: &Path, pin: crate::pin::ZotPin) -> Result<(), String> {
+    let status = Command::new(gh)
+        .current_dir(cwd)
+        .args([
+            "release",
+            "download",
+            crate::pin::ZOT_VERSION,
+            "--repo",
+            "project-zot/zot",
+            "--pattern",
+            pin.asset,
+            "--clobber",
+        ])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .map_err(|error| format!("could not run gh: {error}"))?;
+    if !status.success() {
+        return Err(format!("gh release download exited {status}"));
+    }
+
+    let downloaded = cwd.join(pin.asset);
+    let local = cwd.join(pin.local_name);
+    std::fs::rename(&downloaded, &local).map_err(|error| {
+        format!(
+            "could not rename {} to {}: {error}",
+            downloaded.display(),
+            local.display()
+        )
+    })?;
+    if let Err(error) = crate::pin::check_sha256(&local, pin.sha256) {
+        let _ = std::fs::remove_file(&local);
+        return Err(error);
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&local)
+            .map_err(|error| format!("could not read {} permissions: {error}", local.display()))?
+            .permissions();
+        permissions.set_mode(permissions.mode() | 0o111);
+        std::fs::set_permissions(&local, permissions)
+            .map_err(|error| format!("could not chmod +x {}: {error}", local.display()))?;
+    }
+
+    ok(&format!(
+        "official zot {} verified ({})",
+        crate::pin::ZOT_VERSION,
+        pin.sha256
+    ));
+    Ok(())
+}
+
 /// Provision must self-heal: anything missing from the detected release line
 /// (service binary, policy, dev image tar) is fetched from the matching tag.
 fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
@@ -86,13 +140,7 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     } else {
         ""
     };
-    let zot = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
-        "zot-darwin-arm64"
-    } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
-        "zot-linux-x86_64"
-    } else {
-        ""
-    };
+    let zot_pin = crate::pin::zot_pin();
     let dev_channel = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
         Ok("dev") => true,
         Ok(_) => false,
@@ -100,7 +148,7 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     };
     let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
     info(&format!(
-        "release line: {} ({tag}) — all assets fetch from this tag only ({} template)",
+        "release line: {} ({tag}) — OpenBox assets fetch from this tag only ({} template)",
         if dev_channel { "dev" } else { "base" },
         if dev_channel { "allow-network" } else { "deny-network" }
     ));
@@ -124,7 +172,8 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
             info(&format!("{vm_cache} missing — fetching from v0.1.0-dev"));
             let _ = gh_download_pattern(&gh, "v0.1.0-dev", vm_cache);
         }
-        // Runtime-agnostic registry assets: the OCI layout + the zot binary.
+        // Runtime-agnostic registry assets: our OCI layout plus the separately
+        // pinned binary from project-zot's official release.
         let oci_layout = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
             "openbox-sandbox-dev-darwin-arm64-oci.tar.gz"
         } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
@@ -136,11 +185,16 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
             info(&format!("{oci_layout} missing — fetching from v0.1.0-dev"));
             let _ = gh_download_pattern(&gh, "v0.1.0-dev", oci_layout);
         }
-        if !zot.is_empty() && !cwd.join(zot).is_file() {
+        if let Some(pin) = zot_pin.filter(|pin| !cwd.join(pin.local_name).is_file()) {
             info(&format!(
-                "{zot} (local image registry) missing — fetching from v0.1.0-dev"
+                "{} (local image registry) missing — fetching {} from official project-zot/zot {}",
+                pin.local_name,
+                pin.asset,
+                crate::pin::ZOT_VERSION
             ));
-            let _ = gh_download_pattern(&gh, "v0.1.0-dev", zot);
+            if let Err(error) = fetch_pinned_zot(&gh, cwd, pin) {
+                warn(&format!("could not fetch pinned official zot: {error}"));
+            }
         }
     } else {
         if !cwd.join("policy-deny-network-dev.yaml").is_file() {

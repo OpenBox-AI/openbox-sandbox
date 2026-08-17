@@ -125,13 +125,6 @@ resolve_sums_file() {
   return 1
 }
 
-expect_sha() {
-  local name="$1"
-  resolve_sums_file >/dev/null 2>&1 || true
-  [[ -n "$SUMS_FILE" && -f "$SUMS_FILE" ]] || return 0
-  awk -v n="$name" '$2 == n { print $1; exit }' "$SUMS_FILE" 2>/dev/null || true
-}
-
 verify_asset() {
   local path="$1" name="$2" expected actual tag asset_dir downloaded_sha was_executable
   VERIFY_ASSET_ERROR=""
@@ -354,7 +347,6 @@ ZOT_BIN="${OPENBOX_ZOT_BIN:-}"
 _oci_layout="${OPENBOX_OCI_LAYOUT:-}"
 _oci_default=""
 _zot_default=""
-ZOT_CHECKSUM_NAME=""
 ZOT_PID=""
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64)
@@ -390,17 +382,9 @@ if [[ "$VERIFY_PROVISION_ASSETS" == "1" && -n "$_oci_layout" ]]; then
     _oci_layout=""
   fi
 fi
-if [[ "$VERIFY_PROVISION_ASSETS" == "1" && -n "$ZOT_BIN" ]]; then
-  ZOT_CHECKSUM_NAME="$(basename "$ZOT_BIN")"
-  if [[ -z "$(expect_sha "$ZOT_CHECKSUM_NAME")" && -n "$_zot_default" \
-      && "$ZOT_CHECKSUM_NAME" != "$_zot_default" && -n "$(expect_sha "$_zot_default")" ]]; then
-    ZOT_CHECKSUM_NAME="$_zot_default"
-  fi
-  if ! verify_asset "$ZOT_BIN" "$ZOT_CHECKSUM_NAME"; then
-    warn "zot verification failed ($VERIFY_ASSET_ERROR) — falling back to the container runtime path"
-    ZOT_BIN=""
-  fi
-fi
+# zot is not an OpenBox release asset and therefore has no SHA256SUMS entry.
+# The launcher downloads it from project-zot's pinned official release and
+# verifies that pin before this embedded provision script runs.
 if [[ -n "$ZOT_BIN" ]]; then
   chmod +x "$ZOT_BIN" 2>/dev/null || true
 fi
