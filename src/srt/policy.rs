@@ -327,7 +327,7 @@ mod tests {
         if cfg!(target_os = "macos") {
             assert!(!body.contains("allow network-outbound"));
         } else {
-            assert!(body.contains(r#"\"mode\": \"deny\""#));
+            assert!(body.contains(r#""mode": "deny""#));
         }
     }
 
@@ -343,10 +343,10 @@ mod tests {
             assert!(!body.contains("*:443"));
             assert!(!body.contains("network-inbound"));
         } else {
-            assert!(body.contains(r#"\"mode\": \"allowlist\""#));
-            assert!(body.contains(r#"\"host\": \"example.com\""#));
-            assert!(body.contains(r#"\"port\": 443"#));
-            assert!(body.contains(r#"\"/usr/bin/curl\""#));
+            assert!(body.contains(r#""mode": "allowlist""#));
+            assert!(body.contains(r#""host": "example.com""#));
+            assert!(body.contains(r#""port": 443"#));
+            assert!(body.contains(r#""/usr/bin/curl""#));
         }
     }
 
