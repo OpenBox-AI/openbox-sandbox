@@ -123,6 +123,25 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn native_srt_smoke_binds_linux_dynamic_loader_paths() {
+        let script = SCRIPTS
+            .iter()
+            .find(|(name, _)| *name == "provision-native-srt.sh")
+            .map(|(_, body)| *body)
+            .expect("native srt provision script is embedded");
+        let smoke = script
+            .split_once("native runner smoke: /bin/true")
+            .expect("native smoke marker")
+            .1
+            .split_once("native sandbox smoke ready")
+            .expect("native smoke completion marker")
+            .0;
+
+        assert!(smoke.contains("for path in /usr /bin /sbin /lib /lib64 /etc"));
+        assert!(smoke.contains("bwrap \"${bwrap_args[@]}\""));
+    }
+
+    #[test]
     fn embedded_scripts_materialize_standalone() {
         let tmp = std::env::temp_dir().join(format!("obs-scripts-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&tmp);

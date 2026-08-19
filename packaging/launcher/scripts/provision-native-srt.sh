@@ -235,9 +235,12 @@ if [[ "$NO_START" != 1 ]]; then
       -D "WORKSPACE_ROOT=$SRT_WORKSPACE_ROOT" -D "WORKSPACE=$SRT_WORKSPACE_ROOT" \
       -f "$SRT_PROFILE" -- /usr/bin/true) || die "native Seatbelt smoke failed"
   else
-    bwrap --die-with-parent --new-session --unshare-all --unshare-net --proc /proc --dev /dev \
-      --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /etc /etc \
-      --bind "$SRT_WORKSPACE_ROOT" /sandbox --chdir /sandbox -- /bin/true || die "native bwrap smoke failed"
+    bwrap_args=(--die-with-parent --new-session --unshare-all --unshare-net --proc /proc --dev /dev)
+    for path in /usr /bin /sbin /lib /lib64 /etc; do
+      [[ -e "$path" ]] && bwrap_args+=(--ro-bind "$path" "$path")
+    done
+    bwrap_args+=(--bind "$SRT_WORKSPACE_ROOT" /sandbox --chdir /sandbox -- /bin/true)
+    bwrap "${bwrap_args[@]}" || die "native bwrap smoke failed"
   fi
   ok "native sandbox smoke ready"
 fi
