@@ -115,7 +115,7 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
         "semi;colon".to_owned(),
         "雪".to_owned(),
     ];
-    let mut argv = vec![proof.to_string_lossy().into_owned()];
+    let mut argv = vec!["./argv-proof".to_owned()];
     argv.extend(adversarial.clone());
     let completed = runtime
         .exec(ready, exec(argv, 5), context(10))
@@ -251,20 +251,20 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
             .any(|bytes| bytes == b"sibling-secret")
     );
 
-    let sentinel = root.join("outside-sentinel");
-    let status = std::process::Command::new("/usr/bin/sandbox-exec")
-        .arg("-D")
-        .arg(format!("WORKSPACE_ROOT={}", workspace_root.display()))
-        .arg("-D")
-        .arg(format!("WORKSPACE={}", workspace_root.display()))
-        .args(["-f"])
-        .arg(&profile)
-        .arg("--")
-        .args(["/usr/bin/touch"])
-        .arg(&sentinel)
-        .status()
-        .unwrap();
     if cfg!(target_os = "macos") {
+        let sentinel = root.join("outside-sentinel");
+        let status = std::process::Command::new("/usr/bin/sandbox-exec")
+            .arg("-D")
+            .arg(format!("WORKSPACE_ROOT={}", workspace_root.display()))
+            .arg("-D")
+            .arg(format!("WORKSPACE={}", workspace_root.display()))
+            .args(["-f"])
+            .arg(&profile)
+            .arg("--")
+            .args(["/usr/bin/touch"])
+            .arg(&sentinel)
+            .status()
+            .unwrap();
         assert!(!status.success());
         assert!(!sentinel.exists());
     }
