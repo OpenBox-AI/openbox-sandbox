@@ -119,6 +119,65 @@ impl NativeRuntime {
     fn workspace(&self, request_id: &RequestOwnedId) -> PathBuf {
         self.config.workspace_root.join(request_id.as_str())
     }
+
+    /// Restore the pinned workspace root when the operating system removed it.
+    ///
+    /// The default root lives under a system temporary directory, and macOS
+    /// prunes that directory on its own schedule. The root can therefore be
+    /// absent between provisioning and a later request, which leaves the
+    /// per-request directory with no parent.
+    ///
+    /// Restoring it is only safe when each restored component is a real
+    /// directory this user owns. A symlink component fails closed, and a
+    /// directory owned by another user fails closed because only its owner can
+    /// change its mode.
+    async fn ensure_workspace_root(&self) -> Result<(), CreateFailure> {
+        let root = self.config.workspace_root.as_path();
+        let mut components: Vec<&Path> = Vec::new();
+        if let Some(parent) = root.parent() {
+            components.push(parent);
+        }
+        components.push(root);
+        for component in components {
+            match tokio::fs::symlink_metadata(component).await {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(CreateFailure::not_created(
+                        CreateFailureCode::Provider,
+                        detail("workspace root component is a symbolic link"),
+                    ));
+                }
+                Ok(metadata) if !metadata.is_dir() => {
+                    return Err(CreateFailure::not_created(
+                        CreateFailureCode::Provider,
+                        detail("workspace root component is not a directory"),
+                    ));
+                }
+                Ok(_) => {}
+                Err(_) => {
+                    if tokio::fs::create_dir(component).await.is_err() {
+                        return Err(CreateFailure::not_created(
+                            CreateFailureCode::Provider,
+                            detail("workspace root could not be restored"),
+                        ));
+                    }
+                }
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt as _;
+                if tokio::fs::set_permissions(component, std::fs::Permissions::from_mode(0o700))
+                    .await
+                    .is_err()
+                {
+                    return Err(CreateFailure::not_created(
+                        CreateFailureCode::Provider,
+                        detail("workspace root permissions could not be set"),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -140,6 +199,7 @@ impl SandboxRuntime for NativeRuntime {
             ));
         }
         let request_id = request.request_id().clone();
+        self.ensure_workspace_root().await?;
         let workspace = self.workspace(&request_id);
         match tokio::fs::create_dir(&workspace).await {
             Ok(()) => {}
@@ -696,4 +756,100 @@ fn create_context_failure(failure: ContextFailure) -> CreateFailure {
 
 fn detail(message: &'static str) -> OperatorDetail {
     OperatorDetail::redacted(message)
+}
+
+#[cfg(test)]
+mod workspace_root_tests {
+    use core::fmt::Write as _;
+
+    use sha2::{Digest as _, Sha256};
+    use tokio_util::sync::CancellationToken;
+
+    use super::{NativeConfig, NativeRuntime};
+    use crate::{
+        CreateRequest, OperationContext, OperationDeadline, PolicyDocument, PolicyIdentity,
+        RequestOwnedId, SandboxRuntime as _, Sha256Digest, TemplateIdentity, compile_native_policy,
+    };
+
+    const POLICY: &str = include_str!("../../deploy/policies/policy-deny-network.yaml");
+
+    fn runtime(root: &std::path::Path) -> (NativeRuntime, PolicyIdentity) {
+        let workspaces = root.join("workspaces");
+        let profile = root.join(if cfg!(target_os = "macos") {
+            "policy.sb"
+        } else {
+            "policy.json"
+        });
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("deploy/policies/policy-deny-network.yaml");
+        let profile_sha = compile_native_policy(&source, &profile, &workspaces).unwrap();
+        let sha = Sha256::digest(POLICY.as_bytes()).iter().fold(
+            String::with_capacity(64),
+            |mut encoded, byte| {
+                write!(encoded, "{byte:02x}").unwrap();
+                encoded
+            },
+        );
+        let policy =
+            PolicyIdentity::new("native-workspace", 1, Sha256Digest::parse(sha).unwrap()).unwrap();
+        let config = NativeConfig::new(
+            profile,
+            Sha256Digest::parse(profile_sha).unwrap(),
+            workspaces,
+            policy.clone(),
+        )
+        .unwrap();
+        (NativeRuntime::new(config).unwrap(), policy)
+    }
+
+    fn create_request(policy: PolicyIdentity, suffix: &str) -> CreateRequest {
+        CreateRequest::new(
+            RequestOwnedId::parse(format!("sbx-{suffix}")).unwrap(),
+            TemplateIdentity::new("native://native").unwrap(),
+            PolicyDocument::new("application/yaml", POLICY.as_bytes().to_vec()).unwrap(),
+            policy,
+        )
+    }
+
+    fn context() -> OperationContext {
+        OperationContext::new(
+            CancellationToken::new(),
+            OperationDeadline::new(core::time::Duration::from_secs(60)).unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_pruned_workspace_root_is_restored_instead_of_failing_the_request() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let (runtime, policy) = runtime(&root);
+
+        // The operating system prunes the temporary directory between requests.
+        std::fs::remove_dir_all(root.join("workspaces")).unwrap();
+
+        let created = runtime
+            .create(create_request(policy, "000000000000001"), context())
+            .await;
+        assert!(created.is_ok(), "{:?}", created.err());
+        assert!(root.join("workspaces").is_dir());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_symbolic_link_in_place_of_the_workspace_root_fails_closed() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().canonicalize().unwrap();
+        let (runtime, policy) = runtime(&root);
+
+        let elsewhere = root.join("elsewhere");
+        std::fs::create_dir(&elsewhere).unwrap();
+        std::fs::remove_dir_all(root.join("workspaces")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("workspaces")).unwrap();
+
+        let created = runtime
+            .create(create_request(policy, "000000000000002"), context())
+            .await;
+        assert!(created.is_err());
+        assert!(!elsewhere.join("sbx-000000000000002").exists());
+    }
 }

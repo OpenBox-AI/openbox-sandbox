@@ -31,8 +31,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${OPENBOX_PROJECT_ROOT:-$(cd "$SCRIPT_DIR/../../.." && pwd)}"
 STATE_ROOT="${OPENBOX_STATE_ROOT:-$HOME/.local/state/openbox-sandbox}"
 CONFIG_ROOT="${OPENBOX_CONFIG_ROOT:-$HOME/.config/openbox-sandbox}"
-# The service rejects symlink path components. Resolve macOS /tmp -> /private/tmp
-# and any operator-provided physical roots before writing pinned absolute paths.
+# The service rejects symlink path components. Resolve any operator-provided
+# root to its physical path before writing pinned absolute paths.
 mkdir -p "$STATE_ROOT" "$CONFIG_ROOT"
 STATE_ROOT="$(cd "$STATE_ROOT" && pwd -P)"
 CONFIG_ROOT="$(cd "$CONFIG_ROOT" && pwd -P)"
@@ -42,7 +42,7 @@ SERVICE_LOG="$STATE_ROOT/sandbox-service.log"
 SERVICE_PID_FILE="$STATE_ROOT/sandbox-service.pid"
 SANDBOX_TLS_DIR="$CONFIG_ROOT/tls"
 SANDBOX_STATE_DIR="$STATE_ROOT/cleanup"
-NATIVE_WORKSPACE_ROOT="${OPENBOX_NATIVE_WORKSPACE_ROOT:-/private/tmp/openbox-sandbox-${UID}/workspaces}"
+NATIVE_WORKSPACE_ROOT="${OPENBOX_NATIVE_WORKSPACE_ROOT:-$STATE_ROOT/workspaces}"
 NATIVE_PROFILE="$STATE_ROOT/native/policy.$([[ "$(uname -s)" == Darwin ]] && echo sb || echo json)"
 AGENT_ENV="$CONFIG_ROOT/agent.env"
 NO_START="${NO_START:-0}"
@@ -102,7 +102,7 @@ if port_listening "$SANDBOX_PORT"; then die "sandbox service port $SANDBOX_PORT 
 ok "teardown complete"
 
 if [[ "$ARG_UNINSTALL" == 1 || "$ARG_CLEAN_RERUN" == 1 ]]; then
-  rm -rf -- "$STATE_ROOT" "$CONFIG_ROOT" "$(dirname "$NATIVE_WORKSPACE_ROOT")"
+  rm -rf -- "$STATE_ROOT" "$CONFIG_ROOT" "$NATIVE_WORKSPACE_ROOT"
   ok "state cleaned"
 fi
 if [[ "$ARG_UNINSTALL" == 1 || "${OPENBOX_TEARDOWN_ONLY:-0}" == 1 ]]; then ok "native teardown/uninstall complete"; exit 0; fi
@@ -119,7 +119,7 @@ command -v openssl >/dev/null 2>&1 || die "openssl is required"
 
 mkdir -p "$STATE_ROOT/native" "$NATIVE_WORKSPACE_ROOT" "$SANDBOX_STATE_DIR" "$CONFIG_ROOT" "$SANDBOX_TLS_DIR"
 NATIVE_WORKSPACE_ROOT="$(cd "$NATIVE_WORKSPACE_ROOT" && pwd -P)"
-chmod 700 "$(dirname "$NATIVE_WORKSPACE_ROOT")" "$STATE_ROOT" "$STATE_ROOT/native" "$NATIVE_WORKSPACE_ROOT" "$SANDBOX_STATE_DIR" "$CONFIG_ROOT" "$SANDBOX_TLS_DIR"
+chmod 700 "$STATE_ROOT" "$STATE_ROOT/native" "$NATIVE_WORKSPACE_ROOT" "$SANDBOX_STATE_DIR" "$CONFIG_ROOT" "$SANDBOX_TLS_DIR"
 info "compiling deployment-pinned native policy"
 NATIVE_PROFILE_SHA="$($SANDBOX_BIN --compile-native-policy "$POLICY_FILE" "$NATIVE_PROFILE" "$NATIVE_WORKSPACE_ROOT")" \
   || die "native policy compilation failed"

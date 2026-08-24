@@ -833,7 +833,7 @@ PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --fla
   --clean-rerun          Also remove wizard-owned state before provisioning.
   --keep-pki             Preserve PKI (with --clean-rerun or uninstall).
   --state-root PATH      (~/.local/state/openbox-sandbox)
-  --native-workspace-root PATH (/private/tmp/openbox-sandbox-<uid>/workspaces)
+  --native-workspace-root PATH (<state-root>/workspaces)
   --config-root PATH     (~/.config/openbox-sandbox)
   --sandbox-port N       (17443)
   --gateway-port N       (17670)
