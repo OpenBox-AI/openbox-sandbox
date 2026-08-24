@@ -72,7 +72,7 @@ packaging/launcher/target/release/obs verify
 packaging/launcher/target/release/obs uninstall
 ```
 
-For the default native `srt` provider, provisioning compiles the selected
+For the default `native` provider, provisioning compiles the selected
 release policy into an owner-only Seatbelt/bubblewrap profile and pins its hash.
 Network-enabled profiles cause the service to create an ephemeral localhost
 HTTP(S) proxy for each execution; no proxy port is persisted in launcher or

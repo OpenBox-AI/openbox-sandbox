@@ -31,8 +31,8 @@ const SCRIPTS: &[(&str, &str)] = &[
         include_str!("../scripts/provision-local-sandbox.sh"),
     ),
     (
-        "provision-native-srt.sh",
-        include_str!("../scripts/provision-native-srt.sh"),
+        "provision-native.sh",
+        include_str!("../scripts/provision-native.sh"),
     ),
 ];
 
@@ -123,12 +123,12 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn native_srt_smoke_binds_linux_dynamic_loader_paths() {
+    fn native_smoke_binds_linux_dynamic_loader_paths() {
         let script = SCRIPTS
             .iter()
-            .find(|(name, _)| *name == "provision-native-srt.sh")
+            .find(|(name, _)| *name == "provision-native.sh")
             .map(|(_, body)| *body)
-            .expect("native srt provision script is embedded");
+            .expect("native provision script is embedded");
         let smoke = script
             .split_once("native runner smoke: /bin/true")
             .expect("native smoke marker")

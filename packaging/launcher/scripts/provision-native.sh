@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-trap 'echo "native srt provision failed at line $LINENO (exit $?)" >&2' ERR
+trap 'echo "native provision failed at line $LINENO (exit $?)" >&2' ERR
 umask 077
 
 die() { printf 'provision: %s\n' "$*" >&2; exit 1; }
@@ -22,7 +22,7 @@ for arg in "$@"; do
     --clean-rerun) ARG_CLEAN_RERUN=1 ;;
     --keep-pki) ARG_KEEP_PKI=1 ;;
     --purge-cache) : ;; # no cache exists on the native provider
-    --help|-h) echo 'native srt provision: --clean-rerun | --uninstall | --keep-pki'; exit 0 ;;
+    --help|-h) echo 'native provision: --clean-rerun | --uninstall | --keep-pki'; exit 0 ;;
     *) die "unsupported arg: $arg" ;;
   esac
 done
@@ -42,8 +42,8 @@ SERVICE_LOG="$STATE_ROOT/sandbox-service.log"
 SERVICE_PID_FILE="$STATE_ROOT/sandbox-service.pid"
 SANDBOX_TLS_DIR="$CONFIG_ROOT/tls"
 SANDBOX_STATE_DIR="$STATE_ROOT/cleanup"
-SRT_WORKSPACE_ROOT="${OPENBOX_SRT_WORKSPACE_ROOT:-/private/tmp/openbox-sandbox-${UID}/workspaces}"
-SRT_PROFILE="$STATE_ROOT/srt/policy.$([[ "$(uname -s)" == Darwin ]] && echo sb || echo json)"
+NATIVE_WORKSPACE_ROOT="${OPENBOX_NATIVE_WORKSPACE_ROOT:-/private/tmp/openbox-sandbox-${UID}/workspaces}"
+NATIVE_PROFILE="$STATE_ROOT/native/policy.$([[ "$(uname -s)" == Darwin ]] && echo sb || echo json)"
 AGENT_ENV="$CONFIG_ROOT/agent.env"
 NO_START="${NO_START:-0}"
 SERVICE_READY_POLLS="${OPENBOX_SERVICE_READY_POLLS:-40}"
@@ -56,7 +56,7 @@ CERT_DAYS="${OPENBOX_CERT_DAYS:-825}"
 RSA_BITS="${OPENBOX_RSA_BITS:-2048}"
 CALLER_SUBJ="${OPENBOX_CALLER_SUBJ:-/CN=openbox-sandbox-runtime-caller}"
 POLICY_VERSION="${OPENBOX_POLICY_VERSION:-1}"
-COMPAT_ID="${OPENBOX_COMPAT_ID:-native-srt-v1}"
+COMPAT_ID="${OPENBOX_COMPAT_ID:-native-v1}"
 
 if [[ -n "${OPENBOX_SANDBOX_BIN:-}" ]]; then SANDBOX_BIN="$OPENBOX_SANDBOX_BIN"
 elif [[ "$(uname -s)-$(uname -m)" == Darwin-arm64 && -x "$(pwd)/openbox-sandbox-darwin-arm64" ]]; then SANDBOX_BIN="$(pwd)/openbox-sandbox-darwin-arm64"
@@ -96,41 +96,41 @@ stop_service() {
   rm -f "$SERVICE_PID_FILE"
 }
 
-info "native srt teardown"
+info "native teardown"
 stop_service
 if port_listening "$SANDBOX_PORT"; then die "sandbox service port $SANDBOX_PORT remains occupied"; fi
 ok "teardown complete"
 
 if [[ "$ARG_UNINSTALL" == 1 || "$ARG_CLEAN_RERUN" == 1 ]]; then
-  rm -rf -- "$STATE_ROOT" "$CONFIG_ROOT" "$(dirname "$SRT_WORKSPACE_ROOT")"
+  rm -rf -- "$STATE_ROOT" "$CONFIG_ROOT" "$(dirname "$NATIVE_WORKSPACE_ROOT")"
   ok "state cleaned"
 fi
-if [[ "$ARG_UNINSTALL" == 1 || "${OPENBOX_TEARDOWN_ONLY:-0}" == 1 ]]; then ok "native srt teardown/uninstall complete"; exit 0; fi
+if [[ "$ARG_UNINSTALL" == 1 || "${OPENBOX_TEARDOWN_ONLY:-0}" == 1 ]]; then ok "native teardown/uninstall complete"; exit 0; fi
 
 [[ -x "$SANDBOX_BIN" ]] || die "openbox-sandbox service not found at $SANDBOX_BIN"
 [[ -f "$POLICY_FILE" ]] || die "channel policy not found at $POLICY_FILE"
 if [[ "$(uname -s)" == Darwin ]] && [[ ! -x /usr/bin/sandbox-exec ]]; then
-  die "/usr/bin/sandbox-exec is required for the native srt provider on macOS (it ships with macOS; contact Apple support if missing)"
+  die "/usr/bin/sandbox-exec is required for the native provider on macOS (it ships with macOS; contact Apple support if missing)"
 fi
 if [[ "$(uname -s)" == Linux ]] && ! command -v bwrap >/dev/null 2>&1; then
-  die "bubblewrap is required for the native srt provider (install package: bubblewrap)"
+  die "bubblewrap is required for the native provider (install package: bubblewrap)"
 fi
 command -v openssl >/dev/null 2>&1 || die "openssl is required"
 
-mkdir -p "$STATE_ROOT/srt" "$SRT_WORKSPACE_ROOT" "$SANDBOX_STATE_DIR" "$CONFIG_ROOT" "$SANDBOX_TLS_DIR"
-SRT_WORKSPACE_ROOT="$(cd "$SRT_WORKSPACE_ROOT" && pwd -P)"
-chmod 700 "$(dirname "$SRT_WORKSPACE_ROOT")" "$STATE_ROOT" "$STATE_ROOT/srt" "$SRT_WORKSPACE_ROOT" "$SANDBOX_STATE_DIR" "$CONFIG_ROOT" "$SANDBOX_TLS_DIR"
+mkdir -p "$STATE_ROOT/native" "$NATIVE_WORKSPACE_ROOT" "$SANDBOX_STATE_DIR" "$CONFIG_ROOT" "$SANDBOX_TLS_DIR"
+NATIVE_WORKSPACE_ROOT="$(cd "$NATIVE_WORKSPACE_ROOT" && pwd -P)"
+chmod 700 "$(dirname "$NATIVE_WORKSPACE_ROOT")" "$STATE_ROOT" "$STATE_ROOT/native" "$NATIVE_WORKSPACE_ROOT" "$SANDBOX_STATE_DIR" "$CONFIG_ROOT" "$SANDBOX_TLS_DIR"
 info "compiling deployment-pinned native policy"
-SRT_PROFILE_SHA="$($SANDBOX_BIN --compile-srt-policy "$POLICY_FILE" "$SRT_PROFILE" "$SRT_WORKSPACE_ROOT")" \
+NATIVE_PROFILE_SHA="$($SANDBOX_BIN --compile-native-policy "$POLICY_FILE" "$NATIVE_PROFILE" "$NATIVE_WORKSPACE_ROOT")" \
   || die "native policy compilation failed"
-chmod 600 "$SRT_PROFILE"
-[[ "$(sha256_hex "$SRT_PROFILE")" == "$SRT_PROFILE_SHA" ]] || die "compiled native profile hash mismatch"
-ok "profile pinned: $SRT_PROFILE_SHA"
+chmod 600 "$NATIVE_PROFILE"
+[[ "$(sha256_hex "$NATIVE_PROFILE")" == "$NATIVE_PROFILE_SHA" ]] || die "compiled native profile hash mismatch"
+ok "profile pinned: $NATIVE_PROFILE_SHA"
 
 # Local boundary PKI only. No gateway CA, keychain, or sudo path exists here.
 CA_KEY="$SANDBOX_TLS_DIR/ca.key"; CA_CERT="$SANDBOX_TLS_DIR/ca.crt"
 openssl req -x509 -newkey rsa:"$RSA_BITS" -nodes -sha256 -days "$CERT_DAYS" \
-  -subj '/CN=OpenBox Native SRT Local CA' -keyout "$CA_KEY" -out "$CA_CERT" \
+  -subj '/CN=OpenBox Native Local CA' -keyout "$CA_KEY" -out "$CA_CERT" \
   -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=critical,keyCertSign,cRLSign' >/dev/null 2>&1
 openssl genrsa -out "$SANDBOX_TLS_DIR/client.key" "$RSA_BITS" >/dev/null 2>&1
 openssl req -new -key "$SANDBOX_TLS_DIR/client.key" -subj "$CALLER_SUBJ" -out "$SANDBOX_TLS_DIR/client.csr" >/dev/null 2>&1
@@ -177,15 +177,15 @@ cat >"$SERVICE_CONFIG" <<EOF
   "client_ca_path": "${CA_CERT}",
   "authorized_callers": [{"certificate_sha256":"${CALLER_FP}","role":"runtime"}],
   "state_directory": "${SANDBOX_STATE_DIR}",
-  "provider": "srt",
+  "provider": "native",
   "provider_capability": "enforced-locally",
-  "srt_profile_path": "${SRT_PROFILE}",
-  "srt_profile_sha256": "${SRT_PROFILE_SHA}",
-  "srt_workspace_root": "${SRT_WORKSPACE_ROOT}",
+  "native_profile_path": "${NATIVE_PROFILE}",
+  "native_profile_sha256": "${NATIVE_PROFILE_SHA}",
+  "native_workspace_root": "${NATIVE_WORKSPACE_ROOT}",
   "asset_bundle": {
     "runtime_contract_version": 1,
     "adapter_build_sha256": "${ADAPTER_SHA}",
-    "template": "native://srt",
+    "template": "native://native",
     "policy": {"id":"${POLICY_ID}","version":${POLICY_VERSION},"sha256":"${POLICY_SHA}"},
     "compatibility_id": "${COMPAT_ID}"
   },
@@ -196,8 +196,8 @@ cat >"$SERVICE_CONFIG" <<EOF
 }
 EOF
 chmod 600 "$SERVICE_CONFIG"
-OPENBOX_SANDBOX_CONFIG="$SERVICE_CONFIG" "$SANDBOX_BIN" --check-config >/dev/null || die "service rejected native srt config"
-ok "service config validated (provider=srt, capability=enforced-locally)"
+OPENBOX_SANDBOX_CONFIG="$SERVICE_CONFIG" "$SANDBOX_BIN" --check-config >/dev/null || die "service rejected native config"
+ok "service config validated (provider=native, capability=enforced-locally)"
 
 if [[ "$NO_START" != 1 ]]; then
   OPENBOX_SANDBOX_CONFIG="$SERVICE_CONFIG" nohup "$SANDBOX_BIN" >"$SERVICE_LOG" 2>&1 &
@@ -205,7 +205,7 @@ if [[ "$NO_START" != 1 ]]; then
   ready=0
   for _ in $(seq 1 "$SERVICE_READY_POLLS"); do port_listening "$SANDBOX_PORT" && ready=1 && break; sleep "$SERVICE_READY_INTERVAL"; done
   if [[ "$ready" != 1 ]]; then tail -n 30 "$SERVICE_LOG" >&2 || true; die "sandbox service failed to start"; fi
-  ok "service up (provider=srt pid=$(cat "$SERVICE_PID_FILE"))"
+  ok "service up (provider=native pid=$(cat "$SERVICE_PID_FILE"))"
 fi
 
 cat >"$AGENT_ENV" <<EOF
@@ -217,33 +217,33 @@ OPENBOX_SANDBOX_CERT=${SANDBOX_TLS_DIR}/client.crt
 OPENBOX_SANDBOX_KEY=${SANDBOX_TLS_DIR}/client.key
 OPENBOX_SANDBOX_BINARY=${SANDBOX_BIN}
 OPENBOX_SANDBOX_ADAPTER_SHA=${ADAPTER_SHA}
-OPENBOX_SANDBOX_TEMPLATE=native://srt
+OPENBOX_SANDBOX_TEMPLATE=native://native
 OPENBOX_SANDBOX_POLICY_FILE=${POLICY_FILE}
 OPENBOX_SANDBOX_POLICY_ID=${POLICY_ID}
 OPENBOX_SANDBOX_POLICY_VERSION=${POLICY_VERSION}
 OPENBOX_SANDBOX_POLICY_SHA256=${POLICY_SHA}
 OPENBOX_SANDBOX_COMPAT_ID=${COMPAT_ID}
 OPENBOX_SANDBOX_CONFIG_PATH=${SERVICE_CONFIG}
-OPENBOX_PROVIDER=srt
+OPENBOX_PROVIDER=native
 EOF
 chmod 600 "$AGENT_ENV"
 
 if [[ "$NO_START" != 1 ]]; then
   info "native runner smoke: /bin/true"
   if [[ "$(uname -s)" == Darwin ]]; then
-    (cd "$SRT_WORKSPACE_ROOT" && /usr/bin/sandbox-exec \
-      -D "WORKSPACE_ROOT=$SRT_WORKSPACE_ROOT" -D "WORKSPACE=$SRT_WORKSPACE_ROOT" \
-      -f "$SRT_PROFILE" -- /usr/bin/true) || die "native Seatbelt smoke failed"
+    (cd "$NATIVE_WORKSPACE_ROOT" && /usr/bin/sandbox-exec \
+      -D "WORKSPACE_ROOT=$NATIVE_WORKSPACE_ROOT" -D "WORKSPACE=$NATIVE_WORKSPACE_ROOT" \
+      -f "$NATIVE_PROFILE" -- /usr/bin/true) || die "native Seatbelt smoke failed"
   else
     bwrap_args=(--die-with-parent --new-session --unshare-all --unshare-net --proc /proc --dev /dev)
     for path in /usr /bin /sbin /lib /lib64 /etc; do
       [[ -e "$path" ]] && bwrap_args+=(--ro-bind "$path" "$path")
     done
-    bwrap_args+=(--bind "$SRT_WORKSPACE_ROOT" /sandbox --chdir /sandbox -- /bin/true)
+    bwrap_args+=(--bind "$NATIVE_WORKSPACE_ROOT" /sandbox --chdir /sandbox -- /bin/true)
     bwrap "${bwrap_args[@]}" || die "native bwrap smoke failed"
   fi
   ok "native sandbox smoke ready"
 fi
-ok "native srt provision complete"
+ok "native provision complete"
 info "service: 127.0.0.1:${SANDBOX_PORT}"
 info "agent env: $AGENT_ENV"

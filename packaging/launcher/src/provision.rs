@@ -44,8 +44,8 @@ fn repo_root() -> PathBuf {
 }
 
 fn wizard_script() -> Result<PathBuf, String> {
-    if selected_provider() == "srt" {
-        crate::scripts::resolve("provision-native-srt.sh")
+    if selected_provider() == "native" {
+        crate::scripts::resolve("provision-native.sh")
     } else {
         crate::scripts::resolve("provision-local-sandbox.sh")
     }
@@ -66,7 +66,7 @@ fn selected_provider() -> String {
             return "openshell".to_owned();
         }
     }
-    "srt".to_owned()
+    "native".to_owned()
 }
 
 /// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
@@ -550,7 +550,7 @@ fn which_gh() -> Option<PathBuf> {
     None
 }
 
-fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
+fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
         "openbox-sandbox-darwin-arm64"
@@ -574,7 +574,7 @@ fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
                 "v0.1.0-dev"
             };
             info(&format!(
-                "native srt service missing — fetching {svc_name} from {tag}"
+                "native service missing — fetching {svc_name} from {tag}"
             ));
             let _ = Command::new(gh)
                 .current_dir(&cwd)
@@ -595,7 +595,7 @@ fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
         }
     }
     if service.as_ref().is_none_or(|path| !path.is_file()) && cwd.join("Cargo.toml").is_file() {
-        info("building native srt service from source");
+        info("building native service from source");
         let status = Command::new(which_cargo().unwrap_or_else(|| PathBuf::from("cargo")))
             .current_dir(&cwd)
             .args(["build", "--release", "--locked", "--bin", "openbox-sandbox"])
@@ -605,7 +605,7 @@ fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
         }
     }
     let service = service.filter(|path| path.is_file()).ok_or_else(|| {
-        err("native srt service binary is unavailable; no fallback to OpenShell");
+        err("native service binary is unavailable; no fallback to OpenShell");
         ExitCode::FAILURE
     })?;
     #[cfg(unix)]
@@ -641,7 +641,7 @@ fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
     if policy.as_ref().is_none_or(|path| !path.is_file()) {
         if let Some(gh) = which_gh() {
             info(&format!(
-                "native srt policy missing — fetching {policy_name} from {tag}"
+                "native policy missing — fetching {policy_name} from {tag}"
             ));
             let _ = Command::new(gh)
                 .current_dir(&cwd)
@@ -664,7 +664,7 @@ fn auto_fetch_srt_assets() -> Result<(), ExitCode> {
     }
     let policy = policy.filter(|path| path.is_file()).ok_or_else(|| {
         err(&format!(
-            "native srt channel policy {policy_name} is unavailable; refusing an unpinned default"
+            "native channel policy {policy_name} is unavailable; refusing an unpinned default"
         ));
         ExitCode::FAILURE
     })?;
@@ -692,15 +692,15 @@ pub fn run_provision(
         std::env::set_var("OPENBOX_RELEASE_LINE", crate::channel());
     }
     if std::env::var("OPENBOX_PROVIDER").is_err() {
-        std::env::set_var("OPENBOX_PROVIDER", "srt");
+        std::env::set_var("OPENBOX_PROVIDER", "native");
     }
     let provider = selected_provider();
-    if !matches!(provider.as_str(), "srt" | "openshell") {
-        err("OPENBOX_PROVIDER must be srt or openshell");
+    if !matches!(provider.as_str(), "native" | "openshell") {
+        err("OPENBOX_PROVIDER must be native or openshell");
         return ExitCode::FAILURE;
     }
-    let fetched = if provider == "srt" {
-        auto_fetch_srt_assets()
+    let fetched = if provider == "native" {
+        auto_fetch_native_assets()
     } else {
         auto_fetch_bundle()
     };
@@ -728,8 +728,8 @@ pub fn run_provision(
         }
     };
     banner_phase("PROVISION");
-    if provider == "srt" {
-        info("provider=srt -> native profile -> local mTLS service -> smoke -> agent.env");
+    if provider == "native" {
+        info("provider=native -> native profile -> local mTLS service -> smoke -> agent.env");
     } else {
         info("provider=openshell -> gateway -> mTLS -> service -> agent.env");
     }
@@ -829,8 +829,8 @@ pub fn run_verify() -> ExitCode {
                 err(&format!("cannot load agent environment: {error}"));
                 return ExitCode::FAILURE;
             }
-            if agent_env_selects_srt(&agent_env) {
-                cmd.env("OPENBOX_LIVE_SERVICE_CMD", "printf native-srt-ready");
+            if agent_env_selects_native(&agent_env) {
+                cmd.env("OPENBOX_LIVE_SERVICE_CMD", "printf native-ready");
             }
             info(&format!("running prebuilt verify harness: {bin}"));
             return match cmd.status() {
@@ -868,8 +868,8 @@ pub fn run_verify() -> ExitCode {
         err(&format!("cannot load agent environment: {error}"));
         return ExitCode::FAILURE;
     }
-    if agent_env_selects_srt(&agent_env) {
-        cmd.env("OPENBOX_LIVE_SERVICE_CMD", "printf native-srt-ready");
+    if agent_env_selects_native(&agent_env) {
+        cmd.env("OPENBOX_LIVE_SERVICE_CMD", "printf native-ready");
     }
     info("running `cargo test --lib live_service_create_exec_delete`");
     match cmd.status() {
@@ -910,8 +910,8 @@ pub fn run_status() -> ExitCode {
     let sandbox_log = state_root.join("sandbox-service.log");
     let provider = std::fs::read_to_string(&service_config)
         .ok()
-        .filter(|body| body.contains("\"provider\": \"srt\""))
-        .map_or("openshell", |_| "srt");
+        .filter(|body| body.contains("\"provider\": \"native\""))
+        .map_or("openshell", |_| "native");
 
     // The wizard records the actual ports (OPENSHELL_SERVER_PORT and
     // OPENBOX_SANDBOX_PORT overrides are honored); read them back instead of
@@ -932,7 +932,7 @@ pub fn run_status() -> ExitCode {
     info(&format!("state root:  {}", state_root.display()));
     info(&format!("gateway log: {}", gateway_log.display()));
     info(&format!("sandbox log: {}", sandbox_log.display()));
-    let all_up = port_open(sandbox_port) && (provider == "srt" || port_open(gateway_port));
+    let all_up = port_open(sandbox_port) && (provider == "native" || port_open(gateway_port));
     if all_up {
         ok("stack ready — run `obs verify` to exercise the lifecycle");
     } else {
@@ -1036,10 +1036,10 @@ fn agent_env_path() -> PathBuf {
         .join("agent.env")
 }
 
-fn agent_env_selects_srt(env_path: &Path) -> bool {
+fn agent_env_selects_native(env_path: &Path) -> bool {
     std::fs::read_to_string(env_path).is_ok_and(|body| {
         body.lines()
-            .any(|line| line.trim() == "OPENBOX_PROVIDER=srt")
+            .any(|line| line.trim() == "OPENBOX_PROVIDER=native")
     })
 }
 

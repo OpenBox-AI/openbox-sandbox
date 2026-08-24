@@ -11,11 +11,11 @@ use crate::{
     ConformanceHarness, ConformanceObservation, ConformanceObserver, ConformanceOperation,
     ConformanceScenario, CreateFailure, CreateFailureCode, CreateRequest, CreatedSandbox,
     DeleteOutcome, ExecCompleted, ExecFailure, ExecFailureCode, ExecRequest, FailureTimeout,
-    LifecycleContexts, ObservedExitCode, ObservedTimeout, OperationContext, OperationDeadline,
-    OperatorDetail, OutputByteCounts, OutputLimits, PolicyDocument, PolicyIdentity,
-    ReadinessFailure, ReadinessFailureCode, ReadySandbox, RequestOwnedId, SandboxRuntime,
-    Sha256Digest, SrtConfig, SrtRuntime, TemplateIdentity, adversarial_argv, compile_srt_policy,
-    run_conformance_suite,
+    LifecycleContexts, NativeConfig, NativeRuntime, ObservedExitCode, ObservedTimeout,
+    OperationContext, OperationDeadline, OperatorDetail, OutputByteCounts, OutputLimits,
+    PolicyDocument, PolicyIdentity, ReadinessFailure, ReadinessFailureCode, ReadySandbox,
+    RequestOwnedId, SandboxRuntime, Sha256Digest, TemplateIdentity, adversarial_argv,
+    compile_native_policy, run_conformance_suite,
 };
 
 const POLICY: &str = include_str!("../../deploy/policies/policy-deny-network.yaml");
@@ -47,7 +47,7 @@ impl ConformanceObserver for Observer {
 }
 
 struct ScenarioRuntime {
-    inner: SrtRuntime,
+    inner: NativeRuntime,
     scenario: ConformanceScenario,
     recording: Arc<Mutex<Recording>>,
     _temporary: tempfile::TempDir,
@@ -260,10 +260,10 @@ impl ConformanceHarness for Harness {
         });
         let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("deploy/policies/policy-deny-network.yaml");
-        let profile_sha = compile_srt_policy(&source, &profile, &workspaces).unwrap();
+        let profile_sha = compile_native_policy(&source, &profile, &workspaces).unwrap();
         let policy = policy_identity();
-        let inner = SrtRuntime::new(
-            SrtConfig::new(
+        let inner = NativeRuntime::new(
+            NativeConfig::new(
                 profile,
                 Sha256Digest::parse(profile_sha).unwrap(),
                 workspaces,
@@ -282,7 +282,7 @@ impl ConformanceHarness for Harness {
         let request_id = RequestOwnedId::parse(format!("sbx-3{index:014x}")).unwrap();
         let create = CreateRequest::new(
             request_id,
-            TemplateIdentity::new("native://srt").unwrap(),
+            TemplateIdentity::new("native://native").unwrap(),
             PolicyDocument::new("application/yaml", POLICY.as_bytes().to_vec()).unwrap(),
             policy,
         );
@@ -374,12 +374,7 @@ fn policy_identity() -> PolicyIdentity {
             encoded
         },
     );
-    PolicyIdentity::new(
-        "native-srt-conformance",
-        1,
-        Sha256Digest::parse(sha).unwrap(),
-    )
-    .unwrap()
+    PolicyIdentity::new("native-conformance", 1, Sha256Digest::parse(sha).unwrap()).unwrap()
 }
 
 fn deadline() -> OperationDeadline {
@@ -402,7 +397,7 @@ async fn native_adapter_passes_the_unchanged_twenty_scenario_suite() {
             .output()
             .is_err()
     {
-        eprintln!("SKIP native srt conformance: bwrap absent");
+        eprintln!("SKIP native conformance: bwrap absent");
         return;
     }
     let report = run_conformance_suite(&Harness::new()).await.unwrap();

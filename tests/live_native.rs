@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use openbox_sandbox::{
     Argv, CommandTimeout, CreateRequest, DeleteOutcome, EgressDecisionKind, ExecRequest,
-    ObservedTimeout, OperationContext, OperationDeadline, OutputLimits, PolicyDocument,
-    PolicyIdentity, RequestOwnedId, SandboxRuntime, Sha256Digest, SrtConfig, SrtRuntime,
-    TemplateIdentity, ViolationCategory, compile_srt_policy,
+    NativeConfig, NativeRuntime, ObservedTimeout, OperationContext, OperationDeadline,
+    OutputLimits, PolicyDocument, PolicyIdentity, RequestOwnedId, SandboxRuntime, Sha256Digest,
+    TemplateIdentity, ViolationCategory, compile_native_policy,
 };
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -42,14 +42,14 @@ fn exec(argv: Vec<String>, timeout: u16) -> ExecRequest {
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
-async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
+async fn native_enforces_profile_and_preserves_argv_lifecycle() {
     if cfg!(target_os = "linux")
         && std::process::Command::new("bwrap")
             .arg("--version")
             .output()
             .is_err()
     {
-        eprintln!("SKIP live native srt: bwrap is absent");
+        eprintln!("SKIP live native: bwrap is absent");
         return;
     }
     let temporary = tempfile::tempdir().unwrap();
@@ -62,16 +62,16 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
     });
     let policy_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("deploy/policies/policy-deny-network.yaml");
-    let profile_sha = compile_srt_policy(&policy_path, &profile, &workspace_root).unwrap();
+    let profile_sha = compile_native_policy(&policy_path, &profile, &workspace_root).unwrap();
     let policy_bytes = fs::read(&policy_path).unwrap();
     let identity = PolicyIdentity::new(
-        "native-srt-deny-network",
+        "native-deny-network",
         1,
         Sha256Digest::parse(digest(&policy_bytes)).unwrap(),
     )
     .unwrap();
-    let runtime = SrtRuntime::new(
-        SrtConfig::new(
+    let runtime = NativeRuntime::new(
+        NativeConfig::new(
             &profile,
             Sha256Digest::parse(profile_sha).unwrap(),
             &workspace_root,
@@ -86,7 +86,7 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
         .create(
             CreateRequest::new(
                 request_id.clone(),
-                TemplateIdentity::new("native://srt").unwrap(),
+                TemplateIdentity::new("native://native").unwrap(),
                 PolicyDocument::new("application/yaml", policy_bytes).unwrap(),
                 identity.clone(),
             ),
@@ -129,7 +129,7 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
         .create(
             CreateRequest::new(
                 RequestOwnedId::generate(),
-                TemplateIdentity::new("native://srt").unwrap(),
+                TemplateIdentity::new("native://native").unwrap(),
                 PolicyDocument::new("application/yaml", fs::read(&policy_path).unwrap()).unwrap(),
                 identity.clone(),
             ),
@@ -157,7 +157,7 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
         .create(
             CreateRequest::new(
                 RequestOwnedId::generate(),
-                TemplateIdentity::new("native://srt").unwrap(),
+                TemplateIdentity::new("native://native").unwrap(),
                 PolicyDocument::new("application/yaml", fs::read(&policy_path).unwrap()).unwrap(),
                 identity.clone(),
             ),
@@ -197,7 +197,7 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
         .create(
             CreateRequest::new(
                 victim_id.clone(),
-                TemplateIdentity::new("native://srt").unwrap(),
+                TemplateIdentity::new("native://native").unwrap(),
                 PolicyDocument::new("application/yaml", fs::read(&policy_path).unwrap()).unwrap(),
                 policy_identity_for(&policy_path),
             ),
@@ -215,7 +215,7 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
         .create(
             CreateRequest::new(
                 RequestOwnedId::generate(),
-                TemplateIdentity::new("native://srt").unwrap(),
+                TemplateIdentity::new("native://native").unwrap(),
                 PolicyDocument::new("application/yaml", fs::read(&policy_path).unwrap()).unwrap(),
                 policy_identity_for(&policy_path),
             ),
@@ -310,7 +310,7 @@ async fn native_srt_enforces_profile_and_preserves_argv_lifecycle() {
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
-async fn native_srt_proxy_filters_pinned_domains_and_fails_closed() {
+async fn native_proxy_filters_pinned_domains_and_fails_closed() {
     if !cfg!(target_os = "macos") {
         eprintln!("SKIP macOS proxy and violation-store conformance");
         return;
@@ -323,15 +323,15 @@ async fn native_srt_proxy_filters_pinned_domains_and_fails_closed() {
     let allow_bytes = fs::read(&allow_policy).unwrap();
     let allow_root = root.join("allow-workspaces");
     let allow_profile = root.join("allow.sb");
-    let allow_sha = compile_srt_policy(&allow_policy, &allow_profile, &allow_root).unwrap();
+    let allow_sha = compile_native_policy(&allow_policy, &allow_profile, &allow_root).unwrap();
     let allow_identity = PolicyIdentity::new(
-        "native-srt-example-egress",
+        "native-example-egress",
         1,
         Sha256Digest::parse(digest(&allow_bytes)).unwrap(),
     )
     .unwrap();
-    let allow_runtime = SrtRuntime::new(
-        SrtConfig::new(
+    let allow_runtime = NativeRuntime::new(
+        NativeConfig::new(
             allow_profile,
             Sha256Digest::parse(allow_sha).unwrap(),
             allow_root,
@@ -363,7 +363,7 @@ async fn native_srt_proxy_filters_pinned_domains_and_fails_closed() {
             .create(
                 CreateRequest::new(
                     request_id,
-                    TemplateIdentity::new("native://srt").unwrap(),
+                    TemplateIdentity::new("native://native").unwrap(),
                     PolicyDocument::new("application/yaml", allow_bytes.clone()).unwrap(),
                     allow_identity.clone(),
                 ),
@@ -423,7 +423,7 @@ async fn native_srt_proxy_filters_pinned_domains_and_fails_closed() {
         .create(
             CreateRequest::new(
                 RequestOwnedId::generate(),
-                TemplateIdentity::new("native://srt").unwrap(),
+                TemplateIdentity::new("native://native").unwrap(),
                 PolicyDocument::new("application/yaml", allow_bytes.clone()).unwrap(),
                 allow_identity.clone(),
             ),
@@ -481,15 +481,15 @@ async fn native_srt_proxy_filters_pinned_domains_and_fails_closed() {
     let deny_bytes = fs::read(&deny_policy).unwrap();
     let deny_root = root.join("deny-workspaces");
     let deny_profile = root.join("deny.sb");
-    let deny_sha = compile_srt_policy(&deny_policy, &deny_profile, &deny_root).unwrap();
+    let deny_sha = compile_native_policy(&deny_policy, &deny_profile, &deny_root).unwrap();
     let deny_identity = PolicyIdentity::new(
-        "native-srt-deny-violation",
+        "native-deny-violation",
         1,
         Sha256Digest::parse(digest(&deny_bytes)).unwrap(),
     )
     .unwrap();
-    let deny_runtime = SrtRuntime::new(
-        SrtConfig::new(
+    let deny_runtime = NativeRuntime::new(
+        NativeConfig::new(
             deny_profile,
             Sha256Digest::parse(deny_sha).unwrap(),
             deny_root,
@@ -502,7 +502,7 @@ async fn native_srt_proxy_filters_pinned_domains_and_fails_closed() {
         .create(
             CreateRequest::new(
                 RequestOwnedId::generate(),
-                TemplateIdentity::new("native://srt").unwrap(),
+                TemplateIdentity::new("native://native").unwrap(),
                 PolicyDocument::new("application/yaml", deny_bytes).unwrap(),
                 deny_identity.clone(),
             ),
@@ -515,7 +515,7 @@ async fn native_srt_proxy_filters_pinned_domains_and_fails_closed() {
         .wait_ready(created, deny_identity, context(5))
         .await
         .unwrap();
-    let forbidden = format!("/tmp/openbox-srt-violation-{}", std::process::id());
+    let forbidden = format!("/tmp/openbox-native-violation-{}", std::process::id());
     let completed = deny_runtime
         .exec(
             ready,
@@ -547,7 +547,7 @@ async fn native_srt_proxy_filters_pinned_domains_and_fails_closed() {
 }
 
 #[tokio::test]
-async fn native_srt_violation_store_reports_denied_write() {
+async fn native_violation_store_reports_denied_write() {
     if !cfg!(target_os = "macos") {
         eprintln!("SKIP macOS violation-store conformance");
         return;
@@ -559,15 +559,15 @@ async fn native_srt_violation_store_reports_denied_write() {
     let policy_bytes = fs::read(&policy_path).unwrap();
     let workspace_root = root.join("workspaces");
     let profile = root.join("policy.sb");
-    let profile_sha = compile_srt_policy(&policy_path, &profile, &workspace_root).unwrap();
+    let profile_sha = compile_native_policy(&policy_path, &profile, &workspace_root).unwrap();
     let identity = PolicyIdentity::new(
-        "native-srt-violation-conformance",
+        "native-violation-conformance",
         1,
         Sha256Digest::parse(digest(&policy_bytes)).unwrap(),
     )
     .unwrap();
-    let runtime = SrtRuntime::new(
-        SrtConfig::new(
+    let runtime = NativeRuntime::new(
+        NativeConfig::new(
             profile,
             Sha256Digest::parse(profile_sha).unwrap(),
             workspace_root,
@@ -580,7 +580,7 @@ async fn native_srt_violation_store_reports_denied_write() {
         .create(
             CreateRequest::new(
                 RequestOwnedId::generate(),
-                TemplateIdentity::new("native://srt").unwrap(),
+                TemplateIdentity::new("native://native").unwrap(),
                 PolicyDocument::new("application/yaml", policy_bytes).unwrap(),
                 identity.clone(),
             ),
@@ -593,7 +593,10 @@ async fn native_srt_violation_store_reports_denied_write() {
         .wait_ready(created, identity, context(5))
         .await
         .unwrap();
-    let target = format!("/tmp/openbox-srt-violation-scenario-{}", std::process::id());
+    let target = format!(
+        "/tmp/openbox-native-violation-scenario-{}",
+        std::process::id()
+    );
     let completed = runtime
         .exec(
             ready,
@@ -618,7 +621,7 @@ async fn native_srt_violation_store_reports_denied_write() {
 fn policy_identity_for(path: &std::path::Path) -> PolicyIdentity {
     let bytes = fs::read(path).unwrap();
     PolicyIdentity::new(
-        "native-srt-deny-network",
+        "native-deny-network",
         1,
         Sha256Digest::parse(digest(&bytes)).unwrap(),
     )

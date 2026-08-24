@@ -5,7 +5,7 @@ use std::path::Path;
 use openshell_core::proto::SandboxPolicy;
 use sha2::{Digest as _, Sha256};
 
-use super::SrtConfigError;
+use super::NativeConfigError;
 
 const DEV_NETWORK_HOST: &str = "example.com";
 const DEV_NETWORK_PORT: u16 = 443;
@@ -16,42 +16,42 @@ const DEV_NETWORK_BINARY: &str = "/usr/bin/curl";
 /// Governance requests never call this function. Provisioning invokes it once, pins
 /// the resulting digest in service configuration, and the runtime only verifies and
 /// consumes those bytes.
-pub fn compile_srt_policy(
+pub fn compile_native_policy(
     policy_document: &Path,
     output: &Path,
     workspace_root: &Path,
-) -> Result<String, SrtConfigError> {
+) -> Result<String, NativeConfigError> {
     if !policy_document.is_absolute() || !output.is_absolute() || !workspace_root.is_absolute() {
-        return Err(SrtConfigError::InvalidConfiguration);
+        return Err(NativeConfigError::InvalidConfiguration);
     }
-    let yaml = fs::read_to_string(policy_document).map_err(|_| SrtConfigError::PolicyRead)?;
-    let policy =
-        openshell_policy::parse_sandbox_policy(&yaml).map_err(|_| SrtConfigError::InvalidPolicy)?;
+    let yaml = fs::read_to_string(policy_document).map_err(|_| NativeConfigError::PolicyRead)?;
+    let policy = openshell_policy::parse_sandbox_policy(&yaml)
+        .map_err(|_| NativeConfigError::InvalidPolicy)?;
     let network = validate_policy_floor(&policy)?;
-    fs::create_dir_all(workspace_root).map_err(|_| SrtConfigError::PolicyWrite)?;
+    fs::create_dir_all(workspace_root).map_err(|_| NativeConfigError::PolicyWrite)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
         fs::set_permissions(workspace_root, fs::Permissions::from_mode(0o700))
-            .map_err(|_| SrtConfigError::PolicyWrite)?;
+            .map_err(|_| NativeConfigError::PolicyWrite)?;
     }
     let workspace_root = workspace_root
         .canonicalize()
-        .map_err(|_| SrtConfigError::PolicyWrite)?;
+        .map_err(|_| NativeConfigError::PolicyWrite)?;
 
     let compiled = if cfg!(target_os = "macos") {
         compile_seatbelt(network)
     } else if cfg!(target_os = "linux") {
         compile_bwrap(&workspace_root, network)
     } else {
-        return Err(SrtConfigError::UnsupportedPlatform);
+        return Err(NativeConfigError::UnsupportedPlatform);
     };
     if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent).map_err(|_| SrtConfigError::PolicyWrite)?;
+        fs::create_dir_all(parent).map_err(|_| NativeConfigError::PolicyWrite)?;
     }
     let temporary = output.with_extension("tmp");
-    fs::write(&temporary, compiled.as_bytes()).map_err(|_| SrtConfigError::PolicyWrite)?;
-    fs::rename(&temporary, output).map_err(|_| SrtConfigError::PolicyWrite)?;
+    fs::write(&temporary, compiled.as_bytes()).map_err(|_| NativeConfigError::PolicyWrite)?;
+    fs::rename(&temporary, output).map_err(|_| NativeConfigError::PolicyWrite)?;
     sha256_file(output)
 }
 
@@ -61,15 +61,15 @@ pub(super) enum NetworkAccess {
     Allowlist(Vec<(String, u16)>),
 }
 
-fn validate_policy_floor(policy: &SandboxPolicy) -> Result<NetworkAccess, SrtConfigError> {
+fn validate_policy_floor(policy: &SandboxPolicy) -> Result<NetworkAccess, NativeConfigError> {
     let filesystem = policy
         .filesystem
         .as_ref()
-        .ok_or(SrtConfigError::InvalidPolicy)?;
+        .ok_or(NativeConfigError::InvalidPolicy)?;
     let process = policy
         .process
         .as_ref()
-        .ok_or(SrtConfigError::InvalidPolicy)?;
+        .ok_or(NativeConfigError::InvalidPolicy)?;
     if policy.version == 0
         || filesystem.include_workdir
         || filesystem.read_write != ["/sandbox"]
@@ -77,7 +77,7 @@ fn validate_policy_floor(policy: &SandboxPolicy) -> Result<NetworkAccess, SrtCon
         || process.run_as_group != "sandbox"
         || !policy.network_middlewares.is_empty()
     {
-        return Err(SrtConfigError::InvalidPolicy);
+        return Err(NativeConfigError::InvalidPolicy);
     }
     if policy.network_policies.is_empty() {
         return Ok(NetworkAccess::Deny);
@@ -87,15 +87,15 @@ fn validate_policy_floor(policy: &SandboxPolicy) -> Result<NetworkAccess, SrtCon
     // allow-list shipped for OpenShell. Reject every other network shape rather
     // than silently broadening or weakening it during native compilation.
     if policy.network_policies.len() != 1 {
-        return Err(SrtConfigError::InvalidPolicy);
+        return Err(NativeConfigError::InvalidPolicy);
     }
     let rule = policy
         .network_policies
         .values()
         .next()
-        .ok_or(SrtConfigError::InvalidPolicy)?;
+        .ok_or(NativeConfigError::InvalidPolicy)?;
     if rule.endpoints.len() != 1 || rule.binaries.len() != 1 {
-        return Err(SrtConfigError::InvalidPolicy);
+        return Err(NativeConfigError::InvalidPolicy);
     }
     let endpoint = &rule.endpoints[0];
     let binary = &rule.binaries[0];
@@ -115,7 +115,7 @@ fn validate_policy_floor(policy: &SandboxPolicy) -> Result<NetworkAccess, SrtCon
         || binary.path != DEV_NETWORK_BINARY
         || binary != &expected_binary
     {
-        return Err(SrtConfigError::InvalidPolicy);
+        return Err(NativeConfigError::InvalidPolicy);
     }
     Ok(NetworkAccess::Allowlist(vec![(
         DEV_NETWORK_HOST.to_owned(),
@@ -142,7 +142,7 @@ fn compile_seatbelt(network: NetworkAccess) -> String {
         }
     };
     format!(
-        r#";; OpenBox native srt profile v2 (deployment compiled; never request generated)
+        r#";; OpenBox native profile v2 (deployment compiled; never request generated)
 (version 1)
 (define workspace-root (param "WORKSPACE_ROOT"))
 (define workspace (param "WORKSPACE"))
@@ -175,7 +175,7 @@ fn compile_bwrap(workspace_root: &Path, network: NetworkAccess) -> String {
         }),
     };
     serde_json::to_string_pretty(&serde_json::json!({
-        "format": "openbox-native-srt-bwrap-v1",
+        "format": "openbox-native-bwrap-v1",
         "network": network,
         "workspace_root": workspace_root,
         "workdir": "/sandbox",
@@ -185,8 +185,8 @@ fn compile_bwrap(workspace_root: &Path, network: NetworkAccess) -> String {
         + "\n"
 }
 
-pub fn sha256_file(path: &Path) -> Result<String, SrtConfigError> {
-    let bytes = fs::read(path).map_err(|_| SrtConfigError::PolicyRead)?;
+pub fn sha256_file(path: &Path) -> Result<String, NativeConfigError> {
+    let bytes = fs::read(path).map_err(|_| NativeConfigError::PolicyRead)?;
     let digest = Sha256::digest(bytes);
     Ok(digest
         .iter()
@@ -200,101 +200,101 @@ pub(super) fn verify_compiled_profile(
     path: &Path,
     expected_sha256: &str,
     workspace_root: &Path,
-) -> Result<(), SrtConfigError> {
+) -> Result<(), NativeConfigError> {
     if sha256_file(path)? != expected_sha256 {
-        return Err(SrtConfigError::PolicyMismatch);
+        return Err(NativeConfigError::PolicyMismatch);
     }
-    let bytes = fs::read(path).map_err(|_| SrtConfigError::PolicyRead)?;
+    let bytes = fs::read(path).map_err(|_| NativeConfigError::PolicyRead)?;
     if cfg!(target_os = "macos") {
-        let body = std::str::from_utf8(&bytes).map_err(|_| SrtConfigError::InvalidPolicy)?;
+        let body = std::str::from_utf8(&bytes).map_err(|_| NativeConfigError::InvalidPolicy)?;
         let access = parse_seatbelt_network(body)?;
-        if !body.starts_with(";; OpenBox native srt profile v2 ")
+        if !body.starts_with(";; OpenBox native profile v2 ")
             || (matches!(access, NetworkAccess::Deny) && body.contains("network-outbound"))
             || body.matches("network-outbound").count() > 1
         {
-            return Err(SrtConfigError::InvalidPolicy);
+            return Err(NativeConfigError::InvalidPolicy);
         }
     } else if cfg!(target_os = "linux") {
         let value: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| SrtConfigError::InvalidPolicy)?;
+            serde_json::from_slice(&bytes).map_err(|_| NativeConfigError::InvalidPolicy)?;
         let valid_network = value["network"]["mode"] == "deny"
             || (value["network"]["mode"] == "allowlist"
                 && value["network"]["endpoints"]
                     == serde_json::json!([{"host": DEV_NETWORK_HOST, "port": DEV_NETWORK_PORT}])
                 && value["network"]["binaries"] == serde_json::json!([DEV_NETWORK_BINARY]));
-        if value["format"] != "openbox-native-srt-bwrap-v1"
+        if value["format"] != "openbox-native-bwrap-v1"
             || !valid_network
             || value["workdir"] != "/sandbox"
             || value["clear_environment"] != true
             || value["workspace_root"] != workspace_root.to_string_lossy().as_ref()
         {
-            return Err(SrtConfigError::InvalidPolicy);
+            return Err(NativeConfigError::InvalidPolicy);
         }
     }
     Ok(())
 }
 
-pub(super) fn compiled_network_access(path: &Path) -> Result<NetworkAccess, SrtConfigError> {
-    let bytes = fs::read(path).map_err(|_| SrtConfigError::PolicyRead)?;
+pub(super) fn compiled_network_access(path: &Path) -> Result<NetworkAccess, NativeConfigError> {
+    let bytes = fs::read(path).map_err(|_| NativeConfigError::PolicyRead)?;
     if cfg!(target_os = "macos") {
         return parse_seatbelt_network(
-            std::str::from_utf8(&bytes).map_err(|_| SrtConfigError::InvalidPolicy)?,
+            std::str::from_utf8(&bytes).map_err(|_| NativeConfigError::InvalidPolicy)?,
         );
     }
     if cfg!(target_os = "linux") {
         let value: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| SrtConfigError::InvalidPolicy)?;
+            serde_json::from_slice(&bytes).map_err(|_| NativeConfigError::InvalidPolicy)?;
         if value["network"]["mode"] == "deny" {
             return Ok(NetworkAccess::Deny);
         }
         if value["network"]["mode"] == "allowlist" {
             let endpoints = value["network"]["endpoints"]
                 .as_array()
-                .ok_or(SrtConfigError::InvalidPolicy)?
+                .ok_or(NativeConfigError::InvalidPolicy)?
                 .iter()
                 .map(|endpoint| {
                     let host = endpoint["host"]
                         .as_str()
-                        .ok_or(SrtConfigError::InvalidPolicy)?
+                        .ok_or(NativeConfigError::InvalidPolicy)?
                         .to_owned();
                     let port = u16::try_from(
                         endpoint["port"]
                             .as_u64()
-                            .ok_or(SrtConfigError::InvalidPolicy)?,
+                            .ok_or(NativeConfigError::InvalidPolicy)?,
                     )
-                    .map_err(|_| SrtConfigError::InvalidPolicy)?;
+                    .map_err(|_| NativeConfigError::InvalidPolicy)?;
                     Ok((host, port))
                 })
-                .collect::<Result<Vec<_>, SrtConfigError>>()?;
+                .collect::<Result<Vec<_>, NativeConfigError>>()?;
             return Ok(NetworkAccess::Allowlist(endpoints));
         }
     }
-    Err(SrtConfigError::UnsupportedPlatform)
+    Err(NativeConfigError::UnsupportedPlatform)
 }
 
-fn parse_seatbelt_network(body: &str) -> Result<NetworkAccess, SrtConfigError> {
+fn parse_seatbelt_network(body: &str) -> Result<NetworkAccess, NativeConfigError> {
     let endpoints = body
         .lines()
         .filter_map(|line| line.strip_prefix(";; OPENBOX_EGRESS_ALLOW "))
         .map(|target| {
             let (host, port) = target
                 .rsplit_once(':')
-                .ok_or(SrtConfigError::InvalidPolicy)?;
+                .ok_or(NativeConfigError::InvalidPolicy)?;
             let port = port
                 .parse::<u16>()
-                .map_err(|_| SrtConfigError::InvalidPolicy)?;
+                .map_err(|_| NativeConfigError::InvalidPolicy)?;
             if host.is_empty() {
-                return Err(SrtConfigError::InvalidPolicy);
+                return Err(NativeConfigError::InvalidPolicy);
             }
             Ok((host.to_owned(), port))
         })
-        .collect::<Result<Vec<_>, SrtConfigError>>()?;
+        .collect::<Result<Vec<_>, NativeConfigError>>()?;
     if endpoints.is_empty() {
         Ok(NetworkAccess::Deny)
     } else if body.contains("(allow network-outbound (remote tcp (param \"PROXY_ENDPOINT\")))") {
         Ok(NetworkAccess::Allowlist(endpoints))
     } else {
-        Err(SrtConfigError::InvalidPolicy)
+        Err(NativeConfigError::InvalidPolicy)
     }
 }
 
@@ -315,7 +315,7 @@ mod tests {
         let policy = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("deploy/policies")
             .join(name);
-        let digest = compile_srt_policy(&policy, &profile, &workspace).unwrap();
+        let digest = compile_native_policy(&policy, &profile, &workspace).unwrap();
         assert_eq!(digest.len(), 64);
         verify_compiled_profile(&profile, &digest, &workspace.canonicalize().unwrap()).unwrap();
         fs::read_to_string(profile).unwrap()
@@ -361,12 +361,12 @@ mod tests {
         let policy = temporary.path().join("changed.yaml");
         fs::write(&policy, changed).unwrap();
         assert_eq!(
-            compile_srt_policy(
+            compile_native_policy(
                 &policy,
                 &temporary.path().join("profile"),
                 &temporary.path().join("workspaces")
             ),
-            Err(SrtConfigError::InvalidPolicy)
+            Err(NativeConfigError::InvalidPolicy)
         );
     }
 }

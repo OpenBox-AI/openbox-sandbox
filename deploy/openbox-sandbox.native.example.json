@@ -10,21 +10,21 @@
     }
   ],
   "state_directory": "/var/lib/openbox-sandbox/cleanup",
-  "provider": "srt",
+  "provider": "native",
   "provider_capability": "enforced-locally",
-  "srt_profile_path": "/var/lib/openbox-sandbox/srt/policy.sb",
-  "srt_profile_sha256": "REPLACE_WITH_COMPILED_PROFILE_SHA256",
-  "srt_workspace_root": "/var/lib/openbox-sandbox/srt/workspaces",
+  "native_profile_path": "/var/lib/openbox-sandbox/native/policy.sb",
+  "native_profile_sha256": "REPLACE_WITH_COMPILED_PROFILE_SHA256",
+  "native_workspace_root": "/var/lib/openbox-sandbox/native/workspaces",
   "asset_bundle": {
     "runtime_contract_version": 1,
     "adapter_build_sha256": "REPLACE_WITH_RUNNING_OPENBOX_SANDBOX_SHA256",
-    "template": "native://srt",
+    "template": "native://native",
     "policy": {
-      "id": "openbox-native-srt-deny-network",
+      "id": "openbox-native-deny-network",
       "version": 1,
       "sha256": "REPLACE_WITH_DEPLOYMENT_POLICY_SHA256"
     },
-    "compatibility_id": "native-srt-v1"
+    "compatibility_id": "native-v1"
   },
   "reconcile_delete_deadline_ms": 60000,
   "reconcile_wait_deadline_ms": 60000,

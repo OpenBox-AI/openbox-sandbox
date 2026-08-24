@@ -34,11 +34,11 @@ pub struct ProcessConfig {
     #[serde(default)]
     pub runtime_poll_interval_ms: Option<u64>,
     #[serde(default)]
-    pub srt_profile_path: Option<PathBuf>,
+    pub native_profile_path: Option<PathBuf>,
     #[serde(default)]
-    pub srt_profile_sha256: Option<Sha256Digest>,
+    pub native_profile_sha256: Option<Sha256Digest>,
     #[serde(default)]
-    pub srt_workspace_root: Option<PathBuf>,
+    pub native_workspace_root: Option<PathBuf>,
     pub reconcile_delete_deadline_ms: u64,
     pub reconcile_wait_deadline_ms: u64,
     pub maximum_connections: usize,
@@ -51,8 +51,8 @@ pub struct ProcessConfig {
 pub enum ProviderKind {
     #[serde(rename = "openshell")]
     OpenShell,
-    #[serde(rename = "srt")]
-    Srt,
+    #[serde(rename = "native")]
+    Native,
 }
 
 #[derive(Deserialize)]
@@ -130,9 +130,9 @@ fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
     match config.provider {
         ProviderKind::OpenShell => {
             if config.provider_capability != ProviderCapability::Attested
-                || config.srt_profile_path.is_some()
-                || config.srt_profile_sha256.is_some()
-                || config.srt_workspace_root.is_some()
+                || config.native_profile_path.is_some()
+                || config.native_profile_sha256.is_some()
+                || config.native_workspace_root.is_some()
             {
                 eprintln!(
                     "ERROR: config validation failed: OpenShell capability/provider fields mismatch"
@@ -173,7 +173,7 @@ fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
                 return Err(ConfigError);
             }
         }
-        ProviderKind::Srt => {
+        ProviderKind::Native => {
             if config.provider_capability != ProviderCapability::EnforcedLocally
                 || config.runtime_endpoint.is_some()
                 || config.runtime_mtls_directory.is_some()
@@ -181,23 +181,25 @@ fn validate(config: &ProcessConfig) -> Result<(), ConfigError> {
                 || config.runtime_poll_interval_ms.is_some()
             {
                 eprintln!(
-                    "ERROR: config validation failed: srt capability/provider fields mismatch"
+                    "ERROR: config validation failed: native capability/provider fields mismatch"
                 );
                 return Err(ConfigError);
             }
-            let profile = config.srt_profile_path.as_deref().ok_or(ConfigError)?;
-            let workspace = config.srt_workspace_root.as_deref().ok_or(ConfigError)?;
-            if config.srt_profile_sha256.is_none() || workspace.as_os_str().is_empty() {
+            let profile = config.native_profile_path.as_deref().ok_or(ConfigError)?;
+            let workspace = config.native_workspace_root.as_deref().ok_or(ConfigError)?;
+            if config.native_profile_sha256.is_none() || workspace.as_os_str().is_empty() {
                 eprintln!(
-                    "ERROR: config validation failed: srt profile pin or workspace is missing"
+                    "ERROR: config validation failed: native profile pin or workspace is missing"
                 );
                 return Err(ConfigError);
             }
             validate_owner_file(profile, true).inspect_err(|_| {
-                eprintln!("ERROR: config validation failed: srt_profile_path validation failed");
+                eprintln!("ERROR: config validation failed: native_profile_path validation failed");
             })?;
             validate_owner_directory(workspace).inspect_err(|_| {
-                eprintln!("ERROR: config validation failed: srt_workspace_root validation failed");
+                eprintln!(
+                    "ERROR: config validation failed: native_workspace_root validation failed"
+                );
             })?;
         }
     }
@@ -552,11 +554,11 @@ mod tests {
     }
 
     #[test]
-    fn srt_provider_requires_explicit_local_capability_and_pinned_profile() {
+    fn native_provider_requires_explicit_local_capability_and_pinned_profile() {
         let temporary = tempfile::tempdir().unwrap();
         let root = temporary.path().canonicalize().unwrap();
         let (path, mut value) = fixture(&root);
-        let workspace = root.join("srt-workspaces");
+        let workspace = root.join("native-workspaces");
         let profile = root.join(if cfg!(target_os = "macos") {
             "policy.sb"
         } else {
@@ -565,9 +567,9 @@ mod tests {
         let policy = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("deploy/policies/policy-deny-network.yaml");
         let profile_sha =
-            openbox_sandbox::compile_srt_policy(&policy, &profile, &workspace).unwrap();
+            openbox_sandbox::compile_native_policy(&policy, &profile, &workspace).unwrap();
         std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o600)).unwrap();
-        value["provider"] = serde_json::Value::String("srt".to_owned());
+        value["provider"] = serde_json::Value::String("native".to_owned());
         value["provider_capability"] = serde_json::Value::String("enforced-locally".to_owned());
         value.as_object_mut().unwrap().remove("runtime_endpoint");
         value
@@ -582,13 +584,13 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("runtime_poll_interval_ms");
-        value["srt_profile_path"] =
+        value["native_profile_path"] =
             serde_json::Value::String(profile.to_string_lossy().into_owned());
-        value["srt_profile_sha256"] = serde_json::Value::String(profile_sha);
-        value["srt_workspace_root"] =
+        value["native_profile_sha256"] = serde_json::Value::String(profile_sha);
+        value["native_workspace_root"] =
             serde_json::Value::String(workspace.to_string_lossy().into_owned());
         write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);
-        assert_eq!(load(&path).unwrap().provider, ProviderKind::Srt);
+        assert_eq!(load(&path).unwrap().provider, ProviderKind::Native);
 
         value["provider_capability"] = serde_json::Value::String("attested".to_owned());
         write(&path, serde_json::to_vec(&value).unwrap().as_slice(), 0o600);

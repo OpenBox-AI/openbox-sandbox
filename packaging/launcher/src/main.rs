@@ -148,7 +148,7 @@ enum CommandLine {
 const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
     ("--provider", "OPENBOX_PROVIDER"),
     ("--state-root", "OPENBOX_STATE_ROOT"),
-    ("--srt-workspace-root", "OPENBOX_SRT_WORKSPACE_ROOT"),
+    ("--native-workspace-root", "OPENBOX_NATIVE_WORKSPACE_ROOT"),
     ("--config-root", "OPENBOX_CONFIG_ROOT"),
     ("--project-root", "OPENBOX_PROJECT_ROOT"),
     ("--bundle-dir", "OPENSHELL_BUNDLE_DIR"),
@@ -287,8 +287,8 @@ fn parse_provision_flags(args: &[String]) -> Result<(Vec<(String, String)>, bool
         .rev()
         .find(|(key, _)| key == "OPENBOX_PROVIDER")
     {
-        if !matches!(provider.as_str(), "srt" | "openshell") {
-            return Err("--provider must be srt or openshell".to_owned());
+        if !matches!(provider.as_str(), "native" | "openshell") {
+            return Err("--provider must be native or openshell".to_owned());
         }
     }
     if keep_pki && !clean_rerun {
@@ -817,7 +817,7 @@ USAGE:
 MODULES:
   openbox-sandbox   Production-intent mTLS sandbox service (root crate).
   obs               Operator/developer launcher (this binary).
-  Native srt        Default sandbox-exec/bubblewrap provider; no shell rebuild.
+  Native            Default sandbox-exec/bubblewrap provider; no shell rebuild.
   OpenShell         Explicit alternative external gateway/driver runtime.
 
 DOGFOOD LOOP (source checkout only):
@@ -827,13 +827,13 @@ DOGFOOD LOOP (source checkout only):
   obs verify && obs uninstall
 
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
-  --provider NAME        srt (default, native OS sandbox) or openshell (explicit).
+  --provider NAME        native (default, native OS sandbox) or openshell (explicit).
   --yes                  Accept all non-privileged defaults non-interactively.
-                         The native srt path never requires sudo or CA trust.
+                         The native path never requires sudo or CA trust.
   --clean-rerun          Also remove wizard-owned state before provisioning.
   --keep-pki             Preserve PKI (with --clean-rerun or uninstall).
   --state-root PATH      (~/.local/state/openbox-sandbox)
-  --srt-workspace-root PATH (/private/tmp/openbox-sandbox-<uid>/workspaces)
+  --native-workspace-root PATH (/private/tmp/openbox-sandbox-<uid>/workspaces)
   --config-root PATH     (~/.config/openbox-sandbox)
   --sandbox-port N       (17443)
   --gateway-port N       (17670)
@@ -949,10 +949,10 @@ mod tests {
     #[test]
     fn provision_options_are_validated() {
         assert_eq!(
-            parse_command(&args(&["provision", "--provider", "srt", "--yes"])),
+            parse_command(&args(&["provision", "--provider", "native", "--yes"])),
             Ok(CommandLine::Provision {
                 overrides: vec![
-                    ("OPENBOX_PROVIDER".to_owned(), "srt".to_owned()),
+                    ("OPENBOX_PROVIDER".to_owned(), "native".to_owned()),
                     ("OPENBOX_YES".to_owned(), "1".to_owned()),
                 ],
                 clean_rerun: false,

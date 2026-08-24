@@ -1,4 +1,4 @@
-//! Native SRT-style provider built from OS sandbox primitives.
+//! Native-style provider built from OS sandbox primitives.
 //!
 //! This is intentionally not the Anthropic npm CLI. `OpenBox` owns the runner so
 //! argv crosses the boundary without a shell, while macOS Seatbelt and Linux
@@ -32,11 +32,11 @@ use crate::{
 };
 
 use policy::{NetworkAccess, compiled_network_access, verify_compiled_profile};
-pub use policy::{compile_srt_policy, sha256_file};
+pub use policy::{compile_native_policy, sha256_file};
 use proxy::ProxyHandle;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SrtConfigError {
+pub enum NativeConfigError {
     InvalidConfiguration,
     UnsupportedPlatform,
     PolicyRead,
@@ -45,37 +45,37 @@ pub enum SrtConfigError {
     PolicyMismatch,
 }
 
-impl fmt::Display for SrtConfigError {
+impl fmt::Display for NativeConfigError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("native srt configuration rejected")
+        formatter.write_str("native configuration rejected")
     }
 }
 
-impl std::error::Error for SrtConfigError {}
+impl std::error::Error for NativeConfigError {}
 
 #[derive(Clone, Debug)]
-pub struct SrtConfig {
+pub struct NativeConfig {
     profile_path: PathBuf,
     profile_sha256: Sha256Digest,
     workspace_root: PathBuf,
     policy_identity: PolicyIdentity,
 }
 
-impl SrtConfig {
+impl NativeConfig {
     pub fn new(
         profile_path: impl Into<PathBuf>,
         profile_sha256: Sha256Digest,
         workspace_root: impl Into<PathBuf>,
         policy_identity: PolicyIdentity,
-    ) -> Result<Self, SrtConfigError> {
+    ) -> Result<Self, NativeConfigError> {
         let profile_path = profile_path.into();
         let workspace_root = workspace_root.into();
         if !profile_path.is_absolute() || !workspace_root.is_absolute() {
-            return Err(SrtConfigError::InvalidConfiguration);
+            return Err(NativeConfigError::InvalidConfiguration);
         }
         let workspace_root = workspace_root
             .canonicalize()
-            .map_err(|_| SrtConfigError::InvalidConfiguration)?;
+            .map_err(|_| NativeConfigError::InvalidConfiguration)?;
         verify_compiled_profile(&profile_path, profile_sha256.as_str(), &workspace_root)?;
         Ok(Self {
             profile_path,
@@ -90,12 +90,12 @@ impl SrtConfig {
     }
 }
 
-pub struct SrtRuntime {
-    config: SrtConfig,
+pub struct NativeRuntime {
+    config: NativeConfig,
 }
 
-impl SrtRuntime {
-    pub fn new(config: SrtConfig) -> Result<Self, SrtConfigError> {
+impl NativeRuntime {
+    pub fn new(config: NativeConfig) -> Result<Self, NativeConfigError> {
         verify_compiled_profile(
             &config.profile_path,
             config.profile_sha256.as_str(),
@@ -108,7 +108,7 @@ impl SrtRuntime {
         ProviderCapability::EnforcedLocally
     }
 
-    fn verify_profile(&self) -> Result<(), SrtConfigError> {
+    fn verify_profile(&self) -> Result<(), NativeConfigError> {
         verify_compiled_profile(
             &self.config.profile_path,
             self.config.profile_sha256.as_str(),
@@ -122,7 +122,7 @@ impl SrtRuntime {
 }
 
 #[async_trait]
-impl SandboxRuntime for SrtRuntime {
+impl SandboxRuntime for NativeRuntime {
     async fn create(
         &self,
         request: CreateRequest,
@@ -479,11 +479,11 @@ impl SandboxRuntime for SrtRuntime {
 }
 
 fn native_command(
-    config: &SrtConfig,
+    config: &NativeConfig,
     workspace: &Path,
     request: &ExecRequest,
     proxy: Option<&ProxyHandle>,
-) -> Result<Command, SrtConfigError> {
+) -> Result<Command, NativeConfigError> {
     let argv = request.argv().as_slice();
     if cfg!(target_os = "macos") {
         let mut command = Command::new("/usr/bin/sandbox-exec");
@@ -537,7 +537,7 @@ fn native_command(
         command.arg("--").arg(&argv[0]).args(&argv[1..]);
         Ok(command)
     } else {
-        Err(SrtConfigError::UnsupportedPlatform)
+        Err(NativeConfigError::UnsupportedPlatform)
     }
 }
 

@@ -8,11 +8,11 @@
 mod dispatcher;
 #[cfg(test)]
 mod integration_tests;
+mod native;
 mod openshell;
 mod protocol;
 mod runtime_contract;
 mod service;
-mod srt;
 #[cfg(test)]
 mod test_client;
 #[cfg(test)]
@@ -26,6 +26,9 @@ pub use dispatcher::{
     GovernedDispatcher, GovernedError, GovernedErrorCode, HostExecutionFailure,
     HostExecutionFailureCode, HostExecutor, IsolationSupport, SandboxAssetBundle, SelectedExecutor,
     TimeoutState,
+};
+pub use native::{
+    NativeConfig, NativeConfigError, NativeRuntime, compile_native_policy, sha256_file,
 };
 pub use openshell::{
     OPENSHELL_SOURCE_PIN, OpenShellConfig, OpenShellConnectError, OpenShellConnectErrorCode,
@@ -54,7 +57,6 @@ pub use service::{
     DurableStore, ReconciliationReport, SandboxServiceBoundary, SandboxTlsServer, ServerError,
     StoreError, TlsServerConfig,
 };
-pub use srt::{SrtConfig, SrtConfigError, SrtRuntime, compile_srt_policy, sha256_file};
 #[cfg(test)]
 pub use test_support::{
     ConformanceCase, ConformanceFailure, ConformanceHarness, ConformanceObservation,

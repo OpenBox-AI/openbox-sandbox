@@ -8,9 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use openbox_sandbox::{
-    CallerFingerprint, DurableStore, OpenShellConfig, OpenShellRuntime, SandboxRuntime,
-    SandboxServiceBoundary, SandboxTlsServer, SrtConfig, SrtRuntime, TlsServerConfig,
-    compile_srt_policy,
+    CallerFingerprint, DurableStore, NativeConfig, NativeRuntime, OpenShellConfig,
+    OpenShellRuntime, SandboxRuntime, SandboxServiceBoundary, SandboxTlsServer, TlsServerConfig,
+    compile_native_policy,
 };
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -33,13 +33,13 @@ async fn main() -> std::process::ExitCode {
 #[allow(clippy::too_many_lines)]
 async fn run() -> Result<(), ProcessError> {
     let mode = parse_mode(std::env::args_os().skip(1))?;
-    if let Mode::CompileSrtPolicy {
+    if let Mode::CompileNativePolicy {
         policy_document,
         output,
         workspace_root,
     } = &mode
     {
-        let digest = compile_srt_policy(policy_document, output, workspace_root)
+        let digest = compile_native_policy(policy_document, output, workspace_root)
             .map_err(|_| ProcessError::Configuration)?;
         println!("{digest}");
         return Ok(());
@@ -101,18 +101,18 @@ async fn run() -> Result<(), ProcessError> {
                     .map_err(|_| ProcessError::Runtime)?,
             )
         }
-        ProviderKind::Srt => {
-            let srt = SrtConfig::new(
+        ProviderKind::Native => {
+            let native = NativeConfig::new(
                 config
-                    .srt_profile_path
+                    .native_profile_path
                     .clone()
                     .ok_or(ProcessError::Configuration)?,
                 config
-                    .srt_profile_sha256
+                    .native_profile_sha256
                     .clone()
                     .ok_or(ProcessError::Configuration)?,
                 config
-                    .srt_workspace_root
+                    .native_workspace_root
                     .clone()
                     .ok_or(ProcessError::Configuration)?,
                 config.asset_bundle.policy().clone(),
@@ -121,7 +121,7 @@ async fn run() -> Result<(), ProcessError> {
             if mode == Mode::CheckConfig {
                 return Ok(());
             }
-            Arc::new(SrtRuntime::new(srt).map_err(|_| ProcessError::Runtime)?)
+            Arc::new(NativeRuntime::new(native).map_err(|_| ProcessError::Runtime)?)
         }
     };
     let store =
@@ -169,8 +169,8 @@ fn parse_mode(arguments: impl IntoIterator<Item = OsString>) -> Result<Mode, Pro
     match arguments.as_slice() {
         [] => Ok(Mode::Run),
         [argument] if argument == "--check-config" => Ok(Mode::CheckConfig),
-        [flag, policy_document, output, workspace_root] if flag == "--compile-srt-policy" => {
-            Ok(Mode::CompileSrtPolicy {
+        [flag, policy_document, output, workspace_root] if flag == "--compile-native-policy" => {
+            Ok(Mode::CompileNativePolicy {
                 policy_document: PathBuf::from(policy_document),
                 output: PathBuf::from(output),
                 workspace_root: PathBuf::from(workspace_root),
@@ -214,7 +214,7 @@ async fn wait_for_shutdown_signal() {
 enum Mode {
     Run,
     CheckConfig,
-    CompileSrtPolicy {
+    CompileNativePolicy {
         policy_document: PathBuf,
         output: PathBuf,
         workspace_root: PathBuf,
@@ -257,13 +257,13 @@ mod tests {
         );
         assert_eq!(
             parse_mode([
-                OsString::from("--compile-srt-policy"),
+                OsString::from("--compile-native-policy"),
                 OsString::from("/policy.yaml"),
                 OsString::from("/profile.sb"),
                 OsString::from("/workspaces"),
             ])
             .unwrap(),
-            Mode::CompileSrtPolicy {
+            Mode::CompileNativePolicy {
                 policy_document: PathBuf::from("/policy.yaml"),
                 output: PathBuf::from("/profile.sb"),
                 workspace_root: PathBuf::from("/workspaces"),
