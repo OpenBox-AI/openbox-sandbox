@@ -5,6 +5,8 @@
 #
 # Usage (builder machine, after `obs provision` warmed the cache):
 #   ./capture-vm-cache.sh [output-dir]
+# Publishing is maintainer-only and requires salamisandwich77's explicit token:
+#   GH_TOKEN="$(gh auth token --user salamisandwich77)" gh release upload ...
 set -Eeuo pipefail
 if [[ -z "${BASH_VERSION:-}" ]]; then
   exec bash "$0" "$@"
@@ -30,4 +32,6 @@ echo "capturing $CACHE_DIR -> $OUT/$NAME.tar.gz"
 # images dir directly, so no nested images/ prefix may exist in the tar.
 tar -czf "$OUT/$NAME.tar.gz" -C "$CACHE_DIR" .
 shasum -a 256 "$OUT/$NAME.tar.gz"
-echo "done — upload to both releases: gh release upload v0.1.0 v0.1.0-dev $OUT/$NAME.tar.gz"
+echo "done — upload with the explicit maintainer account:"
+echo "  GH_TOKEN=\"\$(gh auth token --user salamisandwich77)\" gh release upload v0.1.0 $OUT/$NAME.tar.gz"
+echo "  GH_TOKEN=\"\$(gh auth token --user salamisandwich77)\" gh release upload v0.1.0-dev $OUT/$NAME.tar.gz"

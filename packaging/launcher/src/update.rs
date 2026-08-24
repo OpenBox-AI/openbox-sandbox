@@ -5,13 +5,6 @@ use std::process::{Command, ExitCode, Stdio};
 /// Download the platform release assets for `tag` (default: latest release)
 /// into the current directory, verify SHA256SUMS, and replace the local obs.
 pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
-    let gh = match which_gh() {
-        Some(gh) => gh,
-        None => {
-            crate::err("gh CLI is required — install: brew install gh && gh auth login");
-            return ExitCode::FAILURE;
-        }
-    };
     let repo = "OpenBox-AI/openbox-sandbox";
     // The binary knows its channel — update targets the SAME line by default.
     let release = match tag {
@@ -22,7 +15,10 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
             } else {
                 "v0.1.0-dev"
             };
-            crate::info(&format!("release line: {} — updating within the same channel", crate::channel()));
+            crate::info(&format!(
+                "release line: {} — updating within the same channel",
+                crate::channel()
+            ));
             t.to_owned()
         }
     };
@@ -50,7 +46,9 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
     } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
         "obs-linux-x86_64"
     } else {
-        crate::err("no release assets for this platform (darwin-arm64 and linux-x86_64 are published)");
+        crate::err(
+            "no release assets for this platform (darwin-arm64 and linux-x86_64 are published)",
+        );
         return ExitCode::FAILURE;
     };
     let vm_cache = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
@@ -81,22 +79,15 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
     }
     for pattern in patterns.iter().filter(|p| !p.is_empty()) {
         crate::info(&format!("downloading {pattern}"));
-        let status = Command::new(&gh)
-            .args([
-                "release",
-                "download",
-                &release,
-                "--repo",
-                repo,
-                "--pattern",
-                pattern,
-                "--clobber",
-            ])
+        let url = format!("https://github.com/{repo}/releases/download/{release}/{pattern}");
+        let status = Command::new("curl")
+            .args(["-fL", "--retry", "3", "-o", pattern])
+            .arg(url)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status();
-        // An unmatched pattern is fine; a real transport failure surfaces in
-        // the required-files check below.
+        // An absent optional asset is fine; a required fetch failure surfaces
+        // in the required-files check below.
         let _ = status;
     }
 
@@ -128,9 +119,7 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
             ));
             return ExitCode::FAILURE;
         }
-        let actual = Command::new("shasum")
-            .args(["-a", "256", name])
-            .output();
+        let actual = Command::new("shasum").args(["-a", "256", name]).output();
         let actual = match actual {
             Ok(output) => String::from_utf8_lossy(&output.stdout)
                 .split_whitespace()
@@ -180,12 +169,4 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
     }
     crate::ok(&format!("{target} updated to {release} — assets verified"));
     ExitCode::SUCCESS
-}
-
-fn which_gh() -> Option<std::path::PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|dir| {
-        let candidate = dir.join("gh");
-        candidate.is_file().then_some(candidate)
-    })
 }

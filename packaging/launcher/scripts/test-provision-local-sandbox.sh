@@ -45,6 +45,16 @@ PY
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROVISION="$SCRIPT_DIR/provision-local-sandbox.sh"
 audit_use_before_define "$PROVISION"
+# Consumer release recovery is public HTTP only: no gh binary, account, or
+# token may be required by the provision script.
+if grep -Eq 'command -v gh|gh release download|gh auth' "$PROVISION"; then
+  echo 'consumer provision must not invoke gh' >&2
+  exit 1
+fi
+grep -Fq 'curl -fL --retry 3 -o' "$PROVISION" \
+  || { echo 'expected public release recovery through retrying curl' >&2; exit 1; }
+grep -Fq 'https://github.com/OpenBox-AI/openbox-sandbox/releases/download/$tag/' "$PROVISION" \
+  || { echo 'expected versioned public GitHub release URL' >&2; exit 1; }
 TMP="$(mktemp -d)"
 PIDS=()
 cleanup() {

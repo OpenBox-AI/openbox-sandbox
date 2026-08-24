@@ -72,46 +72,50 @@ fn selected_provider() -> String {
 /// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
 /// machine needs only `obs provision`. Reuses the embedded fetch logic.
 
-fn gh_download_pattern(gh: &str, tag: &str, pattern: &str) -> bool {
-    let status = Command::new(gh)
-        .args([
-            "release",
-            "download",
-            tag,
-            "--repo",
-            "OpenBox-AI/openbox-sandbox",
-            "--pattern",
-            pattern,
-            "--clobber",
-        ])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-    matches!(status, Ok(st) if st.success())
-}
-
-fn fetch_pinned_zot(gh: &str, cwd: &Path, pin: crate::pin::ZotPin) -> Result<(), String> {
-    let status = Command::new(gh)
+fn curl_download(
+    repo: &str,
+    cwd: &Path,
+    tag: &str,
+    asset: &str,
+    destination: &Path,
+) -> Result<(), String> {
+    let url = format!("https://github.com/{repo}/releases/download/{tag}/{asset}");
+    let status = Command::new("curl")
         .current_dir(cwd)
-        .args([
-            "release",
-            "download",
-            crate::pin::ZOT_VERSION,
-            "--repo",
-            "project-zot/zot",
-            "--pattern",
-            pin.asset,
-            "--clobber",
-        ])
+        .args(["-fL", "--retry", "3", "-o"])
+        .arg(destination)
+        .arg(&url)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
-        .map_err(|error| format!("could not run gh: {error}"))?;
-    if !status.success() {
-        return Err(format!("gh release download exited {status}"));
+        .map_err(|error| format!("could not run curl for {url}: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("curl exited {status} while downloading {url}"))
     }
+}
 
+fn download_openbox_asset(cwd: &Path, tag: &str, asset: &str, destination: &Path) -> bool {
+    match curl_download("OpenBox-AI/openbox-sandbox", cwd, tag, asset, destination) {
+        Ok(()) => true,
+        Err(error) => {
+            warn(&error);
+            false
+        }
+    }
+}
+
+fn fetch_pinned_zot(cwd: &Path, pin: crate::pin::ZotPin) -> Result<(), String> {
     let downloaded = cwd.join(pin.asset);
+    curl_download(
+        "project-zot/zot",
+        cwd,
+        crate::pin::ZOT_VERSION,
+        pin.asset,
+        &downloaded,
+    )?;
+
     let local = cwd.join(pin.local_name);
     std::fs::rename(&downloaded, &local).map_err(|error| {
         format!(
@@ -147,11 +151,6 @@ fn fetch_pinned_zot(gh: &str, cwd: &Path, pin: crate::pin::ZotPin) -> Result<(),
 /// Provision must self-heal: anything missing from the detected release line
 /// (service binary, policy, dev image tar) is fetched from the matching tag.
 fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
-    let gh = match which_gh() {
-        Some(gh) => gh,
-        None => return, // surface later as a clear missing-file error
-    };
-    let gh = gh.to_string_lossy().to_string();
     let dev_tar = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
         "openbox-sandbox-dev-darwin-arm64.tar.gz"
     } else if cfg!(target_os = "linux") && cfg!(target_arch = "x86_64") {
@@ -184,7 +183,7 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     ));
     if !cwd.join(svc_name).is_file() {
         info(&format!("{svc_name} missing — fetching from {tag}"));
-        let _ = gh_download_pattern(&gh, tag, svc_name);
+        let _ = download_openbox_asset(cwd, tag, svc_name, &cwd.join(svc_name));
     }
     // TEMPLATES: ALL policy templates are always provided, regardless of the
     // channel — the channel only selects the DEFAULT. Each template is fetched
@@ -193,21 +192,31 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     // cannot have it.
     if !cwd.join("policy-allow-network-dev.yaml").is_file() {
         info("allow policy template missing — fetching from v0.1.0-dev");
-        let _ = gh_download_pattern(&gh, "v0.1.0-dev", "policy-allow-network-dev.yaml");
+        let _ = download_openbox_asset(
+            cwd,
+            "v0.1.0-dev",
+            "policy-allow-network-dev.yaml",
+            &cwd.join("policy-allow-network-dev.yaml"),
+        );
     }
     if !cwd.join("policy-deny-network-dev.yaml").is_file() {
         info("deny policy template missing — fetching from v0.1.0");
-        let _ = gh_download_pattern(&gh, "v0.1.0", "policy-deny-network-dev.yaml");
+        let _ = download_openbox_asset(
+            cwd,
+            "v0.1.0",
+            "policy-deny-network-dev.yaml",
+            &cwd.join("policy-deny-network-dev.yaml"),
+        );
     }
     // Channel-locked assets beyond the templates.
     if dev_channel {
         if !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
             info(&format!("{dev_tar} missing — fetching from v0.1.0-dev"));
-            let _ = gh_download_pattern(&gh, "v0.1.0-dev", dev_tar);
+            let _ = download_openbox_asset(cwd, "v0.1.0-dev", dev_tar, &cwd.join(dev_tar));
         }
         if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
             info(&format!("{vm_cache} missing — fetching from v0.1.0-dev"));
-            let _ = gh_download_pattern(&gh, "v0.1.0-dev", vm_cache);
+            let _ = download_openbox_asset(cwd, "v0.1.0-dev", vm_cache, &cwd.join(vm_cache));
         }
         // Runtime-agnostic registry assets: our OCI layout plus the separately
         // pinned binary from project-zot's official release.
@@ -220,7 +229,7 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
         };
         if !oci_layout.is_empty() && !cwd.join(oci_layout).is_file() {
             info(&format!("{oci_layout} missing — fetching from v0.1.0-dev"));
-            let _ = gh_download_pattern(&gh, "v0.1.0-dev", oci_layout);
+            let _ = download_openbox_asset(cwd, "v0.1.0-dev", oci_layout, &cwd.join(oci_layout));
         }
         if let Some(pin) = zot_pin.filter(|pin| !cwd.join(pin.local_name).is_file()) {
             info(&format!(
@@ -229,13 +238,13 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
                 pin.asset,
                 crate::pin::ZOT_VERSION
             ));
-            if let Err(error) = fetch_pinned_zot(&gh, cwd, pin) {
+            if let Err(error) = fetch_pinned_zot(cwd, pin) {
                 warn(&format!("could not fetch pinned official zot: {error}"));
             }
         }
     } else if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
         info(&format!("{vm_cache} missing — fetching from v0.1.0"));
-        let _ = gh_download_pattern(&gh, "v0.1.0", vm_cache);
+        let _ = download_openbox_asset(cwd, "v0.1.0", vm_cache, &cwd.join(vm_cache));
     }
 }
 
@@ -358,57 +367,44 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         bundle_dir.join(svc_name)
     };
     if !svc_bin.is_file() {
-        if let Some(gh) = which_gh() {
-            info(&format!("sandbox service missing — fetching {svc_name}"));
-            let fetch_tag = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
-                Ok("dev") => "v0.1.0-dev",
-                Ok(_) => "v0.1.0",
-                Err(_) => {
-                    if cwd.join("policy-allow-network-dev.yaml").is_file()
-                        || cwd
-                            .join(dev_tar_name(
-                                cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-                            ))
-                            .is_file()
-                    {
-                        "v0.1.0-dev"
-                    } else {
-                        "v0.1.0"
-                    }
-                }
-            };
-            let dl = Command::new(&gh)
-                .args(["release", "download", fetch_tag])
-                .args(["--repo", "OpenBox-AI/openbox-sandbox"])
-                .args(["--pattern", &svc_name])
-                .args(["--dir", bundle_dir.to_str().unwrap_or(".")])
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status();
-            if !matches!(dl, Ok(s) if s.success()) {
-                err(&format!(
-                    "failed to fetch the sandbox service binary {svc_name}"
-                ));
-                return Err(ExitCode::FAILURE);
-            }
-            // gh release download does not preserve the executable bit;
-            // the wizard's `-x` check will fail without it.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                if let Ok(meta) = std::fs::metadata(&svc_bin) {
-                    let mut perms = meta.permissions();
-                    let mode = perms.mode() | 0o111;
-                    perms.set_mode(mode);
-                    if let Err(e) = std::fs::set_permissions(&svc_bin, perms) {
-                        err(&format!("cannot chmod service binary: {e}"));
-                        return Err(ExitCode::FAILURE);
-                    }
+        info(&format!("sandbox service missing — fetching {svc_name}"));
+        let fetch_tag = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
+            Ok("dev") => "v0.1.0-dev",
+            Ok(_) => "v0.1.0",
+            Err(_) => {
+                if cwd.join("policy-allow-network-dev.yaml").is_file()
+                    || cwd
+                        .join(dev_tar_name(
+                            cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
+                        ))
+                        .is_file()
+                {
+                    "v0.1.0-dev"
+                } else {
+                    "v0.1.0"
                 }
             }
-        } else {
-            err("sandbox service binary missing and gh CLI unavailable to fetch it");
-            // Fall through to the source-tree build below.
+        };
+        if !download_openbox_asset(&cwd, fetch_tag, svc_name, &svc_bin) {
+            err(&format!(
+                "failed to fetch the sandbox service binary {svc_name}"
+            ));
+            return Err(ExitCode::FAILURE);
+        }
+        // GitHub release assets do not preserve the executable bit; the
+        // wizard's `-x` check will fail without it.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(&svc_bin) {
+                let mut perms = meta.permissions();
+                let mode = perms.mode() | 0o111;
+                perms.set_mode(mode);
+                if let Err(e) = std::fs::set_permissions(&svc_bin, perms) {
+                    err(&format!("cannot chmod service binary: {e}"));
+                    return Err(ExitCode::FAILURE);
+                }
+            }
         }
     }
     if !svc_bin.is_file() {
@@ -453,41 +449,27 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     // Fetch it from the same release alongside the service binary.
     let policy_path = bundle_dir.join(policy_name);
     if !policy_path.is_file() {
-        if let Some(gh) = which_gh() {
-            info(&format!("policy file missing — fetching {policy_name}"));
-            let fetch_tag = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
-                Ok("dev") => "v0.1.0-dev",
-                Ok(_) => "v0.1.0",
-                Err(_) => {
-                    if cwd.join("policy-allow-network-dev.yaml").is_file()
-                        || cwd
-                            .join(dev_tar_name(
-                                cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-                            ))
-                            .is_file()
-                    {
-                        "v0.1.0-dev"
-                    } else {
-                        "v0.1.0"
-                    }
+        info(&format!("policy file missing — fetching {policy_name}"));
+        let fetch_tag = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
+            Ok("dev") => "v0.1.0-dev",
+            Ok(_) => "v0.1.0",
+            Err(_) => {
+                if cwd.join("policy-allow-network-dev.yaml").is_file()
+                    || cwd
+                        .join(dev_tar_name(
+                            cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
+                        ))
+                        .is_file()
+                {
+                    "v0.1.0-dev"
+                } else {
+                    "v0.1.0"
                 }
-            };
-            let dl = Command::new(&gh)
-                .args(["release", "download", fetch_tag])
-                .args(["--repo", "OpenBox-AI/openbox-sandbox"])
-                .args(["--pattern", policy_name])
-                .args(["--dir", bundle_dir.to_str().unwrap_or(".")])
-                .args(["--clobber"])
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status();
-            if !matches!(dl, Ok(s) if s.success()) {
-                err(&format!("failed to fetch the sandbox policy {policy_name}"));
-                return Err(ExitCode::FAILURE);
             }
-        } else {
-            err("policy file missing and gh CLI unavailable to fetch it");
-            // Fall through to the source-tree check below.
+        };
+        if !download_openbox_asset(&cwd, fetch_tag, policy_name, &policy_path) {
+            err(&format!("failed to fetch the sandbox policy {policy_name}"));
+            return Err(ExitCode::FAILURE);
         }
     }
     if !policy_path.is_file() {
@@ -512,7 +494,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     Ok(())
 }
 
-/// Locate the GitHub CLI (used to fetch the sandbox service binary).
+/// Locate Cargo for the source-checkout fallback.
 fn which_cargo() -> Option<PathBuf> {
     // Honour the CARGO env var when set (e.g. cargo run, rustup overrides).
     if let Some(cargo) = std::env::var_os("CARGO") {
@@ -529,23 +511,6 @@ fn which_cargo() -> Option<PathBuf> {
         if candidate.is_file() {
             return Some(candidate);
         }
-    }
-    None
-}
-
-fn which_gh() -> Option<PathBuf> {
-    for dir in std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
-        .unwrap_or_default()
-    {
-        let candidate = dir.join("gh");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    // PATH not searched with a file check — fall back to process lookup.
-    if std::path::Path::new("gh").exists() {
-        return Some(PathBuf::from("gh"));
     }
     None
 }
@@ -567,31 +532,17 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
         }
     }
     if service.as_ref().is_none_or(|path| !path.is_file()) {
-        if let Some(gh) = which_gh() {
-            let tag = if crate::channel() == "base" {
-                "v0.1.0"
-            } else {
-                "v0.1.0-dev"
-            };
-            info(&format!(
-                "native service missing — fetching {svc_name} from {tag}"
-            ));
-            let _ = Command::new(gh)
-                .current_dir(&cwd)
-                .args([
-                    "release",
-                    "download",
-                    tag,
-                    "--repo",
-                    "OpenBox-AI/openbox-sandbox",
-                    "--pattern",
-                    svc_name,
-                    "--clobber",
-                ])
-                .status();
-            if candidate.is_file() {
-                service = Some(candidate);
-            }
+        let tag = if crate::channel() == "base" {
+            "v0.1.0"
+        } else {
+            "v0.1.0-dev"
+        };
+        info(&format!(
+            "native service missing — fetching {svc_name} from {tag}"
+        ));
+        let _ = download_openbox_asset(&cwd, tag, svc_name, &candidate);
+        if candidate.is_file() {
+            service = Some(candidate);
         }
     }
     if service.as_ref().is_none_or(|path| !path.is_file()) && cwd.join("Cargo.toml").is_file() {
@@ -639,27 +590,13 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
         }
     }
     if policy.as_ref().is_none_or(|path| !path.is_file()) {
-        if let Some(gh) = which_gh() {
-            info(&format!(
-                "native policy missing — fetching {policy_name} from {tag}"
-            ));
-            let _ = Command::new(gh)
-                .current_dir(&cwd)
-                .args([
-                    "release",
-                    "download",
-                    tag,
-                    "--repo",
-                    "OpenBox-AI/openbox-sandbox",
-                    "--pattern",
-                    policy_name,
-                    "--clobber",
-                ])
-                .status();
-            let downloaded = cwd.join(policy_name);
-            if downloaded.is_file() {
-                policy = Some(downloaded);
-            }
+        info(&format!(
+            "native policy missing — fetching {policy_name} from {tag}"
+        ));
+        let downloaded = cwd.join(policy_name);
+        let _ = download_openbox_asset(&cwd, tag, policy_name, &downloaded);
+        if downloaded.is_file() {
+            policy = Some(downloaded);
         }
     }
     let policy = policy.filter(|path| path.is_file()).ok_or_else(|| {

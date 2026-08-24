@@ -115,10 +115,10 @@ resolve_sums_file() {
     fi
   done
   SUMS_FILE=""
-  command -v gh >/dev/null 2>&1 || return 1
   tag="$(channel_tag)"
-  if gh release download "$tag" --repo OpenBox-AI/openbox-sandbox \
-      --pattern SHA256SUMS --clobber >/dev/null 2>&1; then
+  if curl -fL --retry 3 -o "$(pwd)/SHA256SUMS" \
+      "https://github.com/OpenBox-AI/openbox-sandbox/releases/download/$tag/SHA256SUMS" \
+      >/dev/null 2>&1; then
     SUMS_FILE="$(pwd)/SHA256SUMS"
     return 0
   fi
@@ -151,15 +151,12 @@ verify_asset() {
   was_executable=0
   [[ -x "$path" ]] && was_executable=1
   rm -f "$path"
-  if ! command -v gh >/dev/null 2>&1; then
-    VERIFY_ASSET_ERROR="$VERIFY_ASSET_ERROR; gh is unavailable for re-download"
-    return 1
-  fi
 
   tag="$(channel_tag)"
   asset_dir="$(cd "$(dirname "$path")" && pwd)"
-  if ! gh release download "$tag" --repo OpenBox-AI/openbox-sandbox \
-      --pattern "$name" --clobber --dir "$asset_dir" >/dev/null 2>&1; then
+  if ! curl -fL --retry 3 -o "$asset_dir/$name" \
+      "https://github.com/OpenBox-AI/openbox-sandbox/releases/download/$tag/$name" \
+      >/dev/null 2>&1; then
     VERIFY_ASSET_ERROR="$VERIFY_ASSET_ERROR; re-download from $tag failed"
     return 1
   fi

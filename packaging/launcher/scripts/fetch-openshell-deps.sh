@@ -39,17 +39,9 @@ fi
 
 set -Eeuo pipefail
 
-# gh is the release transport; fail fast with an actionable error instead of
-# a mid-download auth failure.
-if ! command -v gh >/dev/null 2>&1; then
-  echo "error: gh CLI is required to fetch OpenShell releases" >&2
-  echo "install: brew install gh && gh auth login" >&2
-  exit 1
-fi
-if ! gh auth status >/dev/null 2>&1; then
-  echo "error: gh is not authenticated — run 'gh auth login' first" >&2
-  exit 1
-fi
+# NVIDIA's OpenShell releases are public; curl needs no GitHub account or token.
+command -v curl >/dev/null 2>&1 \
+  || { echo "error: curl is required to fetch OpenShell releases" >&2; exit 1; }
 OPENSHELL_VERSION="${OPENBOX_OPENSHELL_VERSION:-0.0.88}"
 OUT="${OUT:-$(pwd)/openbox-sandbox-bundle}"
 BASE="https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_VERSION}"
@@ -102,7 +94,6 @@ verify_and_extract() {
   local expected
   expected="$(checksum_for "$asset" "$cfile" "$fallback_sha")"
   echo "  downloading ${asset}"
-  command -v curl >/dev/null 2>&1 || { echo "error: curl is required" >&2; exit 1; }
   # GitHub release assets occasionally reset mid-transfer; retry with
   # backoff before failing the provision.
   curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${url}" -o "${dst}"

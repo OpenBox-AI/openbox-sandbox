@@ -130,7 +130,7 @@ tree:
    bundle tarball, the sandbox policy, `SHA256SUMS`, and Syft SBOMs.
 2. Verify checksums (`sha256sum -c SHA256SUMS`) and scan with Syft v1.20.0.
 3. `obs provision` with `OPENBOX_OPENSHELL_BUNDLE_URL=<release base>`
-   (private repos additionally need `GH_TOKEN`), `OPENBOX_SANDBOX_BIN`
+   (public HTTP; no GitHub account or token), `OPENBOX_SANDBOX_BIN`
    (absolute), and `OPENBOX_POLICY_FILE` (absolute — the policy is a release
    asset, not a repo file) auto-fetches + verifies the bundle, starts the
    stack, and warms the VM driver image cache by default (one create→ready→

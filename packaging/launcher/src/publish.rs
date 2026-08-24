@@ -6,8 +6,9 @@
 //! assets are not part of git history). Designed as if the repository were
 //! public: asset URLs are stable public download links once public.
 //!
-//! Requires the `gh` CLI (installed and authenticated on the dev host).
-//! Shells out to `gh` and `sha256sum`; the launcher stays dependency-free.
+//! Requires the `gh` CLI and the explicit `salamisandwich77` account token on
+//! the dev host. Shells out to `gh` and `sha256sum`; the launcher stays
+//! dependency-free.
 
 use std::path::PathBuf;
 use std::process::{Command, ExitCode, Stdio};
@@ -16,6 +17,7 @@ use crate::{err, info, ok, step};
 
 const DEFAULT_TAG: &str = "hosted-bin";
 const REPO: &str = "OpenBox-AI/openbox-sandbox";
+const PUBLISH_ACCOUNT: &str = "salamisandwich77";
 
 /// `obs publish <release-dir> [tag]`
 pub fn run(release_dir: &str, tag: &str) -> ExitCode {
@@ -23,22 +25,33 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     let tag = if tag.is_empty() { DEFAULT_TAG } else { tag };
 
     // ── Preflight ─────────────────────────────────────────────────────────
-    let gh = std::env::var_os("GH").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("gh"));
-    if !Command::new(&gh).arg("--version").stdout(Stdio::null()).status().is_ok() {
+    let gh = std::env::var_os("GH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("gh"));
+    if !Command::new(&gh)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .status()
+        .is_ok()
+    {
         err("gh CLI is required (https://cli.github.com)");
         return ExitCode::FAILURE;
     }
-    let auth = Command::new(&gh)
-        .args(["auth", "status"])
-        .stdout(Stdio::null())
+    let token_output = Command::new(&gh)
+        .args(["auth", "token", "--user", PUBLISH_ACCOUNT])
         .stderr(Stdio::null())
-        .status();
-    match auth {
-        Ok(s) if s.success() => {}
-        _ => {
-            err("gh is not authenticated — run `gh auth login` first");
-            return ExitCode::FAILURE;
+        .output();
+    let token = match token_output {
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).trim().to_owned()
         }
+        _ => String::new(),
+    };
+    if token.is_empty() {
+        err(&format!(
+            "gh token for {PUBLISH_ACCOUNT} is required — run `gh auth login --hostname github.com`"
+        ));
+        return ExitCode::FAILURE;
     }
 
     let dir = PathBuf::from(release_dir);
@@ -82,11 +95,10 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     let display = tag.trim_start_matches('v');
     let title = format!("OpenBox Sandbox {display}");
     let notes = notes_markdown(tag);
-    let mut create = Command::new(&gh);
+    let mut create = gh_command(&gh, &token);
     create.args([
-        "release", "create", &staging, "--repo", REPO, "--draft",
-        "--title", &title,
-        "--notes", &notes,
+        "release", "create", &staging, "--repo", REPO, "--draft", "--title", &title, "--notes",
+        &notes,
     ]);
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
@@ -108,41 +120,58 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
         .stderr(Stdio::inherit())
         .status();
     match created {
-        Ok(s) if s.success() => ok(&format!("staging release '{staging}' uploaded ({count} assets)")),
+        Ok(s) if s.success() => ok(&format!(
+            "staging release '{staging}' uploaded ({count} assets)"
+        )),
         Ok(_) => {
-            err(&format!("gh release create failed; the current '{tag}' release is untouched"));
+            err(&format!(
+                "gh release create failed; the current '{tag}' release is untouched"
+            ));
             return ExitCode::FAILURE;
         }
         Err(e) => {
-            err(&format!("gh release create failed: {e}; the current '{tag}' release is untouched"));
+            err(&format!(
+                "gh release create failed: {e}; the current '{tag}' release is untouched"
+            ));
             return ExitCode::FAILURE;
         }
     }
 
     // Retag the staging release to the final tag, replacing the old one.
-    let staging_id = match staging_release_id(&gh, &staging) {
+    let staging_id = match staging_release_id(&gh, &token, &staging) {
         Ok(id) => id,
         Err(code) => return code,
     };
     // The new release is fully uploaded; only now remove the old one so the
     // final tag is free for the retag.
-    let old_exists = Command::new(&gh)
+    let old_exists = gh_command(&gh, &token)
         .args(["release", "view", tag, "--repo", REPO])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
     if matches!(old_exists, Ok(s) if s.success()) {
-        let _ = Command::new(&gh)
-            .args(["release", "delete", tag, "--yes", "--cleanup-tag", "--repo", REPO])
+        let _ = gh_command(&gh, &token)
+            .args([
+                "release",
+                "delete",
+                tag,
+                "--yes",
+                "--cleanup-tag",
+                "--repo",
+                REPO,
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::inherit())
             .status();
     }
-    let retag = Command::new(&gh)
+    let retag = gh_command(&gh, &token)
         .args([
-            "api", "--method", "PATCH",
+            "api",
+            "--method",
+            "PATCH",
             &format!("repos/{REPO}/releases/{staging_id}"),
-            "-f", &format!("tag_name={tag}"),
+            "-f",
+            &format!("tag_name={tag}"),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -157,17 +186,25 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
         }
     }
     // The previous tag was moved by the retag; delete any leftover tag ref.
-    let _ = Command::new(&gh)
-        .args(["api", "--method", "DELETE", &format!("repos/{REPO}/git/refs/tags/{staging}")])
+    let _ = gh_command(&gh, &token)
+        .args([
+            "api",
+            "--method",
+            "DELETE",
+            &format!("repos/{REPO}/git/refs/tags/{staging}"),
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
     // Un-draft so the release becomes visible (and "latest" eligible).
-    let publish = Command::new(&gh)
+    let publish = gh_command(&gh, &token)
         .args([
-            "api", "--method", "PATCH",
+            "api",
+            "--method",
+            "PATCH",
             &format!("repos/{REPO}/releases/{staging_id}"),
-            "-f", "draft=false",
+            "-f",
+            "draft=false",
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
@@ -185,8 +222,18 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     info(&format!(
         "  https://github.com/{REPO}/releases/download/{tag}/"
     ));
-    let listed = Command::new(&gh)
-        .args(["release", "view", tag, "--repo", REPO, "--json", "assets", "--jq", ".assets[].name"])
+    let listed = gh_command(&gh, &token)
+        .args([
+            "release",
+            "view",
+            tag,
+            "--repo",
+            REPO,
+            "--json",
+            "assets",
+            "--jq",
+            ".assets[].name",
+        ])
         .stdout(Stdio::inherit())
         .status();
     if !matches!(listed, Ok(s) if s.success()) {
@@ -195,13 +242,24 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn staging_release_id(gh: &std::path::Path, staging: &str) -> Result<String, ExitCode> {
+fn gh_command(gh: &std::path::Path, token: &str) -> Command {
+    let mut command = Command::new(gh);
+    command.env("GH_TOKEN", token);
+    command
+}
+
+fn staging_release_id(
+    gh: &std::path::Path,
+    token: &str,
+    staging: &str,
+) -> Result<String, ExitCode> {
     // releases/tags/<tag> hides drafts; the list endpoint includes them.
-    let output = Command::new(gh)
+    let output = gh_command(gh, token)
         .args([
             "api",
             &format!("repos/{REPO}/releases"),
-            "--jq", &format!(".[] | select(.tag_name==\"{staging}\") | .id"),
+            "--jq",
+            &format!(".[] | select(.tag_name==\"{staging}\") | .id"),
         ])
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
