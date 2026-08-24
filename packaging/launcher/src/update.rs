@@ -61,13 +61,12 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         ""
     };
 
-    // Default: only obs + the checksums needed to verify it. --all adds the
-    // service binary, policies, and the dev image tar — scoped to the release
-    // line so patterns that can't exist on the target tag are never tried.
+    // Default: update both executable components plus the checksums needed to
+    // verify them. --all also adds policies and large cache/image assets —
+    // scoped to the release line so absent patterns are never requested.
     let is_dev = release.contains("-dev");
-    let mut patterns: Vec<&str> = vec![obs_name, "SHA256SUMS"];
+    let mut patterns: Vec<&str> = vec![obs_name, svc, "SHA256SUMS"];
     if all {
-        patterns.push(svc);
         patterns.push(if is_dev {
             "policy-allow-network-dev.yaml"
         } else {
@@ -101,11 +100,7 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         let _ = status;
     }
 
-    let required = if all {
-        vec![obs_name, svc, "SHA256SUMS"]
-    } else {
-        vec![obs_name, "SHA256SUMS"]
-    };
+    let required = [obs_name, svc, "SHA256SUMS"];
     let missing: Vec<&str> = required
         .iter()
         .filter(|name| !std::path::Path::new(**name).is_file())
@@ -119,36 +114,37 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // Verify ONLY what update downloaded (the obs binary). The user's dir may
-    // hold other assets (stale cache, service binary) whose sums legitimately
-    // differ — they are provision's business, not update's.
     let sums_txt = std::fs::read_to_string("SHA256SUMS").unwrap_or_default();
-    let expected = sums_txt
-        .lines()
-        .find(|l| l.ends_with(&format!("  {obs_name}")))
-        .and_then(|l| l.split_whitespace().next())
-        .unwrap_or("")
-        .to_owned();
-    if expected.is_empty() {
-        crate::err("SHA256SUMS has no entry for this platform's obs — refusing to replace");
-        return ExitCode::FAILURE;
-    }
-    let actual = Command::new("shasum")
-        .args(["-a", "256", obs_name])
-        .output();
-    let actual = match actual {
-        Ok(o) => String::from_utf8_lossy(&o.stdout)
-            .split_whitespace()
-            .next()
+    for name in [obs_name, svc] {
+        let expected = sums_txt
+            .lines()
+            .find(|line| line.ends_with(&format!("  {name}")))
+            .and_then(|line| line.split_whitespace().next())
             .unwrap_or("")
-            .to_owned(),
-        Err(_) => String::new(),
-    };
-    if actual != expected {
-        crate::err(&format!(
-            "obs checksum mismatch (expected {expected}, got {actual}) — deleting nothing"
-        ));
-        return ExitCode::FAILURE;
+            .to_owned();
+        if expected.is_empty() {
+            crate::err(&format!(
+                "SHA256SUMS has no entry for {name} — refusing to replace"
+            ));
+            return ExitCode::FAILURE;
+        }
+        let actual = Command::new("shasum")
+            .args(["-a", "256", name])
+            .output();
+        let actual = match actual {
+            Ok(output) => String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_owned(),
+            Err(_) => String::new(),
+        };
+        if actual != expected {
+            crate::err(&format!(
+                "{name} checksum mismatch (expected {expected}, got {actual}) — deleting nothing"
+            ));
+            return ExitCode::FAILURE;
+        }
     }
 
     // Replace the binary the user actually invoked — a renamed copy of obs is
