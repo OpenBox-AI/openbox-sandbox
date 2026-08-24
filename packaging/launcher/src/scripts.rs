@@ -137,6 +137,7 @@ mod tests {
             .expect("native smoke completion marker")
             .0;
 
+        assert!(smoke.contains("-D \"PROXY_ENDPOINT=localhost:1\""));
         assert!(smoke.contains("for path in /usr /bin /sbin /lib /lib64 /etc"));
         assert!(smoke.contains("bwrap \"${bwrap_args[@]}\""));
     }

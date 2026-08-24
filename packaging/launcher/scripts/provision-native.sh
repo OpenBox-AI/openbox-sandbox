@@ -233,6 +233,7 @@ if [[ "$NO_START" != 1 ]]; then
   if [[ "$(uname -s)" == Darwin ]]; then
     (cd "$NATIVE_WORKSPACE_ROOT" && /usr/bin/sandbox-exec \
       -D "WORKSPACE_ROOT=$NATIVE_WORKSPACE_ROOT" -D "WORKSPACE=$NATIVE_WORKSPACE_ROOT" \
+      -D "PROXY_ENDPOINT=localhost:1" \
       -f "$NATIVE_PROFILE" -- /usr/bin/true) || die "native Seatbelt smoke failed"
   else
     bwrap_args=(--die-with-parent --new-session --unshare-all --unshare-net --proc /proc --dev /dev)
