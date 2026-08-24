@@ -26,10 +26,12 @@ Terminal results retain typed `sandbox_evidence`: each observed proxy request
 records its allowed/denied decision, host, and port. On macOS, the runtime also
 queries the unified log store for the exact sandbox process under
 `com.apple.sandbox.reporting:violation`, reports the count and stable denial
-categories, and mirrors each record to the service log. Empirical testing found
-that `log stream` does not deliver kernel-originated violation records to a
-redirected pipe on current macOS, while `log show` exposes them immediately;
-the runtime therefore uses the latter after process observation. Linux
+categories, and mirrors each record to the service log. Empirical testing on macOS
+26.5.2 found that `log stream` never delivers
+`com.apple.sandbox.reporting:violation` records at all: a predicate-free stream
+that captures other messages for the same process still shows none of them.
+`log show` returns the same records immediately, so the runtime uses it after
+process observation. Linux
 bubblewrap has no equivalent unprivileged deny-event stream, so violation
 evidence is absent there.
 

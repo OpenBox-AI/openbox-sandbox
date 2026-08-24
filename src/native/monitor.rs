@@ -12,8 +12,10 @@ use crate::ViolationEvidence;
 
 /// Query the macOS unified sandbox violation store for the exact process that
 /// `sandbox-exec` replaced. `log stream` was tested first, but on current macOS
-/// it does not emit kernel-originated violation records to a redirected pipe;
-/// the same records are immediately and reliably available through `log show`.
+/// it never emits `com.apple.sandbox.reporting:violation` records at all: a
+/// predicate-free stream that captures other messages for the same process
+/// still shows none. The same records are immediately and reliably available
+/// through `log show`.
 #[cfg(target_os = "macos")]
 pub(super) async fn collect(process_id: u32, lookback_seconds: u64) -> Option<ViolationEvidence> {
     let marker = format!("({process_id})");
