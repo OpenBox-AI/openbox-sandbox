@@ -160,12 +160,14 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
             err(&format!(
                 "gh release create failed; the current '{tag}' release is untouched"
             ));
+            discard_staging(&gh, &token, &staging);
             return ExitCode::FAILURE;
         }
         Err(e) => {
             err(&format!(
                 "gh release create failed: {e}; the current '{tag}' release is untouched"
             ));
+            discard_staging(&gh, &token, &staging);
             return ExitCode::FAILURE;
         }
     }
@@ -320,6 +322,26 @@ fn staging_release_id(
 /// written by hand, because a hand-written list drifts: the previous text
 /// promised a linux aarch64 platform and an OpenShell bundle tarball, neither
 /// of which any release has ever carried.
+/// Remove a staging release left behind by a failed upload.
+///
+/// `gh release create` can fail after the release exists, which stranded a
+/// draft holding a full copy of the payload. Publishing is meant to leave
+/// either the new release or the old one, never a third.
+fn discard_staging(gh: &Path, token: &str, staging: &str) {
+    let removed = gh_command(gh, token)
+        .args(["release", "delete", staging, "--repo", REPO, "--yes"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    if matches!(removed, Ok(status) if status.success()) {
+        info(&format!("discarded the staging release '{staging}'"));
+    } else {
+        err(&format!(
+            "could not discard the staging release '{staging}'; delete it by hand"
+        ));
+    }
+}
+
 /// Reject any asset that embeds a build machine's home directory.
 ///
 /// Scans raw bytes for `/Users/<name>/` and `/home/<name>/`, which is what a
