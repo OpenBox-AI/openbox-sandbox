@@ -1065,12 +1065,22 @@ fn home_join(home: &OsStr, suffix: &str) -> PathBuf {
     }
 }
 
+/// The source checkout this launcher is running inside, if any.
+///
+/// Resolved at runtime by walking up from the working directory. It used to
+/// fall back to `env!("CARGO_MANIFEST_DIR")`, which baked the build machine's
+/// absolute path into every published binary: a leak of the builder's home
+/// directory, and a path that does not exist for anyone else.
 fn default_project_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut candidate: Option<&Path> = Some(cwd.as_path());
+    while let Some(directory) = candidate {
+        if directory.join("packaging/launcher/Cargo.toml").is_file() {
+            return directory.to_path_buf();
+        }
+        candidate = directory.parent();
+    }
+    cwd
 }
 
 #[cfg(unix)]

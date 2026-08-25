@@ -33,12 +33,10 @@ fn repo_root() -> PathBuf {
             }
         }
     }
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest
-        .parent()
-        .and_then(Path::parent)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
+    // No compile-time fallback: env!("CARGO_MANIFEST_DIR") would bake the
+    // build machine's absolute path into every published binary and point at a
+    // directory that does not exist on the machine running it.
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn selected_provider() -> String {
@@ -591,6 +589,23 @@ fn release_line_is_dev() -> bool {
         .map_or_else(|_| crate::channel() != "base", |line| line == "dev")
 }
 
+/// The root of the source checkout containing `directory`, if there is one.
+///
+/// Identified by the workspace manifest plus the launcher crate beside it, so
+/// a nested crate directory is not mistaken for the checkout root.
+fn source_checkout_root(directory: &Path) -> Option<PathBuf> {
+    let mut candidate = Some(directory);
+    while let Some(current) = candidate {
+        if current.join("Cargo.toml").is_file()
+            && current.join("packaging/launcher/Cargo.toml").is_file()
+        {
+            return Some(current.to_path_buf());
+        }
+        candidate = current.parent();
+    }
+    None
+}
+
 fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
@@ -620,17 +635,20 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     // --sandbox-bin. A failed verification is fatal; it previously fell through
     // to building from source, so a rejected binary silently became a different
     // binary.
-    if cwd.join("Cargo.toml").is_file() {
+    // The checkout root, not merely a directory that happens to hold a
+    // Cargo.toml: packaging/launcher has one too, and building there looks for
+    // a binary that crate does not define.
+    if let Some(root) = source_checkout_root(&cwd) {
         info("source checkout: building the native service from source");
         let status = Command::new(which_cargo().unwrap_or_else(|| PathBuf::from("cargo")))
-            .current_dir(&cwd)
+            .current_dir(&root)
             .args(["build", "--release", "--locked", "--bin", "openbox-sandbox"])
             .status();
         if !matches!(status, Ok(value) if value.success()) {
             err("could not build the native service from this source checkout");
             return Err(ExitCode::FAILURE);
         }
-        service = Some(cwd.join("target/release/openbox-sandbox"));
+        service = Some(root.join("target/release/openbox-sandbox"));
     } else {
         let named = service.clone().filter(|path| path.is_file());
         if let Some(path) = named {

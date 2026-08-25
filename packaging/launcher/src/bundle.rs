@@ -145,12 +145,22 @@ fn install_prefixes() -> Vec<PathBuf> {
     prefixes
 }
 
-/// The repository root, derived from this crate's compile-time location, so a
-/// `cargo run` from a source checkout finds the in-repo policies.
+/// The repository root, found by walking up from the working directory, so a
+/// run from a source checkout finds the in-repo policies.
+///
+/// Resolved at runtime rather than from `env!("CARGO_MANIFEST_DIR")`: the
+/// compile-time value is the build machine's path, which leaks into published
+/// binaries and is meaningless anywhere else.
 fn repo_root() -> Option<PathBuf> {
-    // CARGO_MANIFEST_DIR = <repo>/packaging/launcher
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    manifest.parent()?.parent().map(Path::to_path_buf)
+    let cwd = std::env::current_dir().ok()?;
+    let mut candidate: Option<&Path> = Some(cwd.as_path());
+    while let Some(directory) = candidate {
+        if directory.join("packaging/launcher/Cargo.toml").is_file() {
+            return Some(directory.to_path_buf());
+        }
+        candidate = directory.parent();
+    }
+    None
 }
 
 /// Search `PATH` for an executable.

@@ -75,6 +75,21 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     }
     ok("manifest covers every asset");
 
+    // ── No build-machine paths in the payload ─────────────────────────────
+    // A release binary must not carry the builder's home directory. It leaks
+    // whoever built it and embeds paths that mean nothing on the machine
+    // running the binary. Build with --remap-path-prefix; this refuses the
+    // upload when that was forgotten.
+    if let Err(message) = payload_has_no_builder_paths(&dir) {
+        err(&message);
+        err(
+            "rebuild with RUSTFLAGS=\"--remap-path-prefix=$PWD=/openbox-sandbox \
+--remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$HOME/.rustup=/rustup\"",
+        );
+        return ExitCode::FAILURE;
+    }
+    ok("no build-machine paths in the payload");
+
     // ── Verify checksums ──────────────────────────────────────────────────
     step("Verifying release checksums");
     let verify = Command::new("sha256sum")
@@ -305,6 +320,47 @@ fn staging_release_id(
 /// written by hand, because a hand-written list drifts: the previous text
 /// promised a linux aarch64 platform and an OpenShell bundle tarball, neither
 /// of which any release has ever carried.
+/// Reject any asset that embeds a build machine's home directory.
+///
+/// Scans raw bytes for `/Users/<name>/` and `/home/<name>/`, which is what a
+/// Rust binary compiled without --remap-path-prefix carries in panic locations
+/// and dependency paths.
+fn payload_has_no_builder_paths(dir: &Path) -> Result<(), String> {
+    let needles: [&[u8]; 2] = [b"/Users/", b"/home/"];
+    for entry in std::fs::read_dir(dir)
+        .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
+        .flatten()
+    {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_owned();
+        // Image and cache tarballs legitimately contain guest filesystem paths.
+        if name.ends_with(".tar.gz") || name == "SHA256SUMS" {
+            continue;
+        }
+        let body = std::fs::read(&path)
+            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+        for needle in needles {
+            if let Some(at) = body
+                .windows(needle.len())
+                .position(|window| window == needle)
+            {
+                let end = (at + 96).min(body.len());
+                let sample = String::from_utf8_lossy(&body[at..end]);
+                let sample = sample.split('\0').next().unwrap_or_default();
+                return Err(format!("{name} embeds a build machine path: {sample}"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Fail when SHA256SUMS and the release directory disagree.
 ///
 /// Every file that ships must have an entry, and every entry must have a file.

@@ -107,4 +107,15 @@ cargo clippy --manifest-path packaging/release/Cargo.toml --all-targets -- -D wa
 cargo test --manifest-path packaging/release/Cargo.toml
 ```
 
+Release binaries are built with the build machine's paths remapped, so no
+artifact carries the builder's home directory:
+
+```sh
+export RUSTFLAGS="--remap-path-prefix=$PWD=/openbox-sandbox \
+  --remap-path-prefix=$HOME/.cargo=/cargo \
+  --remap-path-prefix=$HOME/.rustup=/rustup"
+```
+
+`obs-release publish` refuses a payload that still contains them.
+
 The repository language gate runs as part of `cargo test`.
