@@ -781,40 +781,6 @@ pub fn run_verify() -> ExitCode {
         return ExitCode::FAILURE;
     }
     info(&format!("loading env from {}", agent_env.display()));
-    // Toolchain-free deployments (the v0.1.0 release) ship a prebuilt test
-    // harness; run it directly instead of invoking cargo. Set
-    // OPENBOX_VERIFY_BIN=/path/to/harness to select it.
-    if let Ok(bin) = std::env::var("OPENBOX_VERIFY_BIN") {
-        if !bin.is_empty() {
-            let mut cmd = Command::new(&bin);
-            cmd.stdin(Stdio::null())
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit());
-            if let Err(error) = apply_agent_env(&mut cmd, &agent_env) {
-                err(&format!("cannot load agent environment: {error}"));
-                return ExitCode::FAILURE;
-            }
-            if agent_env_selects_native(&agent_env) {
-                cmd.env("OPENBOX_LIVE_SERVICE_CMD", "printf native-ready");
-            }
-            info(&format!("running prebuilt verify harness: {bin}"));
-            return match cmd.status() {
-                Ok(s) if s.success() => {
-                    ok("live lifecycle SUCCEEDED");
-                    ExitCode::SUCCESS
-                }
-                Ok(s) => {
-                    err(&format!("verify failed (exit {})", s.code().unwrap_or(-1)));
-                    info("see the harness output above; the service retains durable cleanup ownership");
-                    ExitCode::FAILURE
-                }
-                Err(error) => {
-                    err(&format!("could not run verify harness: {error}"));
-                    ExitCode::FAILURE
-                }
-            };
-        }
-    }
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
     let mut cmd = Command::new(cargo);
     cmd.current_dir(repo_root())
@@ -852,7 +818,6 @@ pub fn run_verify() -> ExitCode {
         }
         Err(error) => {
             err(&format!("could not run cargo: {error}"));
-            info("set OPENBOX_VERIFY_BIN to the prebuilt verify harness (toolchain-free flow)");
             ExitCode::FAILURE
         }
     }
