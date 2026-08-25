@@ -33,9 +33,16 @@ the mTLS service, runs a smoke execution, and writes
 `~/.config/openbox-sandbox/agent.env`, which is the entire boundary contract for
 an SDK client.
 
+The service runs in that terminal, and Ctrl-C stops it after draining work in
+flight. Two flags change that:
+
+| Flag | Effect |
+|---|---|
+| `--detach` | Run in the background with a PID file, in its own process group, so a closing terminal cannot kill it. |
+| `--systemd` | Linux only. Write a systemd unit and enable it, so the service restarts on failure. Root installs a system unit, any other user a user unit. |
+
 ```sh
 ./obs status       # readiness
-./obs install      # Linux system service, from a verified release directory
 ./obs uninstall    # remove everything it created
 ```
 
