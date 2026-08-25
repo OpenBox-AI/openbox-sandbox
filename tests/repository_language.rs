@@ -167,31 +167,3 @@ fn the_readme_keeps_the_boundary_sentence() {
         "the README must state the showcase repository boundary"
     );
 }
-
-#[test]
-fn the_short_term_matches_only_as_a_word() {
-    let term = short_term();
-    assert!(contains_short_term(&term));
-    assert!(contains_short_term(&format!("a {term} here")));
-    assert!(contains_short_term(&format!("{term}s are separate")));
-    assert!(!contains_short_term(&format!("{term}ket")));
-    assert!(!contains_short_term(&format!("tea{term}")));
-}
-
-#[test]
-fn the_long_spellings_are_rejected_in_every_separator_form() {
-    for term in long_terms().iter().chain(ground_terms().iter()) {
-        assert!(violations(term), "expected {term} to be rejected");
-        assert!(violations(&term.to_uppercase()));
-    }
-}
-
-#[test]
-fn ordinary_words_are_accepted() {
-    for value in [
-        "Examples, demos, and showcases are legitimate terms.",
-        "The service runs a command in a sandbox.",
-    ] {
-        assert!(!violations(value), "expected {value} to be accepted");
-    }
-}

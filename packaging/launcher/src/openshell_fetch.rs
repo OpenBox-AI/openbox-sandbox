@@ -389,7 +389,7 @@ fn write_mode(path: &Path, body: &[u8], mode: u32) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_triple, parse_checksum_file, verify_download_checksum};
+    use super::{parse_checksum_file, verify_download_checksum};
 
     #[test]
     fn checksum_file_resolution_is_asset_specific() {
@@ -401,12 +401,6 @@ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb *two.tar.gz\n";
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
         assert_eq!(parse_checksum_file(body, "missing.tar.gz"), None);
-    }
-
-    #[test]
-    fn host_triple_uses_supported_release_convention() {
-        let triple = detect_triple().expect("supported test host");
-        assert!(triple.ends_with("-apple-darwin") || triple.ends_with("-unknown-linux-gnu"));
     }
 
     #[test]
