@@ -121,6 +121,13 @@ fn manifest_digest(cwd: &Path, tag: &str, asset: &str) -> Option<String> {
         return None;
     }
     let body = std::fs::read_to_string(&sums).ok()?;
+    digest_from_manifest(&body, asset)
+}
+
+/// The digest a manifest body records for one asset name.
+///
+/// Split out from the fetch so it can be tested without touching the network.
+fn digest_from_manifest(body: &str, asset: &str) -> Option<String> {
     body.lines().find_map(|line| {
         let mut fields = line.split_whitespace();
         let digest = fields.next()?;
@@ -1097,28 +1104,21 @@ mod tests {
 
     #[test]
     fn manifest_lookup_matches_only_the_named_asset() {
-        let directory = std::env::temp_dir().join(format!("obs-manifest-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let manifest = directory.join(".SHA256SUMS.v0.1.0-dev");
-        std::fs::write(
-            &manifest,
-            "aaaa  openbox-sandbox-darwin-arm64\nbbbb  policy-allow-network-dev.yaml\n",
-        )
-        .unwrap();
+        let body = "aaaa  openbox-sandbox-darwin-arm64\n\
+                    bbbb  policy-allow-network-dev.yaml\n\
+                    cccc *starred-entry\n";
         assert_eq!(
-            super::manifest_digest(&directory, "v0.1.0-dev", "openbox-sandbox-darwin-arm64"),
+            super::digest_from_manifest(body, "openbox-sandbox-darwin-arm64"),
             Some("aaaa".to_owned())
         );
-        assert_eq!(
-            super::manifest_digest(&directory, "v0.1.0-dev", "policy-allow-network-dev.yaml"),
-            Some("bbbb".to_owned())
-        );
         // A name that only prefixes an entry must not match it.
+        assert_eq!(super::digest_from_manifest(body, "openbox-sandbox"), None);
+        // sha256sum marks binary entries with a leading star.
         assert_eq!(
-            super::manifest_digest(&directory, "v0.1.0-dev", "openbox-sandbox"),
-            None
+            super::digest_from_manifest(body, "starred-entry"),
+            Some("cccc".to_owned())
         );
-        std::fs::remove_dir_all(&directory).ok();
+        assert_eq!(super::digest_from_manifest(body, "absent"), None);
     }
 
     #[test]
