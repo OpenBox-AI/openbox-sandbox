@@ -20,18 +20,30 @@ Selection is explicit and fails closed. There is no fallback.
 Local sandbox, macOS on Apple Silicon:
 
 ```sh
-curl -fL -o obs https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1.0-dev/obs-darwin-arm64
-chmod +x obs
+curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1.0-dev/obs-darwin-arm64
+curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1.0-dev/SHA256SUMS
+shasum -a 256 -c SHA256SUMS 2>/dev/null | grep obs-darwin-arm64
+chmod +x obs-darwin-arm64 && mv obs-darwin-arm64 obs
 ./obs provision --yes
 ```
+
+Verify before renaming: `SHA256SUMS` lists the release filename, so the check
+only works while the file still has it. Assets you did not download report
+`FAILED open or read`, which is why the check is filtered to the one that
+matters. This detects a corrupt download or assets mixed between releases. It
+is not proof of authorship, because the manifest ships from the same release.
 
 Linux x86_64 needs the `bubblewrap` package; download `obs-linux-x86_64` and run
 the same commands.
 
-Provisioning verifies each asset, compiles and pins the sandbox profile, starts
-the mTLS service, runs a smoke execution, and writes
+Provisioning compiles the policy into a profile, pins its SHA-256 in
+`service.json`, starts the mTLS service, runs a smoke execution, and writes
 `~/.config/openbox-sandbox/agent.env`, which is the entire boundary contract for
-an SDK client.
+an SDK client. The pinned profile is verified before every execution.
+
+The OpenShell provider also checks assets it fetches against `SHA256SUMS` and
+re-downloads on mismatch. The native provider does not, so verify `obs` and the
+service binary yourself as above.
 
 The service runs in that terminal, and Ctrl-C stops it after draining work in
 flight. Two flags change that:
