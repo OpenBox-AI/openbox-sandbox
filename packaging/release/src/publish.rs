@@ -10,7 +10,7 @@
 //! the dev host. Shells out to `gh` and `sha256sum`; the launcher stays
 //! dependency-free.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use crate::{err, info, ok, step};
@@ -64,6 +64,16 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
         err(&format!("SHA256SUMS not found in {}", dir.display()));
         return ExitCode::FAILURE;
     }
+
+    // ── Manifest covers the payload ───────────────────────────────────────
+    // sha256sum -c only checks files the manifest lists. An asset present in
+    // the directory but absent from SHA256SUMS would upload unverified, and an
+    // entry with no file would pass by being skipped.
+    if let Err(message) = manifest_covers_payload(&dir, &sums) {
+        err(&message);
+        return ExitCode::FAILURE;
+    }
+    ok("manifest covers every asset");
 
     // ── Verify checksums ──────────────────────────────────────────────────
     step("Verifying release checksums");
@@ -295,6 +305,47 @@ fn staging_release_id(
 /// written by hand, because a hand-written list drifts: the previous text
 /// promised a linux aarch64 platform and an OpenShell bundle tarball, neither
 /// of which any release has ever carried.
+/// Fail when SHA256SUMS and the release directory disagree.
+///
+/// Every file that ships must have an entry, and every entry must have a file.
+/// SHA256SUMS itself is excluded: a manifest cannot list its own digest.
+fn manifest_covers_payload(dir: &Path, sums: &Path) -> Result<(), String> {
+    let body = std::fs::read_to_string(sums)
+        .map_err(|error| format!("cannot read {}: {error}", sums.display()))?;
+    let listed: std::collections::BTreeSet<String> = body
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .map(str::to_owned)
+        .collect();
+    let mut present = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(dir)
+        .map_err(|error| format!("cannot read {}: {error}", dir.display()))?
+        .flatten()
+    {
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
+                if name != "SHA256SUMS" {
+                    present.insert(name.to_owned());
+                }
+            }
+        }
+    }
+    let unlisted: Vec<&String> = present.difference(&listed).collect();
+    let missing: Vec<&String> = listed.difference(&present).collect();
+    if !unlisted.is_empty() {
+        return Err(format!(
+            "assets present but absent from SHA256SUMS: {unlisted:?}"
+        ));
+    }
+    if !missing.is_empty() {
+        return Err(format!(
+            "SHA256SUMS lists files that are not in the release: {missing:?}"
+        ));
+    }
+    Ok(())
+}
+
 fn notes_markdown(tag: &str, assets: &[String]) -> String {
     let mut listed: Vec<&String> = assets.iter().collect();
     listed.sort();
