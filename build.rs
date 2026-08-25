@@ -7,16 +7,8 @@ fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let manifest_path = root.join("Cargo.toml");
     let lock_path = root.join("Cargo.lock");
-    let installer_path = root.join("packaging/launcher/src/install.rs");
-    let local_bootstrap_path = root.join("packaging/launcher/src/local_bootstrap.rs");
     let openshell_provision_path = root.join("packaging/launcher/src/openshell_provision.rs");
-    for path in [
-        &manifest_path,
-        &lock_path,
-        &installer_path,
-        &local_bootstrap_path,
-        &openshell_provision_path,
-    ] {
+    for path in [&manifest_path, &lock_path, &openshell_provision_path] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
 
@@ -38,19 +30,6 @@ fn main() {
         "Cargo.lock must bind both OpenShell packages to the approved source pin"
     );
 
-    let installer =
-        std::fs::read_to_string(installer_path).expect("Rust installer must be readable");
-    let installer_pin = format!("const OPENSHELL_SOURCE_PIN: &str = \"{OPENSHELL_SOURCE_PIN}\"");
-    assert!(
-        installer.contains(&installer_pin),
-        "installer OpenShell package pin must match the compiled adapter"
-    );
-    let local_bootstrap = std::fs::read_to_string(local_bootstrap_path)
-        .expect("Rust local bootstrap must be readable");
-    assert!(
-        local_bootstrap.contains(&installer_pin),
-        "local bootstrap OpenShell source pin must match the compiled adapter"
-    );
     let openshell_provision = std::fs::read_to_string(openshell_provision_path)
         .expect("OpenShell Rust provisioner must be readable");
     let expected_pin = format!("const OPENSHELL_SOURCE_PIN: &str = \"{OPENSHELL_SOURCE_PIN}\"");

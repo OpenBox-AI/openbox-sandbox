@@ -28,8 +28,6 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 mod bundle;
-mod install;
-mod local_bootstrap;
 mod native_provision;
 mod openshell_fetch;
 mod openshell_provision;
@@ -131,7 +129,6 @@ enum CommandLine {
     },
     Verify,
     Status,
-    Install(install::Options),
     VerifyRuntime {
         skip_hash: bool,
     },
@@ -327,7 +324,6 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
                 overrides,
             })
         }
-        "install" => install::parse_options(&args[1..]).map(CommandLine::Install),
         "uninstall" => {
             ensure_options(&args[1..], &["--keep-pki"])?;
             Ok(CommandLine::Uninstall {
@@ -442,15 +438,6 @@ fn main() -> ExitCode {
         Ok(CommandLine::Uninstall { keep_pki }) => return provision::run_uninstall(keep_pki),
         Ok(CommandLine::Verify) => return provision::run_verify(),
         Ok(CommandLine::Status) => return provision::run_status(),
-        Ok(CommandLine::Install(options)) => {
-            return match install::run(options) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(message) => {
-                    eprintln!("openbox-sandbox installer: {message}");
-                    ExitCode::FAILURE
-                }
-            };
-        }
         Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
 
         Ok(CommandLine::Update { release, all }) => return update::run(release.as_deref(), all),
@@ -813,8 +800,6 @@ fn print_help() {
 USAGE:
   obs version                 Print the version and the baked release line.
   obs provision [OPTIONS]      Teardown stale state, then provision locally.
-  obs install [OPTIONS] [PATH] Install the Linux system service from a release
-                              or build a local non-production release.
   obs uninstall [--keep-pki]   Teardown and delete launcher-owned state.
   obs verify                   Prove mTLS create→ready→exec→delete live.
   obs status                   Report stack readiness.
@@ -832,18 +817,11 @@ MODULES:
   Native            Default sandbox-exec/bubblewrap provider; no shell rebuild.
   OpenShell         Explicit alternative external gateway/driver runtime.
 
-DOGFOOD LOOP (source checkout only):
+LOCAL LOOP (source checkout only):
   cargo build --release --bin openbox-sandbox
   cargo build --release --manifest-path packaging/launcher/Cargo.toml
   OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision
   obs verify && obs uninstall
-
-INSTALL OPTIONS:
-  --local                     Force the fresh-source local bootstrap.
-  --install-dependencies      Install missing prerequisites without asking.
-  --no-install-dependencies   Never install missing prerequisites.
-  --no-start                  Install and validate without starting the service.
-  /absolute/path/to/release   Use this service release instead of adjacent release/.
 
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
   --provider NAME        native (default, native OS sandbox) or openshell (explicit).
