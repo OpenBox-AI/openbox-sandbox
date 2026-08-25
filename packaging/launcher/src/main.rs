@@ -211,7 +211,6 @@ const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
 
 /// Boolean `--flag` → env=value pairs for provision options.
 const PROVISION_FLAG_BOOLS: &[(&str, &str, &str)] = &[
-    ("--yes", "OPENBOX_YES", "1"),
     ("--no-start", "NO_START", "1"),
     ("--systemd", "OPENBOX_SYSTEMD", "1"),
     ("--detach", "OPENBOX_DETACH", "1"),
@@ -814,9 +813,6 @@ LOCAL LOOP (source checkout only):
 
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
   --provider NAME        native (default, native OS sandbox) or openshell (explicit).
-  --yes                  Accepted and ignored. Provisioning never prompts, so
-                         there is nothing to confirm. Kept so existing
-                         commands and scripts keep working.
   --clean-rerun          Also remove launcher-owned state before provisioning.
   --keep-pki             Preserve PKI (with --clean-rerun or uninstall).
   --state-root PATH      (~/.local/state/openbox-sandbox)
@@ -942,15 +938,23 @@ mod tests {
     #[test]
     fn provision_options_are_validated() {
         assert_eq!(
-            parse_command(&args(&["provision", "--provider", "native", "--yes"])),
+            parse_command(&args(&["provision", "--provider", "native", "--detach"])),
             Ok(CommandLine::Provision {
                 overrides: vec![
                     ("OPENBOX_PROVIDER".to_owned(), "native".to_owned()),
-                    ("OPENBOX_YES".to_owned(), "1".to_owned()),
+                    ("OPENBOX_DETACH".to_owned(), "1".to_owned()),
                 ],
                 clean_rerun: false,
                 keep_pki: false,
             })
+        );
+        // --yes did nothing and is gone; it must not be silently accepted.
+        assert_eq!(
+            parse_command(&args(&["provision", "--yes"])),
+            Err(
+                "unknown provision option '--yes' (see `obs provision --help`-listed flags)"
+                    .to_owned()
+            )
         );
         assert!(parse_command(&args(&["provision", "--provider", "unknown"])).is_err());
         assert_eq!(
