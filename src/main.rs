@@ -196,6 +196,13 @@ fn verify_running_binary(expected: &str) -> Result<(), ProcessError> {
     Ok(())
 }
 
+/// Wait for any signal that means "stop", so every one of them drains.
+///
+/// SIGHUP is included deliberately. A detached service runs in its own process
+/// group and never sees a terminal hangup, but an operator who sends SIGHUP by
+/// hand should get the same orderly drain as SIGINT and SIGTERM rather than the
+/// default action, which kills the process outright and abandons in-flight
+/// sandboxes.
 #[cfg(unix)]
 async fn wait_for_shutdown_signal() {
     use tokio::signal::unix::{SignalKind, signal};
@@ -204,9 +211,17 @@ async fn wait_for_shutdown_signal() {
         let _ = tokio::signal::ctrl_c().await;
         return;
     };
+    let Ok(mut hangup) = signal(SignalKind::hangup()) else {
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => { let _ = result; }
+            value = terminate.recv() => { let _ = value; }
+        }
+        return;
+    };
     tokio::select! {
         result = tokio::signal::ctrl_c() => { let _ = result; }
         value = terminate.recv() => { let _ = value; }
+        value = hangup.recv() => { let _ = value; }
     }
 }
 
