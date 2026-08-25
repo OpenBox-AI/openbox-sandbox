@@ -215,6 +215,8 @@ const PROVISION_FLAG_ENV: &[(&str, &str)] = &[
 const PROVISION_FLAG_BOOLS: &[(&str, &str, &str)] = &[
     ("--yes", "OPENBOX_YES", "1"),
     ("--no-start", "NO_START", "1"),
+    ("--systemd", "OPENBOX_SYSTEMD", "1"),
+    ("--detach", "OPENBOX_DETACH", "1"),
     ("--purge-cache", "OPENBOX_PURGE_CACHE", "1"),
     ("--skip-warm-cache", "OPENBOX_WARM_CACHE", "0"),
     ("--force-warm-cache", "OPENBOX_WARM_CACHE", "1"),
@@ -885,6 +887,11 @@ PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --fla
   --purge-cache          With --clean-rerun: also wipe the extracted VM image
                           cache (full reset of everything sandbox-local)
   --no-start             Set NO_START=1 (write configs, start nothing)
+  --detach               Leave the service running in the background with a
+                         PID file. Default: it runs in this terminal and
+                         Ctrl-C stops it, draining in flight work.
+  --systemd              Supervise the service with a systemd unit (Linux).
+                         Root installs a system unit; otherwise a user unit.
   --skip-warm-cache      Set OPENBOX_WARM_CACHE=0
   --force-warm-cache     Set OPENBOX_WARM_CACHE=1
 

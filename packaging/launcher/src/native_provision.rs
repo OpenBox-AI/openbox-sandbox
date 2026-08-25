@@ -5,7 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use crate::{info, ok};
@@ -48,6 +48,8 @@ struct Settings {
     native_profile: PathBuf,
     agent_env: PathBuf,
     no_start: String,
+    systemd: String,
+    detach: String,
     ready_polls: i64,
     ready_interval: String,
     reconcile_delete_deadline_ms: String,
@@ -222,8 +224,9 @@ pub fn run(options: Options) -> Result<(), String> {
     }
     ok("service config validated (provider=native, capability=enforced-locally)");
 
+    let mut foreground = None;
     if settings.no_start != "1" {
-        start_service(&settings)?;
+        foreground = start_service(&settings)?;
     }
 
     let agent_env = format!(
@@ -265,6 +268,21 @@ OPENBOX_PROVIDER=native\n",
     ok("native provision complete");
     info(&format!("service: 127.0.0.1:{}", settings.sandbox_port));
     info(&format!("agent env: {}", settings.agent_env.display()));
+
+    if let Some(mut child) = foreground {
+        info("service is running in this terminal; press Ctrl-C to stop it");
+        info("run the agent from another shell, or re-run with --detach");
+        // Ctrl-C reaches the child through the process group. The service
+        // drains and exits on SIGINT, so waiting here is the graceful path.
+        let status = child
+            .wait()
+            .map_err(|error| format!("cannot wait for the sandbox service: {error}"))?;
+        let _ = fs::remove_file(&settings.service_pid_file);
+        if !status.success() && status.code().is_some() {
+            return Err(format!("sandbox service exited with {status}"));
+        }
+        ok("sandbox service stopped");
+    }
     Ok(())
 }
 
@@ -319,6 +337,8 @@ impl Settings {
             sandbox_port: env_or("OPENBOX_SANDBOX_PORT", "17443"),
             workspace_root,
             no_start: env_or("NO_START", "0"),
+            systemd: env_or("OPENBOX_SYSTEMD", "0"),
+            detach: env_or("OPENBOX_DETACH", "0"),
             ready_polls,
             ready_interval: env_or("OPENBOX_SERVICE_READY_INTERVAL", "0.25"),
             reconcile_delete_deadline_ms: env_or("OPENBOX_RECONCILE_DELETE_DEADLINE_MS", "60000"),
@@ -397,6 +417,16 @@ fn select_policy_id(policy_file: &Path, default_id: &str, explicit_id: Option<St
 }
 
 fn stop_service(settings: &Settings) -> Result<(), String> {
+    // A previous run may have handed the service to systemd. Stop the unit
+    // first, whether or not this run asked for --systemd, so teardown does not
+    // leave a supervised service holding the port.
+    if let Some(unit_path) = systemd_unit_path() {
+        if unit_path.is_file() {
+            systemctl_user(&["disable", "--now", "openbox-sandbox.service"]);
+            let _ = fs::remove_file(&unit_path);
+            systemctl_user(&["daemon-reload"]);
+        }
+    }
     if !settings.service_pid_file.is_file() {
         return Ok(());
     }
@@ -456,7 +486,126 @@ fn parse_pid_file(body: &str) -> Result<u32, String> {
         .map_err(|_| "malformed service PID file".into())
 }
 
-fn start_service(settings: &Settings) -> Result<(), String> {
+/// True when this process is root, which decides the systemd scope.
+fn running_as_root() -> bool {
+    Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim() == "0")
+        .unwrap_or(false)
+}
+
+/// Path of the systemd unit this launcher owns.
+///
+/// Root installs a system unit, so the service survives logout and starts at
+/// boot. An ordinary user installs a user unit, which keeps provisioning free
+/// of sudo but stops with the last session unless lingering is enabled.
+fn systemd_unit_path() -> Option<PathBuf> {
+    if running_as_root() {
+        return Some(PathBuf::from("/etc/systemd/system/openbox-sandbox.service"));
+    }
+    let home = std::env::var_os("HOME")?;
+    Some(PathBuf::from(home).join(".config/systemd/user/openbox-sandbox.service"))
+}
+
+/// Run systemctl in the scope that matches the unit this launcher owns.
+fn systemctl_user(args: &[&str]) -> bool {
+    let mut command = Command::new("systemctl");
+    if !running_as_root() {
+        command.arg("--user");
+    }
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Supervise the service with a systemd user unit.
+///
+/// Opt-in through `--systemd`. The default remains a background process this
+/// launcher owns, because a user unit needs a working per-user systemd manager
+/// and, without lingering enabled, stops when the last session ends.
+///
+/// This fails closed rather than falling back: an operator who asked for
+/// supervision should not silently get an unsupervised process.
+fn start_service_systemd(settings: &Settings) -> Result<(), String> {
+    if !cfg!(target_os = "linux") {
+        return Err("--systemd requires Linux; macOS has no systemd".into());
+    }
+    let unit_path = systemd_unit_path().ok_or("HOME is required to write a systemd user unit")?;
+    if !systemctl_user(&["--version"]) {
+        return Err("no usable systemd manager; re-run without --systemd".into());
+    }
+    let parent = unit_path
+        .parent()
+        .ok_or("cannot resolve the systemd user directory")?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+
+    let unit = format!(
+        "[Unit]\nDescription=OpenBox Sandbox service\nAfter=network-online.target\n\n[Service]\nType=simple\nEnvironment=OPENBOX_SANDBOX_CONFIG={config}\nExecStart={binary}\nRestart=on-failure\nRestartSec=5s\n\n[Install]\nWantedBy={target}\n",
+        config = settings.service_config.display(),
+        binary = settings.sandbox_bin.display(),
+        target = if running_as_root() {
+            "multi-user.target"
+        } else {
+            "default.target"
+        },
+    );
+    fs::write(&unit_path, unit)
+        .map_err(|error| format!("cannot write {}: {error}", unit_path.display()))?;
+    chmod(&unit_path, 0o600)?;
+
+    if !systemctl_user(&["daemon-reload"]) {
+        return Err("systemctl --user daemon-reload failed".into());
+    }
+    if !systemctl_user(&["enable", "--now", "openbox-sandbox.service"]) {
+        return Err("systemctl --user enable --now openbox-sandbox.service failed".into());
+    }
+
+    let mut ready = false;
+    for _ in 0..settings.ready_polls.max(0) {
+        if port_listening(&settings.sandbox_port) {
+            ready = true;
+            break;
+        }
+        sleep_external(&settings.ready_interval)?;
+    }
+    if !ready {
+        print_log_tail(&settings.service_log, 30);
+        return Err("sandbox service failed to start under systemd".into());
+    }
+    // systemd owns the process, so no PID file is written: teardown asks
+    // systemctl to stop the unit instead of signalling a recorded PID.
+    ok(&format!(
+        "service up (provider=native, supervised by systemd {})",
+        if running_as_root() {
+            "system"
+        } else {
+            "--user"
+        }
+    ));
+    info(&format!("unit: {}", unit_path.display()));
+    Ok(())
+}
+
+/// Start the service and keep the handle so provisioning can wait on it.
+///
+/// The default is a foreground child: it dies with the terminal, and Ctrl-C
+/// reaches it through the process group, where the service already drains and
+/// shuts down cleanly. Detaching is opt-in because an orphaned background
+/// service holding the port is the failure this avoids.
+fn start_service(settings: &Settings) -> Result<Option<Child>, String> {
+    if settings.systemd == "1" {
+        start_service_systemd(settings)?;
+        return Ok(None);
+    }
     let log = OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -467,12 +616,28 @@ fn start_service(settings: &Settings) -> Result<(), String> {
     let stderr = log
         .try_clone()
         .map_err(|error| format!("cannot clone service log: {error}"))?;
-    let child = Command::new("nohup")
-        .arg(&settings.sandbox_bin)
+    let detached = settings.detach == "1";
+    let mut command = Command::new(&settings.sandbox_bin);
+    command
         .env("OPENBOX_SANDBOX_CONFIG", &settings.service_config)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(stderr))
+        .stdin(Stdio::null());
+    if detached {
+        // Logs go to the file because no terminal will be attached.
+        command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
+        // Leave the shell's process group. This is what `nohup` bought: a
+        // terminal that closes sends SIGHUP to its own group, and a detached
+        // service must outlive that.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt as _;
+            command.process_group(0);
+        }
+    } else {
+        // Foreground: the operator watches the service directly, and Ctrl-C
+        // reaches it through the process group.
+        command.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+    }
+    let child = command
         .spawn()
         .map_err(|error| format!("cannot start sandbox service: {error}"))?;
     write_private(
@@ -493,7 +658,10 @@ fn start_service(settings: &Settings) -> Result<(), String> {
         return Err("sandbox service failed to start".into());
     }
     ok(&format!("service up (provider=native pid={})", child.id()));
-    Ok(())
+    if detached {
+        return Ok(None);
+    }
+    Ok(Some(child))
 }
 
 fn create_pki(settings: &Settings) -> Result<(), String> {
