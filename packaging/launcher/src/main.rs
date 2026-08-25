@@ -827,8 +827,9 @@ LOCAL LOOP (source checkout only):
 
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
   --provider NAME        native (default, native OS sandbox) or openshell (explicit).
-  --yes                  Accept all non-privileged defaults non-interactively.
-                         The native path never requires sudo or CA trust.
+  --yes                  Accepted and ignored. Provisioning never prompts, so
+                         there is nothing to confirm. Kept so existing
+                         commands and scripts keep working.
   --clean-rerun          Also remove launcher-owned state before provisioning.
   --keep-pki             Preserve PKI (with --clean-rerun or uninstall).
   --state-root PATH      (~/.local/state/openbox-sandbox)

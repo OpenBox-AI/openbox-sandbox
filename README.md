@@ -24,7 +24,7 @@ curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1
 curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1.0-dev/SHA256SUMS
 shasum -a 256 -c SHA256SUMS 2>/dev/null | grep obs-darwin-arm64
 chmod +x obs-darwin-arm64 && mv obs-darwin-arm64 obs
-./obs provision --yes
+./obs provision
 ```
 
 Verify before renaming: `SHA256SUMS` lists the release filename, so the check
