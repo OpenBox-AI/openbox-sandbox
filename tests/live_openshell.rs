@@ -117,6 +117,7 @@ async fn connect_from_env() -> Option<(
 }
 
 #[tokio::test]
+#[ignore = "requires a live OpenShell endpoint: set OPENBOX_LIVE_OPENSHELL_ENDPOINT, then `cargo test -- --ignored`"]
 async fn live_openshell_create_exec_delete() {
     let Some(endpoint) = env_optional("OPENBOX_LIVE_OPENSHELL_ENDPOINT") else {
         eprintln!(
@@ -256,6 +257,7 @@ async fn live_openshell_create_exec_delete() {
 /// Real gateway: a non-zero-exit exec must be surfaced as `ExecCompleted` with
 /// the real exit code, not swallowed. Cleanup must still succeed.
 #[tokio::test]
+#[ignore = "requires a live OpenShell endpoint: set OPENBOX_LIVE_OPENSHELL_ENDPOINT, then `cargo test -- --ignored`"]
 async fn live_openshell_exec_reports_real_nonzero_exit() {
     let Some((runtime, policy_bytes, _sha, policy_identity, template)) = connect_from_env().await
     else {
@@ -322,6 +324,7 @@ async fn live_openshell_exec_reports_real_nonzero_exit() {
 /// sandbox created. This is the security-floor invariant, proven against real
 /// components rather than a fake runtime.
 #[tokio::test]
+#[ignore = "requires a live OpenShell endpoint: set OPENBOX_LIVE_OPENSHELL_ENDPOINT, then `cargo test -- --ignored`"]
 async fn live_openshell_floor_rejects_mismatched_policy() {
     let Some(endpoint) = env_optional("OPENBOX_LIVE_OPENSHELL_ENDPOINT") else {
         eprintln!("SKIP live_openshell_floor_rejects_mismatched_policy");

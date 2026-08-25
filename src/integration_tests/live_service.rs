@@ -9,7 +9,7 @@
 //! external `OpenShell` gateway → libkrun microVM.
 //!
 //! Reads the SDK env contract (`OPENBOX_SANDBOX_*`) — exactly what an OpenBox
-//! SDK agent sources from `agent.env` after `provision-local-sandbox.sh`. CI
+//! SDK agent sources from `agent.env` after `obs provision`. CI
 //! may override any field with the `OPENBOX_LIVE_SERVICE_*` prefix.
 //!
 //! Skipped when no endpoint is configured. When configured, it drives one
@@ -71,6 +71,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[tokio::test]
+#[ignore = "requires a provisioned service: load agent.env, then `cargo test -- --ignored`"]
 async fn live_service_create_exec_delete() {
     let Some(endpoint_str) = env_of("ENDPOINT") else {
         eprintln!(
