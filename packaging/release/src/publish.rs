@@ -94,12 +94,7 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     let staging = format!("{tag}-staging-{}", std::process::id());
     let display = tag.trim_start_matches('v');
     let title = format!("OpenBox Sandbox {display}");
-    let notes = notes_markdown(tag);
-    let mut create = gh_command(&gh, &token);
-    create.args([
-        "release", "create", &staging, "--repo", REPO, "--draft", "--title", &title, "--notes",
-        &notes,
-    ]);
+    // Collect the payload first so the notes can describe exactly what ships.
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
         Err(e) => {
@@ -107,13 +102,26 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let mut count = 0usize;
+    let mut files = Vec::new();
+    let mut names = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
-            create.arg(&path);
-            count += 1;
+            if let Some(name) = path.file_name().and_then(|value| value.to_str()) {
+                names.push(name.to_owned());
+            }
+            files.push(path);
         }
+    }
+    let count = files.len();
+    let notes = notes_markdown(tag, &names);
+    let mut create = gh_command(&gh, &token);
+    create.args([
+        "release", "create", &staging, "--repo", REPO, "--draft", "--title", &title, "--notes",
+        &notes,
+    ]);
+    for path in &files {
+        create.arg(path);
     }
     let created = create
         .stdout(Stdio::null())
@@ -281,25 +289,60 @@ fn staging_release_id(
     }
 }
 
-fn notes_markdown(tag: &str) -> String {
+/// Release notes describing what this release actually contains.
+///
+/// The asset list is taken from the directory being published rather than
+/// written by hand, because a hand-written list drifts: the previous text
+/// promised a linux aarch64 platform and an OpenShell bundle tarball, neither
+/// of which any release has ever carried.
+fn notes_markdown(tag: &str, assets: &[String]) -> String {
+    let mut listed: Vec<&String> = assets.iter().collect();
+    listed.sort();
+    let asset_lines = listed
+        .iter()
+        .map(|name| format!("- `{name}`"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let platforms = {
+        let mac = assets.iter().any(|name| name.contains("darwin-arm64"));
+        let linux = assets.iter().any(|name| name.contains("linux-x86_64"));
+        match (mac, linux) {
+            (true, true) => "macOS arm64, Linux x86_64",
+            (true, false) => "macOS arm64",
+            (false, true) => "Linux x86_64",
+            (false, false) => "none detected",
+        }
+    };
     format!(
         "## OpenBox Sandbox {version}
 
+Runs one authorized command inside an isolated sandbox, behind a loopback-only
+TLS 1.3 mTLS service.
+
+Platforms: {platforms}
+
 Pinned components:
-- openbox-sandbox service + obs launcher: source-pinned releases (see git history)
-- OpenShell: locked release **0.0.88** (upstream sha256-verified tarballs)
+- `openbox-sandbox` service and `obs` launcher: built from this tag
+- OpenShell: locked release **0.0.88**, sha256-verified
 
-Platforms: linux x86_64, linux aarch64, macOS arm64
+Assets:
+{asset_lines}
 
-Assets: per-platform obs and openbox-sandbox binaries, the OpenShell bundle
-tarball, the sandbox policy templates, and SHA256SUMS.
-
-Verification:
+Verify before use:
 ```
 sha256sum -c SHA256SUMS
 ```
 
-Consumption: obs provision with OPENBOX_OPENSHELL_BUNDLE_URL (see packaging/launcher/README.md).",
+Use:
+```
+chmod +x obs
+./obs provision --yes            # service runs here; Ctrl-C drains and stops it
+./obs provision --yes --detach   # background, own process group
+./obs provision --yes --systemd  # Linux: supervised, restarts on failure
+```
+
+Provisioning writes `~/.config/openbox-sandbox/agent.env`, which is the whole
+boundary contract an SDK client needs.",
         version = tag.trim_start_matches('v')
     )
 }
