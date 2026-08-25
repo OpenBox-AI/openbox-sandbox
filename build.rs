@@ -7,15 +7,15 @@ fn main() {
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest directory"));
     let manifest_path = root.join("Cargo.toml");
     let lock_path = root.join("Cargo.lock");
-    let installer_path = root.join("install.sh");
-    let local_bootstrap_path = root.join("scripts/local-bootstrap.sh");
-    let dogfood_provision_path = root.join("packaging/launcher/scripts/provision-local-sandbox.sh");
+    let installer_path = root.join("packaging/launcher/src/install.rs");
+    let local_bootstrap_path = root.join("packaging/launcher/src/local_bootstrap.rs");
+    let openshell_provision_path = root.join("packaging/launcher/src/openshell_provision.rs");
     for path in [
         &manifest_path,
         &lock_path,
         &installer_path,
         &local_bootstrap_path,
-        &dogfood_provision_path,
+        &openshell_provision_path,
     ] {
         println!("cargo:rerun-if-changed={}", path.display());
     }
@@ -38,25 +38,30 @@ fn main() {
         "Cargo.lock must bind both OpenShell packages to the approved source pin"
     );
 
-    let installer = std::fs::read_to_string(installer_path).expect("install.sh must be readable");
-    let installer_pin = format!("readonly OPENSHELL_SOURCE_PIN=\"{OPENSHELL_SOURCE_PIN}\"");
+    let installer =
+        std::fs::read_to_string(installer_path).expect("Rust installer must be readable");
+    let installer_pin = format!("const OPENSHELL_SOURCE_PIN: &str = \"{OPENSHELL_SOURCE_PIN}\"");
     assert!(
         installer.contains(&installer_pin),
         "installer OpenShell package pin must match the compiled adapter"
     );
-    let local_bootstrap =
-        std::fs::read_to_string(local_bootstrap_path).expect("local bootstrap must be readable");
+    let local_bootstrap = std::fs::read_to_string(local_bootstrap_path)
+        .expect("Rust local bootstrap must be readable");
     assert!(
         local_bootstrap.contains(&installer_pin),
         "local bootstrap OpenShell source pin must match the compiled adapter"
     );
-    let dogfood_provision = std::fs::read_to_string(dogfood_provision_path)
-        .expect("dogfood provision script must be readable");
-    let dogfood_pin = format!("OPENSHELL_SOURCE_PIN=\"{OPENSHELL_SOURCE_PIN}\"");
-    let dogfood_marker = format!("OPENSHELL_SOURCE_MARKER=\"{}\"", &OPENSHELL_SOURCE_PIN[..8]);
+    let openshell_provision = std::fs::read_to_string(openshell_provision_path)
+        .expect("OpenShell Rust provisioner must be readable");
+    let expected_pin = format!("const OPENSHELL_SOURCE_PIN: &str = \"{OPENSHELL_SOURCE_PIN}\"");
+    let expected_marker = format!(
+        "const SOURCE_MARKER: &str = \"{}\"",
+        &OPENSHELL_SOURCE_PIN[..8]
+    );
     assert!(
-        dogfood_provision.contains(&dogfood_pin) && dogfood_provision.contains(&dogfood_marker),
-        "dogfood OpenShell source pin and marker must match the compiled adapter"
+        openshell_provision.contains(&expected_pin)
+            && openshell_provision.contains(&expected_marker),
+        "OpenShell source pin and marker must match the compiled adapter"
     );
 
     println!("cargo:rustc-env=OPENBOX_OPENSHELL_SOURCE_PIN={OPENSHELL_SOURCE_PIN}");

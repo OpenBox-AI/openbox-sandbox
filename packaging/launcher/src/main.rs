@@ -28,10 +28,13 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 mod bundle;
-mod deps;
+mod install;
+mod local_bootstrap;
+mod native_provision;
+mod openshell_fetch;
+mod openshell_provision;
 mod pin;
 mod provision;
-mod scripts;
 mod update;
 
 /// The release line this binary was built for — baked at compile time
@@ -128,6 +131,7 @@ enum CommandLine {
     },
     Verify,
     Status,
+    Install(install::Options),
     VerifyRuntime {
         skip_hash: bool,
     },
@@ -223,7 +227,11 @@ const PROVISION_FLAG_BOOLS: &[(&str, &str, &str)] = &[
     ("--base", "OPENBOX_RELEASE_LINE", "base"),
 ];
 
-fn parse_provision_flags(args: &[String]) -> Result<(Vec<(String, String)>, bool, bool), String> {
+/// Environment overrides plus the two provisioning switches, named so the
+/// signature does not carry a bare tuple triple.
+type ProvisionFlags = (Vec<(String, String)>, bool, bool);
+
+fn parse_provision_flags(args: &[String]) -> Result<ProvisionFlags, String> {
     let mut overrides: Vec<(String, String)> = Vec::new();
     let mut clean_rerun = false;
     let mut keep_pki = false;
@@ -289,6 +297,13 @@ fn parse_provision_flags(args: &[String]) -> Result<(Vec<(String, String)>, bool
     if keep_pki && !clean_rerun {
         return Err("--keep-pki requires `obs provision --clean-rerun`".to_owned());
     }
+    if !clean_rerun
+        && overrides
+            .iter()
+            .any(|(key, value)| key == "OPENBOX_PURGE_CACHE" && value == "1")
+    {
+        return Err("--purge-cache requires --uninstall or --clean-rerun".to_owned());
+    }
     Ok((overrides, clean_rerun, keep_pki))
 }
 
@@ -302,7 +317,7 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
     match command {
         "version" => {
             ensure_options(&args[1..], &[])?;
-            return Ok(CommandLine::Version);
+            Ok(CommandLine::Version)
         }
         "provision" => {
             let (overrides, clean_rerun, keep_pki) = parse_provision_flags(&args[1..])?;
@@ -312,6 +327,7 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
                 overrides,
             })
         }
+        "install" => install::parse_options(&args[1..]).map(CommandLine::Install),
         "uninstall" => {
             ensure_options(&args[1..], &["--keep-pki"])?;
             Ok(CommandLine::Uninstall {
@@ -426,7 +442,17 @@ fn main() -> ExitCode {
         Ok(CommandLine::Uninstall { keep_pki }) => return provision::run_uninstall(keep_pki),
         Ok(CommandLine::Verify) => return provision::run_verify(),
         Ok(CommandLine::Status) => return provision::run_status(),
+        Ok(CommandLine::Install(options)) => {
+            return match install::run(options) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(message) => {
+                    eprintln!("openbox-sandbox installer: {message}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
+
         Ok(CommandLine::Update { release, all }) => return update::run(release.as_deref(), all),
         Ok(CommandLine::Launch) => {}
         Err(message) => {
@@ -492,8 +518,8 @@ fn main() -> ExitCode {
         Err(missing) => {
             err(&format!("artifact not found: {missing}"));
             info("OpenShell must be installed by the environment owner.");
-            info("run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
-            info("the pinned release, or install via Homebrew (brew install openshell).");
+            info("run `obs provision --provider openshell` to fetch the pinned release,");
+            info("or install via Homebrew (brew install openshell).");
             return ExitCode::FAILURE;
         }
     };
@@ -507,8 +533,7 @@ fn main() -> ExitCode {
         info("sandbox-name / hook contracts. Install the matching release, or set");
         info("OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION to the installed version.");
         if err_msg.reason.starts_with("version") {
-            info("run packaging/launcher/scripts/fetch-openshell-deps.sh to fetch");
-            info("the pinned release.");
+            info("run `obs provision --provider openshell` to fetch the pinned release.");
         }
         return ExitCode::FAILURE;
     }
@@ -787,8 +812,10 @@ fn print_help() {
 
 USAGE:
   obs version                 Print the version and the baked release line.
-  obs provision [OPTIONS]      Teardown stale state, then provision dogfood.
-  obs uninstall [--keep-pki]   Teardown and delete wizard-owned state.
+  obs provision [OPTIONS]      Teardown stale state, then provision locally.
+  obs install [OPTIONS] [PATH] Install the Linux system service from a release
+                              or build a local non-production release.
+  obs uninstall [--keep-pki]   Teardown and delete launcher-owned state.
   obs verify                   Prove mTLS create→ready→exec→delete live.
   obs status                   Report stack readiness.
   obs update [TAG] [--all]    Update obs itself from TAG (default: latest
@@ -811,11 +838,18 @@ DOGFOOD LOOP (source checkout only):
   OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision
   obs verify && obs uninstall
 
+INSTALL OPTIONS:
+  --local                     Force the fresh-source local bootstrap.
+  --install-dependencies      Install missing prerequisites without asking.
+  --no-install-dependencies   Never install missing prerequisites.
+  --no-start                  Install and validate without starting the service.
+  /absolute/path/to/release   Use this service release instead of adjacent release/.
+
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
   --provider NAME        native (default, native OS sandbox) or openshell (explicit).
   --yes                  Accept all non-privileged defaults non-interactively.
                          The native path never requires sudo or CA trust.
-  --clean-rerun          Also remove wizard-owned state before provisioning.
+  --clean-rerun          Also remove launcher-owned state before provisioning.
   --keep-pki             Preserve PKI (with --clean-rerun or uninstall).
   --state-root PATH      (~/.local/state/openbox-sandbox)
   --native-workspace-root PATH (<state-root>/workspaces)
@@ -957,6 +991,11 @@ mod tests {
             parse_command(&args(&["provision", "--keep-pki"])),
             Err("--keep-pki requires `obs provision --clean-rerun`".to_owned())
         );
+        assert_eq!(
+            parse_command(&args(&["provision", "--purge-cache"])),
+            Err("--purge-cache requires --uninstall or --clean-rerun".to_owned())
+        );
+        assert!(parse_command(&args(&["provision", "--clean-rerun", "--purge-cache"])).is_ok());
     }
 
     #[test]

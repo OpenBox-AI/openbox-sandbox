@@ -1,12 +1,12 @@
-//! Local dogfood lifecycle — `obs provision`, `obs uninstall`, `obs verify`,
+//! Local lifecycle — `obs provision`, `obs uninstall`, `obs verify`,
 //! `obs status`.
 //!
-//! These source-checkout commands delegate to
-//! `packaging/launcher/scripts/provision-local-sandbox.sh` and to the in-crate
+//! Both the OpenShell and native providers are implemented in-crate.
+//! Verification uses the in-crate
 //! `live_service_create_exec_delete` integration test:
 //!
 //! - `obs provision` = teardown, then provision.
-//! - `obs uninstall` = teardown, delete wizard-owned state, and exit.
+//! - `obs uninstall` = teardown, delete launcher-owned state, and exit.
 //! - `obs verify` = prove create→ready→exec→delete over mTLS through the root
 //!   service and the external `OpenShell` microVM runtime.
 //! - `obs status` = report ports, PID files, and generated artifacts.
@@ -19,7 +19,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use crate::{err, info, ok, step, warn};
 
-/// Resolve the source repository used by dogfood-only commands.
+/// Resolve the source repository used by local lifecycle commands.
 fn repo_root() -> PathBuf {
     if let Some(root) = std::env::var_os("OPENBOX_SOURCE_ROOT").map(PathBuf::from) {
         return root;
@@ -27,9 +27,7 @@ fn repo_root() -> PathBuf {
     if let Ok(current) = std::env::current_dir() {
         for candidate in current.ancestors() {
             if candidate.join("Cargo.toml").is_file()
-                && candidate
-                    .join("packaging/launcher/scripts/provision-local-sandbox.sh")
-                    .is_file()
+                && candidate.join("packaging/launcher/Cargo.toml").is_file()
             {
                 return candidate.to_path_buf();
             }
@@ -41,14 +39,6 @@ fn repo_root() -> PathBuf {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
-}
-
-fn wizard_script() -> Result<PathBuf, String> {
-    if selected_provider() == "native" {
-        crate::scripts::resolve("provision-native.sh")
-    } else {
-        crate::scripts::resolve("provision-local-sandbox.sh")
-    }
 }
 
 fn selected_provider() -> String {
@@ -70,8 +60,7 @@ fn selected_provider() -> String {
 }
 
 /// Auto-acquire the pinned OpenShell bundle when it is missing, so a fresh
-/// machine needs only `obs provision`. Reuses the embedded fetch logic.
-
+/// machine needs only `obs provision`. Uses the in-crate pinned fetcher.
 fn curl_download(
     repo: &str,
     cwd: &Path,
@@ -270,8 +259,6 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
             && darwin_arm.join("bin/openshell-gateway").is_file()
         {
             darwin_arm
-        } else if base.join("bin/openshell-gateway").is_file() {
-            base
         } else {
             base
         }
@@ -304,7 +291,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
             }
         }
     };
-    // Already present — pin it and let the wizard proceed.
+    // Already present — pin it and let the launcher proceed.
     // The service binary and policy are SEPARATE release assets that land
     // either inside the bundle dir (fetched) or in the CWD next to obs
     // (downloaded release layout). Check both before fetching anything.
@@ -321,8 +308,6 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     };
     let policy_file = if cwd.join(policy_name).is_file() {
         cwd.join(policy_name)
-    } else if bundle_dir.join(policy_name).is_file() {
-        bundle_dir.join(policy_name)
     } else {
         bundle_dir.join(policy_name)
     };
@@ -335,30 +320,14 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         }
         return Ok(());
     }
-    let script = match crate::scripts::resolve("fetch-openshell-deps.sh") {
-        Ok(s) => s,
-        Err(reason) => {
-            err(&format!("fetch-openshell-deps.sh unavailable: {reason}"));
-            return Err(ExitCode::FAILURE);
-        }
-    };
     info("OpenShell binaries missing — fetching the pinned release");
-    let status = Command::new("bash")
-        .arg(&script)
-        .env("OUT", &bundle_dir)
-        .env(
-            "OPENBOX_OPENSHELL_VERSION",
-            crate::pin::LOCKED_RELEASE_VERSION,
-        )
-        .current_dir(&cwd)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
-    if !matches!(status, Ok(s) if s.success()) {
-        err("OpenShell fetch failed (see output above)");
+    let openshell_version = std::env::var("OPENBOX_OPENSHELL_VERSION")
+        .unwrap_or_else(|_| crate::pin::LOCKED_RELEASE_VERSION.to_owned());
+    if let Err(reason) = crate::openshell_fetch::fetch(&bundle_dir, &openshell_version) {
+        err(&format!("OpenShell fetch failed: {reason}"));
         return Err(ExitCode::FAILURE);
     }
-    // The sandbox service binary must also be available to the wizard. In a
+    // The sandbox service binary must also be available to the launcher. In a
     // standalone release it ships as a per-arch release asset alongside the
     // split bundle dirs; fetch it into the bundle dir when missing.
     let svc_bin = if cwd.join(svc_name).is_file() {
@@ -392,7 +361,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
             return Err(ExitCode::FAILURE);
         }
         // GitHub release assets do not preserve the executable bit; the
-        // wizard's `-x` check will fail without it.
+        // launcher's `-x` check will fail without it.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -445,7 +414,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         ));
         return Err(ExitCode::FAILURE);
     }
-    // The sandbox policy file must also be available to the wizard.
+    // The sandbox policy file must also be available to the launcher.
     // Fetch it from the same release alongside the service binary.
     let policy_path = bundle_dir.join(policy_name);
     if !policy_path.is_file() {
@@ -487,7 +456,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
             }
         }
     }
-    // The wizard must consume exactly this bundle + service binary + policy.
+    // The launcher must consume exactly this bundle + service binary + policy.
     unsafe { std::env::set_var("OPENSHELL_BUNDLE_DIR", &bundle_dir) };
     unsafe { std::env::set_var("OPENBOX_SANDBOX_BIN", &svc_bin) };
     unsafe { std::env::set_var("OPENBOX_POLICY_FILE", &policy_path) };
@@ -526,10 +495,8 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     };
     let mut service = std::env::var_os("OPENBOX_SANDBOX_BIN").map(PathBuf::from);
     let candidate = cwd.join(svc_name);
-    if service.as_ref().is_none_or(|path| !path.is_file()) {
-        if candidate.is_file() {
-            service = Some(candidate.clone());
-        }
+    if service.as_ref().is_none_or(|path| !path.is_file()) && candidate.is_file() {
+        service = Some(candidate.clone());
     }
     if service.as_ref().is_none_or(|path| !path.is_file()) {
         let tag = if crate::channel() == "base" {
@@ -657,85 +624,58 @@ pub fn run_provision(
             svc_name,
         );
     }
-    let script = match wizard_script() {
-        Ok(s) => s,
-        Err(reason) => {
-            err(&format!("provision-local-sandbox.sh unavailable: {reason}"));
-            return ExitCode::FAILURE;
-        }
-    };
     banner_phase("PROVISION");
     if provider == "native" {
         info("provider=native -> native profile -> local mTLS service -> smoke -> agent.env");
-    } else {
-        info("provider=openshell -> gateway -> mTLS -> service -> agent.env");
-    }
-    let mut args = Vec::new();
-    if clean_rerun {
-        args.push("--clean-rerun");
-    }
-    if keep_pki {
-        args.push("--keep-pki");
+        return run_native(crate::native_provision::Options {
+            uninstall: false,
+            clean_rerun,
+            _keep_pki: keep_pki,
+        });
     }
 
-    exec_bash_env(&script, &args, &overrides)
+    info("provider=openshell -> gateway -> mTLS -> service -> agent.env");
+    run_openshell(crate::openshell_provision::Options {
+        uninstall: false,
+        clean_rerun,
+        keep_pki,
+    })
 }
 
-/// `obs uninstall` — stop everything the wizard started and wipe its state.
+/// `obs uninstall` — stop everything the launcher started and wipe its state.
 pub fn run_uninstall(keep_pki: bool) -> ExitCode {
-    let script = match wizard_script() {
-        Ok(s) => s,
-        Err(reason) => {
-            err(&format!("provision-local-sandbox.sh unavailable: {reason}"));
-            return ExitCode::FAILURE;
-        }
-    };
     banner_phase("UNINSTALL");
     info("teardown -> delete state root / config root / gateway metadata / PKI");
-    let args = if keep_pki {
-        vec!["--uninstall", "--keep-pki"]
-    } else {
-        vec!["--uninstall"]
-    };
-    exec_bash(&script, &args)
+    if selected_provider() == "native" {
+        return run_native(crate::native_provision::Options {
+            uninstall: true,
+            clean_rerun: false,
+            _keep_pki: keep_pki,
+        });
+    }
+
+    run_openshell(crate::openshell_provision::Options {
+        uninstall: true,
+        clean_rerun: false,
+        keep_pki,
+    })
 }
 
-/// Stop only the provisioned gateway/service processes, preserving all state.
-pub(crate) fn run_teardown() -> ExitCode {
-    let script = match wizard_script() {
-        Ok(s) => s,
-        Err(reason) => {
-            err(&format!("provision-local-sandbox.sh unavailable: {reason}"));
-            return ExitCode::FAILURE;
-        }
-    };
-    banner_phase("STACK TEARDOWN");
-    let mut command = Command::new("bash");
-    command
-        .arg(&script)
-        .env("OPENBOX_TEARDOWN_ONLY", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    // The downloaded standalone launcher may not live beside the provisioned
-    // service binary. Recover its exact path from agent.env so the wizard's
-    // fail-closed PID ownership check still recognizes the process it started.
-    if let Ok(body) = std::fs::read_to_string(agent_env_path()) {
-        if let Ok(values) = parse_agent_env(&body) {
-            if let Some(binary) = env_value(&values, "OPENBOX_SANDBOX_BINARY") {
-                command.env("OPENBOX_SANDBOX_BIN", binary);
-            }
-        }
-    }
-    let status = command.status();
-    match status {
-        Ok(s) if s.success() => ExitCode::SUCCESS,
-        Ok(s) => {
-            err(&format!("provision script exit {}", s.code().unwrap_or(-1)));
+fn run_native(options: crate::native_provision::Options) -> ExitCode {
+    match crate::native_provision::run(options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            err(&format!("provision: {error}"));
             ExitCode::FAILURE
         }
+    }
+}
+
+fn run_openshell(options: crate::openshell_provision::Options) -> ExitCode {
+    match crate::openshell_provision::run(options) {
+        Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            err(&format!("could not run bash script: {error}"));
+            err(&format!("provision: {error}"));
             ExitCode::FAILURE
         }
     }
@@ -772,7 +712,7 @@ pub fn run_verify() -> ExitCode {
             info(&format!("running prebuilt verify harness: {bin}"));
             return match cmd.status() {
                 Ok(s) if s.success() => {
-                    ok("live dogfood lifecycle SUCCEEDED");
+                    ok("live lifecycle SUCCEEDED");
                     ExitCode::SUCCESS
                 }
                 Ok(s) => {
@@ -795,6 +735,9 @@ pub fn run_verify() -> ExitCode {
             "--lib",
             "live_service_create_exec_delete",
             "--",
+            // The test is #[ignore] so a default `cargo test` cannot report it
+            // as passed while skipping. Verification must ask for it by name.
+            "--ignored",
             "--nocapture",
             "--test-threads=1",
         ])
@@ -811,7 +754,7 @@ pub fn run_verify() -> ExitCode {
     info("running `cargo test --lib live_service_create_exec_delete`");
     match cmd.status() {
         Ok(s) if s.success() => {
-            ok("live dogfood lifecycle SUCCEEDED");
+            ok("live lifecycle SUCCEEDED");
             ExitCode::SUCCESS
         }
         Ok(s) => {
@@ -850,7 +793,7 @@ pub fn run_status() -> ExitCode {
         .filter(|body| body.contains("\"provider\": \"native\""))
         .map_or("openshell", |_| "native");
 
-    // The wizard records the actual ports (OPENSHELL_SERVER_PORT and
+    // The launcher records the actual ports (OPENSHELL_SERVER_PORT and
     // OPENBOX_SANDBOX_PORT overrides are honored); read them back instead of
     // assuming the defaults.
     let gateway_port = read_gateway_port(&home).unwrap_or(17670);
@@ -878,9 +821,9 @@ pub fn run_status() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Read the gateway port from the wizard-written metadata (active gateway).
+/// Read the gateway port from the launcher-written metadata (active gateway).
 /// Dependency-free: the launcher has no JSON crate, and the metadata format
-/// is wizard-owned (`"gateway_port": <n>`), so a bounded string scan suffices.
+/// is launcher-owned (`"gateway_port": <n>`), so a bounded string scan suffices.
 fn read_gateway_port(home: &Path) -> Option<u16> {
     let name = std::fs::read_to_string(home.join(".config/openshell/active_gateway"))
         .ok()?
@@ -1071,36 +1014,6 @@ fn parse_agent_env(body: &str) -> Result<Vec<(&str, &str)>, String> {
     Ok(values)
 }
 
-fn exec_bash(script: &Path, args: &[&str]) -> ExitCode {
-    exec_bash_env(script, args, &[])
-}
-
-fn exec_bash_env(script: &Path, args: &[&str], overrides: &[(String, String)]) -> ExitCode {
-    let mut command = Command::new("bash");
-    command
-        .arg(script.to_str().unwrap_or(""))
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    for (key, value) in overrides {
-        info(&format!("override {key}={value}"));
-        command.env(key, value);
-    }
-    let status = command.status();
-    match status {
-        Ok(s) if s.success() => ExitCode::SUCCESS,
-        Ok(s) => {
-            err(&format!("provision script exit {}", s.code().unwrap_or(-1)));
-            ExitCode::FAILURE
-        }
-        Err(error) => {
-            err(&format!("could not run bash script: {error}"));
-            ExitCode::FAILURE
-        }
-    }
-}
-
 /// Best-effort `kill(pid, 0)` liveness check via `kill -0` (no libc FFI).
 fn libc_kill_alive(pid: i32) -> bool {
     Command::new("kill")
@@ -1139,10 +1052,8 @@ mod tests {
 
     #[test]
     fn service_binary_hash_must_match_before_live_verify() {
-        let path = std::env::temp_dir().join(format!(
-            "openbox-dogfood-adapter-test-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("openbox-adapter-test-{}", std::process::id()));
         std::fs::write(&path, b"adapter").expect("write adapter fixture");
         let path_text = path.to_string_lossy();
         let matching = [

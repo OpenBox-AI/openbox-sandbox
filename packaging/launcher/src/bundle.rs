@@ -5,7 +5,7 @@
 //! Resolution order:
 //!   1. `$OPENBOX_BUNDLE_DIR` — an operator-provided release bundle. Binaries
 //!      may use either its conventional `bin/` and `libexec/` layout (as emitted
-//!      by `scripts/fetch-openshell-deps.sh`) or live directly at its root.
+//!      by the in-crate OpenShell fetcher) or live directly at its root.
 //!   2. A well-known install location (Homebrew on macOS, `/usr/local` on Linux).
 //!   3. `PATH` (for the `openshell` / `openshell-gateway` binaries).
 //!   4. The in-repo build output, so `cargo run` works from a source checkout.
