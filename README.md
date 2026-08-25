@@ -41,9 +41,10 @@ Provisioning compiles the policy into a profile, pins its SHA-256 in
 `~/.config/openbox-sandbox/agent.env`, which is the entire boundary contract for
 an SDK client. The pinned profile is verified before every execution.
 
-The OpenShell provider also checks assets it fetches against `SHA256SUMS` and
-re-downloads on mismatch. The native provider does not, so verify `obs` and the
-service binary yourself as above.
+Both providers check every asset they resolve against that release's
+`SHA256SUMS`, whether it was just downloaded or already on disk, and re-fetch on
+a mismatch. `OPENBOX_SANDBOX_BIN` overrides that for a local build. Verify `obs`
+itself as above: a launcher cannot vouch for itself.
 
 The service runs in that terminal, and Ctrl-C stops it after draining work in
 flight. Two flags change that:
