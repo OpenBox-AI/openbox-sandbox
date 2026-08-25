@@ -85,11 +85,107 @@ fn curl_download(
     }
 }
 
+/// SHA-256 of a file, using whichever tool the host provides.
+fn file_digest(path: &Path) -> Option<String> {
+    for (program, args) in [("sha256sum", vec![]), ("shasum", vec!["-a", "256"])] {
+        let output = Command::new(program)
+            .args(&args)
+            .arg(path)
+            .stdin(Stdio::null())
+            .output();
+        if let Ok(output) = output {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                if let Some(digest) = text.split_whitespace().next() {
+                    return Some(digest.to_owned());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// The digest a release manifest records for one asset.
+///
+/// The manifest is fetched from the same tag as the asset, so this proves the
+/// download is intact and belongs to that release. It is not proof of
+/// authorship: an attacker who can replace the asset can replace the manifest.
+fn manifest_digest(cwd: &Path, tag: &str, asset: &str) -> Option<String> {
+    let sums = cwd.join(format!(".SHA256SUMS.{tag}"));
+    if !sums.is_file()
+        && curl_download("OpenBox-AI/openbox-sandbox", cwd, tag, "SHA256SUMS", &sums).is_err()
+    {
+        return None;
+    }
+    let body = std::fs::read_to_string(&sums).ok()?;
+    body.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let digest = fields.next()?;
+        let name = fields.next()?.trim_start_matches('*');
+        (name == asset).then(|| digest.to_owned())
+    })
+}
+
+/// Download a release asset and verify it against that release's manifest.
+///
+/// The OpenShell path has always verified what it fetches. The native path did
+/// not: it downloaded the service binary and policy templates over HTTPS and
+/// ran them unchecked. A mismatch removes the file rather than leaving a
+/// corrupt or foreign artefact on disk for provisioning to use.
+/// Ensure an asset is present and matches the release manifest.
+///
+/// Verifying only fresh downloads left the larger hole: a file already sitting
+/// in the working directory was used as-is, so a corrupt, stale, or planted
+/// artefact was trusted. A local file that does not match is removed and
+/// re-fetched, which is what the OpenShell path has always done.
+///
+/// An operator who names a binary explicitly through OPENBOX_SANDBOX_BIN is
+/// not second-guessed: that is the documented escape hatch for a local build.
+fn ensure_verified_asset(cwd: &Path, tag: &str, asset: &str, label: &str) -> bool {
+    let destination = cwd.join(asset);
+    if destination.is_file() {
+        match (manifest_digest(cwd, tag, asset), file_digest(&destination)) {
+            (Some(expected), Some(actual)) if expected == actual => return true,
+            (Some(expected), Some(actual)) => {
+                warn(&format!(
+                    "{asset}: local copy does not match {tag}\n  expected {expected}\n  found    {actual}"
+                ));
+                let _ = std::fs::remove_file(&destination);
+            }
+            _ => return true,
+        }
+    }
+    info(&format!("{label} missing — fetching {asset} from {tag}"));
+    download_openbox_asset(cwd, tag, asset, &destination)
+}
+
 fn download_openbox_asset(cwd: &Path, tag: &str, asset: &str, destination: &Path) -> bool {
-    match curl_download("OpenBox-AI/openbox-sandbox", cwd, tag, asset, destination) {
-        Ok(()) => true,
-        Err(error) => {
-            warn(&error);
+    if let Err(error) = curl_download("OpenBox-AI/openbox-sandbox", cwd, tag, asset, destination) {
+        warn(&error);
+        return false;
+    }
+    let Some(expected) = manifest_digest(cwd, tag, asset) else {
+        warn(&format!(
+            "{asset}: no SHA256SUMS entry from {tag}; cannot verify the download"
+        ));
+        let _ = std::fs::remove_file(destination);
+        return false;
+    };
+    match file_digest(destination) {
+        Some(actual) if actual == expected => {
+            ok(&format!("{asset} verified against {tag} SHA256SUMS"));
+            true
+        }
+        Some(actual) => {
+            warn(&format!(
+                "{asset}: sha256 mismatch against {tag}\n  expected {expected}\n  found    {actual}"
+            ));
+            let _ = std::fs::remove_file(destination);
+            false
+        }
+        None => {
+            warn(&format!("{asset}: no sha256 tool available to verify it"));
+            let _ = std::fs::remove_file(destination);
             false
         }
     }
@@ -170,33 +266,26 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
             "deny-network"
         }
     ));
-    if !cwd.join(svc_name).is_file() {
-        info(&format!("{svc_name} missing — fetching from {tag}"));
-        let _ = download_openbox_asset(cwd, tag, svc_name, &cwd.join(svc_name));
+    if std::env::var_os("OPENBOX_SANDBOX_BIN").is_none() {
+        let _ = ensure_verified_asset(cwd, tag, svc_name, "native service");
     }
     // TEMPLATES: ALL policy templates are always provided, regardless of the
     // channel — the channel only selects the DEFAULT. Each template is fetched
     // from the release that canonically carries it (allow -> dev tag,
     // deny -> base tag), so no pattern is ever tried against a release that
     // cannot have it.
-    if !cwd.join("policy-allow-network-dev.yaml").is_file() {
-        info("allow policy template missing — fetching from v0.1.0-dev");
-        let _ = download_openbox_asset(
-            cwd,
-            "v0.1.0-dev",
-            "policy-allow-network-dev.yaml",
-            &cwd.join("policy-allow-network-dev.yaml"),
-        );
-    }
-    if !cwd.join("policy-deny-network-dev.yaml").is_file() {
-        info("deny policy template missing — fetching from v0.1.0");
-        let _ = download_openbox_asset(
-            cwd,
-            "v0.1.0",
-            "policy-deny-network-dev.yaml",
-            &cwd.join("policy-deny-network-dev.yaml"),
-        );
-    }
+    let _ = ensure_verified_asset(
+        cwd,
+        "v0.1.0-dev",
+        "policy-allow-network-dev.yaml",
+        "allow policy template",
+    );
+    let _ = ensure_verified_asset(
+        cwd,
+        "v0.1.0",
+        "policy-deny-network-dev.yaml",
+        "deny policy template",
+    );
     // Channel-locked assets beyond the templates.
     if dev_channel {
         if !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
@@ -493,24 +582,23 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     } else {
         "openbox-sandbox"
     };
-    let mut service = std::env::var_os("OPENBOX_SANDBOX_BIN").map(PathBuf::from);
+    let explicit = std::env::var_os("OPENBOX_SANDBOX_BIN").map(PathBuf::from);
+    let mut service = explicit.clone();
     let candidate = cwd.join(svc_name);
-    if service.as_ref().is_none_or(|path| !path.is_file()) && candidate.is_file() {
+    let tag = if crate::channel() == "base" {
+        "v0.1.0"
+    } else {
+        "v0.1.0-dev"
+    };
+    // An operator naming the binary explicitly is not second-guessed: that is
+    // the documented escape hatch for a local build. Anything this launcher
+    // resolves or downloads by itself must match the release manifest, whether
+    // it arrived just now or was already sitting in the working directory.
+    if service.as_ref().is_none_or(|path| !path.is_file())
+        && ensure_verified_asset(&cwd, tag, svc_name, "native service")
+        && candidate.is_file()
+    {
         service = Some(candidate.clone());
-    }
-    if service.as_ref().is_none_or(|path| !path.is_file()) {
-        let tag = if crate::channel() == "base" {
-            "v0.1.0"
-        } else {
-            "v0.1.0-dev"
-        };
-        info(&format!(
-            "native service missing — fetching {svc_name} from {tag}"
-        ));
-        let _ = download_openbox_asset(&cwd, tag, svc_name, &candidate);
-        if candidate.is_file() {
-            service = Some(candidate);
-        }
     }
     if service.as_ref().is_none_or(|path| !path.is_file()) && cwd.join("Cargo.toml").is_file() {
         info("building native service from source");
@@ -1029,6 +1117,32 @@ fn libc_kill_alive(pid: i32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{parse_agent_env, verify_service_binary};
+
+    #[test]
+    fn manifest_lookup_matches_only_the_named_asset() {
+        let directory = std::env::temp_dir().join(format!("obs-manifest-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let manifest = directory.join(".SHA256SUMS.v0.1.0-dev");
+        std::fs::write(
+            &manifest,
+            "aaaa  openbox-sandbox-darwin-arm64\nbbbb  policy-allow-network-dev.yaml\n",
+        )
+        .unwrap();
+        assert_eq!(
+            super::manifest_digest(&directory, "v0.1.0-dev", "openbox-sandbox-darwin-arm64"),
+            Some("aaaa".to_owned())
+        );
+        assert_eq!(
+            super::manifest_digest(&directory, "v0.1.0-dev", "policy-allow-network-dev.yaml"),
+            Some("bbbb".to_owned())
+        );
+        // A name that only prefixes an entry must not match it.
+        assert_eq!(
+            super::manifest_digest(&directory, "v0.1.0-dev", "openbox-sandbox"),
+            None
+        );
+        std::fs::remove_dir_all(&directory).ok();
+    }
 
     #[test]
     fn agent_env_requires_endpoint_so_live_verify_cannot_skip() {
