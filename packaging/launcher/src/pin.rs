@@ -16,9 +16,7 @@
 //!      `OPENBOX_SANDBOX_DRIVER_SHA256`); when set, the launcher verifies them.
 //!      This is for air-gapped deployments that control the exact on-disk bytes.
 //!
-//! `REQUIRED_VERSION` is the single pin; override at runtime with
-//! `OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION` (e.g. to test a local build of a
-//! different version).
+//! `REQUIRED_VERSION` is the single pin and cannot be overridden at runtime.
 
 use std::path::Path;
 use std::process::Command;
@@ -76,12 +74,14 @@ pub struct VerifyError {
 ///
 /// Version is always checked for the gateway and CLI. The optional VM driver
 /// version is checked when present. Operator-pinned binary sha256 values (via
-/// env) are checked only when present — the launcher does not bundle tarball
-/// hashes because Homebrew re-signs mach-Os on install, so the on-disk hash is
-/// not stable across installs. `strict` toggles whether operator-pinned hashes
-/// are enforced; pass `false` (`--skip-hash`) to skip even those.
-pub fn verify(artifacts: &Artifacts, strict: bool) -> Result<(), VerifyError> {
-    let required = required_version();
+/// env) are checked when present — the launcher does not bundle tarball hashes
+/// because Homebrew re-signs mach-Os on install, so the on-disk hash is not
+/// stable across installs.
+///
+/// There is no way to switch either check off. A pin that can be waived is not
+/// a pin, and the flag that waived it was reachable in a normal run.
+pub fn verify(artifacts: &Artifacts) -> Result<(), VerifyError> {
+    let required = REQUIRED_VERSION.to_owned();
 
     // Version: run `<binary> --version` and require the pinned version.
     let gateway_version =
@@ -120,7 +120,7 @@ pub fn verify(artifacts: &Artifacts, strict: bool) -> Result<(), VerifyError> {
         }
     }
 
-    if strict {
+    {
         if let Ok(expected) = std::env::var("OPENBOX_SANDBOX_GATEWAY_SHA256") {
             if !expected.is_empty() {
                 check_sha256(&artifacts.gateway, &expected).map_err(|reason| VerifyError {
@@ -150,12 +150,6 @@ pub fn verify(artifacts: &Artifacts, strict: bool) -> Result<(), VerifyError> {
     }
 
     Ok(())
-}
-
-/// The required OpenShell version, overridable via env for testing.
-fn required_version() -> String {
-    std::env::var("OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION")
-        .unwrap_or_else(|_| REQUIRED_VERSION.to_string())
 }
 
 /// Run `<binary> --version` and return the trailing version token, falling back

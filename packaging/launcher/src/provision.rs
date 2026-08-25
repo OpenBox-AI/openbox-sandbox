@@ -420,9 +420,11 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
         return Ok(());
     }
     info("OpenShell binaries missing — fetching the pinned release");
-    let openshell_version = std::env::var("OPENBOX_OPENSHELL_VERSION")
-        .unwrap_or_else(|_| crate::pin::LOCKED_RELEASE_VERSION.to_owned());
-    if let Err(reason) = crate::openshell_fetch::fetch(&bundle_dir, &openshell_version) {
+    // The locked release is the only version this launcher fetches. An env
+    // override here would defeat the pin that the rest of the code enforces.
+    if let Err(reason) =
+        crate::openshell_fetch::fetch(&bundle_dir, crate::pin::LOCKED_RELEASE_VERSION)
+    {
         err(&format!("OpenShell fetch failed: {reason}"));
         return Err(ExitCode::FAILURE);
     }
@@ -610,24 +612,59 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     } else {
         "v0.1.0"
     };
-    // An operator naming the binary explicitly is not second-guessed: that is
-    // the documented escape hatch for a local build. Anything this launcher
-    // resolves or downloads by itself must match the release manifest, whether
-    // it arrived just now or was already sitting in the working directory.
-    if service.as_ref().is_none_or(|path| !path.is_file())
-        && ensure_verified_asset(&cwd, tag, svc_name, "native service")
-        && candidate.is_file()
-    {
-        service = Some(candidate.clone());
-    }
-    if service.as_ref().is_none_or(|path| !path.is_file()) && cwd.join("Cargo.toml").is_file() {
-        info("building native service from source");
+    // Exactly one rule decides the service binary, with no silent alternative.
+    //
+    // A source checkout builds the binary it is going to run: there is no
+    // manifest for a build that does not exist yet. Everywhere else the release
+    // asset is used and must match SHA256SUMS, including a path named through
+    // --sandbox-bin. A failed verification is fatal; it previously fell through
+    // to building from source, so a rejected binary silently became a different
+    // binary.
+    if cwd.join("Cargo.toml").is_file() {
+        info("source checkout: building the native service from source");
         let status = Command::new(which_cargo().unwrap_or_else(|| PathBuf::from("cargo")))
             .current_dir(&cwd)
             .args(["build", "--release", "--locked", "--bin", "openbox-sandbox"])
             .status();
-        if matches!(status, Ok(value) if value.success()) {
-            service = Some(cwd.join("target/release/openbox-sandbox"));
+        if !matches!(status, Ok(value) if value.success()) {
+            err("could not build the native service from this source checkout");
+            return Err(ExitCode::FAILURE);
+        }
+        service = Some(cwd.join("target/release/openbox-sandbox"));
+    } else {
+        let named = service.clone().filter(|path| path.is_file());
+        if let Some(path) = named {
+            // A named binary is verified like any other release asset, by the
+            // digest the manifest records for this platform's asset name.
+            match (manifest_digest(&cwd, tag, svc_name), file_digest(&path)) {
+                (Some(expected), Some(actual)) if expected == actual => {
+                    ok(&format!(
+                        "{} verified against {tag} SHA256SUMS",
+                        path.display()
+                    ));
+                }
+                (Some(expected), Some(actual)) => {
+                    err(&format!(
+                        "{}: does not match {tag}\n  expected {expected}\n  found    {actual}",
+                        path.display()
+                    ));
+                    return Err(ExitCode::FAILURE);
+                }
+                _ => {
+                    err(&format!(
+                        "{}: cannot be verified against {tag}",
+                        path.display()
+                    ));
+                    return Err(ExitCode::FAILURE);
+                }
+            }
+        } else if ensure_verified_asset(&cwd, tag, svc_name, "native service")
+            && candidate.is_file()
+        {
+            service = Some(candidate.clone());
+        } else {
+            err("native service binary could not be verified against the release");
+            return Err(ExitCode::FAILURE);
         }
     }
     let service = service.filter(|path| path.is_file()).ok_or_else(|| {

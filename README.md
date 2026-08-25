@@ -43,8 +43,10 @@ an SDK client. The pinned profile is verified before every execution.
 
 Both providers check every asset they resolve against that release's
 `SHA256SUMS`, whether it was just downloaded or already on disk, and re-fetch on
-a mismatch. `OPENBOX_SANDBOX_BIN` overrides that for a local build. Verify `obs`
-itself as above: a launcher cannot vouch for itself.
+a mismatch. There is no flag or environment variable that switches the check
+off. A source checkout builds the service it runs; everywhere else the release
+asset must match. Verify `obs` itself as above: a launcher cannot vouch for
+itself.
 
 The service runs in that terminal, and Ctrl-C stops it after draining work in
 flight. Two flags change that:

@@ -129,9 +129,7 @@ enum CommandLine {
     },
     Verify,
     Status,
-    VerifyRuntime {
-        skip_hash: bool,
-    },
+    VerifyRuntime,
     Update {
         release: Option<String>,
         all: bool,
@@ -373,16 +371,10 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
                     .iter()
                     .filter(|arg| arg.as_str() == "--verify-runtime")
                     .count();
-                if verify_count != 1
-                    || args
-                        .iter()
-                        .any(|arg| !matches!(arg.as_str(), "--verify-runtime" | "--skip-hash"))
-                {
-                    return Err("--verify-runtime may be combined only with --skip-hash".to_owned());
+                if verify_count != 1 || args.iter().any(|arg| arg.as_str() != "--verify-runtime") {
+                    return Err("--verify-runtime takes no other options".to_owned());
                 }
-                Ok(CommandLine::VerifyRuntime {
-                    skip_hash: args.iter().any(|arg| arg == "--skip-hash"),
-                })
+                Ok(CommandLine::VerifyRuntime)
             } else {
                 Ok(CommandLine::Launch)
             }
@@ -402,7 +394,7 @@ fn validate_launch_options(args: &[String]) -> Result<(), String> {
     while index < args.len() {
         let arg = &args[index];
         match arg.as_str() {
-            "--allow-degraded" | "--dry-run" | "--skip-hash" | "--verify-runtime" => {}
+            "--allow-degraded" | "--dry-run" | "--verify-runtime" => {}
             "--driver" => {
                 index += 1;
                 if args.get(index).is_none_or(|value| value.starts_with('-')) {
@@ -440,7 +432,7 @@ fn main() -> ExitCode {
         Ok(CommandLine::Uninstall { keep_pki }) => return provision::run_uninstall(keep_pki),
         Ok(CommandLine::Verify) => return provision::run_verify(),
         Ok(CommandLine::Status) => return provision::run_status(),
-        Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
+        Ok(CommandLine::VerifyRuntime) => return verify_runtime(),
 
         Ok(CommandLine::Update { release, all }) => return update::run(release.as_deref(), all),
         Ok(CommandLine::Launch) => {}
@@ -514,13 +506,10 @@ fn main() -> ExitCode {
     };
     report_artifacts(&artifacts);
 
-    let skip_hash = args.iter().any(|a| a == "--skip-hash")
-        || std::env::var("OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH").as_deref() == Ok("1");
-    if let Err(err_msg) = pin::verify(&artifacts, !skip_hash) {
+    if let Err(err_msg) = pin::verify(&artifacts) {
         err(&format!("{}: {}", err_msg.artifact, err_msg.reason));
         info("OpenShell is pinned to a tested version; a mismatch can break the");
-        info("sandbox-name / hook contracts. Install the matching release, or set");
-        info("OPENBOX_SANDBOX_REQUIRED_OPENSHELL_VERSION to the installed version.");
+        info("sandbox-name / hook contracts. Install the matching release.");
         if err_msg.reason.starts_with("version") {
             info("run `obs provision --provider openshell` to fetch the pinned release.");
         }
@@ -542,7 +531,7 @@ fn main() -> ExitCode {
 ///
 /// This does not connect to the gateway, inspect mTLS, or execute a sandbox.
 /// Use `obs verify` from a provisioned source checkout for that live proof.
-fn verify_runtime(skip_hash: bool) -> ExitCode {
+fn verify_runtime() -> ExitCode {
     banner();
     let (os, arch) = platform();
     info(&format!("{os}/{arch}"));
@@ -556,9 +545,7 @@ fn verify_runtime(skip_hash: bool) -> ExitCode {
         }
     };
     report_artifacts(&artifacts);
-    let skip_hash =
-        skip_hash || std::env::var("OPENBOX_SANDBOX_SKIP_ARTIFACT_HASH").as_deref() == Ok("1");
-    if let Err(error) = pin::verify(&artifacts, !skip_hash) {
+    if let Err(error) = pin::verify(&artifacts) {
         err(&format!("{}: {}", error.artifact, error.reason));
         return ExitCode::FAILURE;
     }
@@ -840,6 +827,9 @@ PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --fla
   --gateway-name NAME    (openshell)
   --log-level LEVEL      (info)
   --policy-file PATH     (auto: launcher dir / cwd / repo defaults)
+  --sandbox-bin PATH     Service binary to use. It must still match the release
+                         SHA256SUMS; this only says where the file is.
+  --project-root PATH    Source checkout used by verify and source builds.
   --policy-id ID         (auto from policy file name)
   --policy-version N     (1)
   --compat-id ID         (darwin-dev-1)
@@ -902,8 +892,6 @@ LAUNCHER OPTIONS:
   --dry-run            Resolve artifacts and print the plan; start nothing.
   --verify-runtime     Verify local artifact/version compatibility only.
                        It does not connect or prove sandbox execution.
-  --skip-hash          Skip operator-supplied hashes (dev only); may be
-                       combined with --verify-runtime.
   -h, --help           Show this help.
 
 `obs provision` requires OpenShell 0.0.88 (locked release)
@@ -997,22 +985,20 @@ mod tests {
     }
 
     #[test]
-    fn verify_runtime_accepts_only_skip_hash() {
+    fn verify_runtime_takes_no_other_options() {
         assert_eq!(
             parse_command(&args(&["--verify-runtime"])),
-            Ok(CommandLine::VerifyRuntime { skip_hash: false })
+            Ok(CommandLine::VerifyRuntime)
         );
+        // The hash check cannot be waived, so the flag that waived it is not
+        // a recognised option at all.
         assert_eq!(
             parse_command(&args(&["--verify-runtime", "--skip-hash"])),
-            Ok(CommandLine::VerifyRuntime { skip_hash: true })
-        );
-        assert_eq!(
-            parse_command(&args(&["--skip-hash", "--verify-runtime"])),
-            Ok(CommandLine::VerifyRuntime { skip_hash: true })
+            Err("unsupported option: --skip-hash".to_owned())
         );
         assert_eq!(
             parse_command(&args(&["--verify-runtime", "--dry-run"])),
-            Err("--verify-runtime may be combined only with --skip-hash".to_owned())
+            Err("--verify-runtime takes no other options".to_owned())
         );
     }
 }

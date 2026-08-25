@@ -37,7 +37,6 @@ gateway is managed as a per-user process by `obs provision`.
 
 `obs --verify-runtime` verifies only local artifact presence, exact release
 version, and any operator-supplied hashes. For development, append
-`--skip-hash` to skip those operator hashes while retaining version checks. It
 does **not** connect to a gateway, validate mTLS, create a sandbox, or prove
 execution.
 
