@@ -111,7 +111,10 @@ fn file_digest(path: &Path) -> Option<String> {
 /// download is intact and belongs to that release. It is not proof of
 /// authorship: an attacker who can replace the asset can replace the manifest.
 fn manifest_digest(cwd: &Path, tag: &str, asset: &str) -> Option<String> {
-    let sums = cwd.join(format!(".SHA256SUMS.{tag}"));
+    // Kept in a per-process temporary path, never in the operator's directory:
+    // a cached manifest survives a re-cut release and would then reject a
+    // genuine asset. Reused within one run so a provision fetches it once.
+    let sums = std::env::temp_dir().join(format!("obs-SHA256SUMS-{}-{tag}", std::process::id()));
     if !sums.is_file()
         && curl_download("OpenBox-AI/openbox-sandbox", cwd, tag, "SHA256SUMS", &sums).is_err()
     {
@@ -573,6 +576,12 @@ fn which_cargo() -> Option<PathBuf> {
     None
 }
 
+/// The release line in effect: the operator's choice, else the baked channel.
+fn release_line_is_dev() -> bool {
+    std::env::var("OPENBOX_RELEASE_LINE")
+        .map_or_else(|_| crate::channel() != "base", |line| line == "dev")
+}
+
 fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let svc_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
@@ -585,10 +594,14 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     let explicit = std::env::var_os("OPENBOX_SANDBOX_BIN").map(PathBuf::from);
     let mut service = explicit.clone();
     let candidate = cwd.join(svc_name);
-    let tag = if crate::channel() == "base" {
-        "v0.1.0"
-    } else {
+    // --dev and --base set OPENBOX_RELEASE_LINE, and it must select the
+    // service binary as well as the policy. Honouring it for only one of them
+    // mixed a base service with a dev policy, which is exactly the split the
+    // release notes warn against.
+    let tag = if release_line_is_dev() {
         "v0.1.0-dev"
+    } else {
+        "v0.1.0"
     };
     // An operator naming the binary explicitly is not second-guessed: that is
     // the documented escape hatch for a local build. Anything this launcher
@@ -627,8 +640,7 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     // Resolve the same channel-selected template used by the OpenShell path.
     // An explicit operator policy still wins; otherwise dev is allow-list and
     // base is deny-network, regardless of which other template is present.
-    let dev_channel = std::env::var("OPENBOX_RELEASE_LINE")
-        .map_or_else(|_| crate::channel() != "base", |line| line == "dev");
+    let dev_channel = release_line_is_dev();
     let policy_name = if dev_channel {
         "policy-allow-network-dev.yaml"
     } else {
