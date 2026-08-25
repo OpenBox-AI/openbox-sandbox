@@ -4,7 +4,7 @@
 `packaging/launcher`. It is not the production sandbox service:
 
 - root `openbox-sandbox` binary: mTLS sandbox service and durable lifecycle owner;
-- `obs`: artifact discovery, external gateway launch, and source-checkout dogfood commands;
+- `obs`: artifact discovery, external gateway launch, and source-checkout local provisioning commands;
 - OpenShell: external gateway/driver runtime, never embedded in either artifact.
 
 The launcher release keeps the existing download names for compatibility:
@@ -14,8 +14,8 @@ The launcher release keeps the existing download names for compatibility:
 - `openbox-sandbox-linux-arm64`
 
 Those files contain the `obs` executable. This cross-platform launcher track is
-distinct from the deployment-specific Linux service installer payload described
-in [`../../docs/installation.md`](../../docs/installation.md).
+distinct from the Linux system service, which `obs install` deploys from a
+verified release directory.
 
 ## Build and basic use
 
@@ -58,7 +58,7 @@ is unsupported directly; use WSL2.
 The root service protocol was pinned to OpenShell source commit
 `f169084923503a02a94425857b938de2841cab0c` (`f1690849`). The hosted-bin flow
 locks the released version **0.0.88** instead of building from source; the
-wizard accepts either the `gf1690849` source marker or the locked release, and
+launcher accepts either the `gf1690849` source marker or the locked release, and
 the live verify test proves the wire contract at runtime.
 
 For source builds at the exact pin, use:
@@ -88,30 +88,15 @@ and requires it to match the provisioned adapter identity. It then runs the
 actual live proof: client → mTLS root service → external OpenShell gateway →
 create → ready → exec → delete → terminal absence. It needs a provisioned source
 checkout and a working host VM/OpenShell runtime. Teardown signals only
-PID-file processes whose command identity matches the wizard; unrelated port
+PID-file processes whose command identity matches the launcher; unrelated port
 listeners and VM drivers are reported and left untouched.
 
-## Release and SBOM verification
+## Release verification
 
-The launcher crate has no third-party Cargo dependencies. Syft scans each final
-binary as built; it commonly reports the launcher as a file component rather
-than reconstructing a Cargo dependency graph. OpenShell is not included because
-it is not embedded.
-
-Each launcher artifact has:
-
-- SPDX 2.3: `<artifact>.spdx.json`
-- CycloneDX: `<artifact>.cyclonedx.json`
-- keyless cosign bundle for the SPDX file:
-  `<artifact>.spdx.json.sbom.bundle.json`
-
-Generate both local formats with `scripts/generate-sbom.sh`. It requires a
-preinstalled Syft v1.20.0 (or an explicit `SYFT_BIN`) and never downloads tools
-or invokes `sudo`. Verify a downloaded release directory with
-`scripts/verify-release.sh`; checksums and both SBOM files are required, and an
-available `cosign` installation verifies the SPDX bundle.
-See [`SINGLE_BIN_MACOS_PLAN.md`](SINGLE_BIN_MACOS_PLAN.md) for the retained
-release design record.
+Release artifacts are checksummed in `SHA256SUMS`. Verify a downloaded
+directory with `sha256sum -c SHA256SUMS`. Cutting and publishing a release is
+`obs-release`, a maintainer-only binary in `packaging/release`; it is not part
+of `obs` and is never published as a release asset.
 
 ## Hosted-bin (toolchain-free) flow
 
@@ -125,10 +110,10 @@ tree:
    `v0.1.0`, and `releases/latest/download/` always points at the current
    release):
    `https://github.com/OpenBox-AI/openbox-sandbox/releases/latest/download/<asset>`
-   — obs (single binary with the operational scripts EMBEDDED), the
+   — obs (single binary with provisioning implemented in Rust), the
    `openbox-sandbox` service, the prebuilt verify harness, the OpenShell
-   bundle tarball, the sandbox policy, `SHA256SUMS`, and Syft SBOMs.
-2. Verify checksums (`sha256sum -c SHA256SUMS`) and scan with Syft v1.20.0.
+   bundle tarball, the sandbox policy, and `SHA256SUMS`.
+2. Verify checksums: `sha256sum -c SHA256SUMS`.
 3. `obs provision` with `OPENBOX_OPENSHELL_BUNDLE_URL=<release base>`
    (public HTTP; no GitHub account or token), `OPENBOX_SANDBOX_BIN`
    (absolute), and `OPENBOX_POLICY_FILE` (absolute — the policy is a release
@@ -140,7 +125,7 @@ tree:
    lifecycle proof without cargo.
 6. `obs uninstall` tears the stack down cleanly. Pass the **same**
    `OPENBOX_SANDBOX_BIN`/`OPENSHELL_BUNDLE_DIR`/`OPENBOX_POLICY_FILE` env used
-   for provision: the wizard's teardown safety check compares the running
+   for provision: the provisioner's teardown safety check compares the running
    service's command line against the resolved binary path and refuses to
    signal mismatches.
 

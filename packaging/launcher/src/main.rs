@@ -31,7 +31,6 @@ mod bundle;
 mod deps;
 mod pin;
 mod provision;
-mod publish;
 mod scripts;
 mod update;
 
@@ -131,10 +130,6 @@ enum CommandLine {
     Status,
     VerifyRuntime {
         skip_hash: bool,
-    },
-    Publish {
-        release_dir: String,
-        tag: String,
     },
     Update {
         release: Option<String>,
@@ -356,14 +351,6 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
             }
             Ok(CommandLine::Update { release, all })
         }
-        "publish" => {
-            if args.len() < 2 {
-                return Err("usage: obs publish <release-dir> [tag]".to_owned());
-            }
-            let release_dir = args[1].clone();
-            let tag = args.get(2).cloned().unwrap_or_default();
-            Ok(CommandLine::Publish { release_dir, tag })
-        }
         value if !value.starts_with('-') => Err(format!("unknown subcommand: {value}")),
         _ => {
             validate_launch_options(args)?;
@@ -440,7 +427,6 @@ fn main() -> ExitCode {
         Ok(CommandLine::Verify) => return provision::run_verify(),
         Ok(CommandLine::Status) => return provision::run_status(),
         Ok(CommandLine::VerifyRuntime { skip_hash }) => return verify_runtime(skip_hash),
-        Ok(CommandLine::Publish { release_dir, tag }) => return publish::run(&release_dir, &tag),
         Ok(CommandLine::Update { release, all }) => return update::run(release.as_deref(), all),
         Ok(CommandLine::Launch) => {}
         Err(message) => {
@@ -805,7 +791,6 @@ USAGE:
   obs uninstall [--keep-pki]   Teardown and delete wizard-owned state.
   obs verify                   Prove mTLS create→ready→exec→delete live.
   obs status                   Report stack readiness.
-  obs publish <dir> [tag]      Publish a release dir to GitHub Releases.
   obs update [TAG] [--all]    Update obs itself from TAG (default: latest
                               release = v0.1.0-dev) into the current dir,
                               verify its checksum, and replace obs. --dev or

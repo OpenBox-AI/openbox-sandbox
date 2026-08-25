@@ -1,4 +1,4 @@
-//! `obs publish` — publish a release directory to GitHub Releases.
+//! `obs-release publish` — publish a release directory to GitHub Releases.
 //!
 //! Single "latest" slot: a floating tag (default `hosted-bin`) always points
 //! at the current release; publishing replaces the previous release and tag,
@@ -19,7 +19,7 @@ const DEFAULT_TAG: &str = "hosted-bin";
 const REPO: &str = "OpenBox-AI/openbox-sandbox";
 const PUBLISH_ACCOUNT: &str = "salamisandwich77";
 
-/// `obs publish <release-dir> [tag]`
+/// `obs-release publish <release-dir> [tag]`
 pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     banner_publish();
     let tag = if tag.is_empty() { DEFAULT_TAG } else { tag };
@@ -28,11 +28,11 @@ pub fn run(release_dir: &str, tag: &str) -> ExitCode {
     let gh = std::env::var_os("GH")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("gh"));
-    if !Command::new(&gh)
+    if Command::new(&gh)
         .arg("--version")
         .stdout(Stdio::null())
         .status()
-        .is_ok()
+        .is_err()
     {
         err("gh CLI is required (https://cli.github.com)");
         return ExitCode::FAILURE;
@@ -291,21 +291,16 @@ Pinned components:
 
 Platforms: linux x86_64, linux aarch64, macOS arm64
 
-Assets: per-platform obs, openbox-sandbox, openbox-sandbox-verify and the
-OpenShell bundle tarball, plus the sandbox policy, SHA256SUMS, SPDX +
-CycloneDX SBOMs and keyless cosign bundles.
+Assets: per-platform obs and openbox-sandbox binaries, the OpenShell bundle
+tarball, the sandbox policy templates, and SHA256SUMS.
 
 Verification:
 ```
 sha256sum -c SHA256SUMS
-cosign verify-blob --bundle <asset>.spdx.json.sbom.bundle.json \
-  --certificate-identity-regexp 'https://github.com/{repo}' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com <asset>.spdx.json
 ```
 
 Consumption: obs provision with OPENBOX_OPENSHELL_BUNDLE_URL (see packaging/launcher/README.md).",
-        version = tag.trim_start_matches('v'),
-        repo = REPO
+        version = tag.trim_start_matches('v')
     )
 }
 

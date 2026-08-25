@@ -1,0 +1,12 @@
+[package]
+name = "openbox-release"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Maintainer-only release tooling. Not shipped to sandbox users."
+
+[[bin]]
+name = "obs-release"
+path = "src/main.rs"
+
+[workspace]
