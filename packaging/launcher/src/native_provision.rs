@@ -484,12 +484,10 @@ fn stop_service(settings: &Settings) -> Result<(), String> {
             let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
         }
     }
-    fs::remove_file(&settings.service_pid_file).map_err(|error| {
-        format!(
-            "cannot remove {}: {error}",
-            settings.service_pid_file.display()
-        )
-    })
+    // Tolerate a PID file that has already gone: teardown races with a
+    // service that exited on its own, and failing here aborts a provision
+    // over a file that is absent precisely because the work is done.
+    remove_file_if_present(&settings.service_pid_file)
 }
 
 fn parse_pid_file(body: &str) -> Result<u32, String> {
