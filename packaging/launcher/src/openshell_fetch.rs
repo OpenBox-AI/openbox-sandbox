@@ -25,10 +25,10 @@ pub fn fetch(out: &Path, version: &str) -> Result<(), String> {
     )?;
     let triple = detect_triple()?;
     let base = format!("https://github.com/NVIDIA/OpenShell/releases/download/v{version}");
-    println!(
-        "==> fetching OpenShell v{version} for {triple} into {}",
+    crate::info(&format!(
+        "fetching OpenShell v{version} for {triple} into {}",
         out.display()
-    );
+    ));
     fs::create_dir_all(out.join("bin"))
         .and_then(|()| fs::create_dir_all(out.join("libexec")))
         .map_err(|error| format!("cannot create bundle {}: {error}", out.display()))?;
@@ -38,14 +38,13 @@ pub fn fetch(out: &Path, version: &str) -> Result<(), String> {
     let _ = fs::remove_dir_all(&work);
     result?;
 
-    println!();
-    println!("==> bundle ready: {}", out.display());
-    println!("    gateway : {}/bin/openshell-gateway", out.display());
-    println!(
-        "    driver  : {}/libexec/openshell-driver-vm",
+    crate::ok(&format!("OpenShell bundle ready: {}", out.display()));
+    crate::info(&format!("gateway: {}/bin/openshell-gateway", out.display()));
+    crate::info(&format!(
+        "driver:  {}/libexec/openshell-driver-vm",
         out.display()
-    );
-    println!("    cli     : {}/bin/openshell", out.display());
+    ));
+    crate::info(&format!("cli:     {}/bin/openshell", out.display()));
     Ok(())
 }
 
@@ -145,7 +144,7 @@ fn detect_triple() -> Result<String, String> {
 fn verify_and_extract(work: &Path, base: &str, asset: &Asset<'_>) -> Result<(), String> {
     let expected = checksum_for(base, &asset.name, asset.checksum_file, asset.fallback)?;
     let destination = work.join(&asset.name);
-    println!("  downloading {}", asset.name);
+    crate::info(&format!("downloading {}", asset.name));
     curl_download(&format!("{base}/{}", asset.name), &destination)?;
     verify_download_checksum(&destination, &expected).map_err(|found| {
         format!(
@@ -153,10 +152,11 @@ fn verify_and_extract(work: &Path, base: &str, asset: &Asset<'_>) -> Result<(), 
             asset.name, expected, found
         )
     })?;
-    println!(
-        "  sha256 verified ({}…)",
+    crate::ok(&format!(
+        "{} verified (sha256 {}…)",
+        asset.name,
         &expected[..expected.len().min(12)]
-    );
+    ));
     let status = Command::new("tar")
         .args([
             OsStr::new("-xzf"),
@@ -240,10 +240,10 @@ fn curl_download(url: &str, destination: &Path) -> Result<(), String> {
 
 fn place(work: &Path, name: &str, destination: &Path) -> Result<(), String> {
     let Some(source) = find_named_file(work, name)? else {
-        eprintln!(
-            "warning: {name} not found in extracted tarballs; {} will be absent",
+        crate::warn(&format!(
+            "{name} not found in extracted tarballs; {} will be absent",
             destination.display()
-        );
+        ));
         return Ok(());
     };
     fs::copy(&source, destination).map_err(|error| {
@@ -254,7 +254,7 @@ fn place(work: &Path, name: &str, destination: &Path) -> Result<(), String> {
         )
     })?;
     chmod(destination, 0o755)?;
-    println!("  placed {name} -> {}", destination.display());
+    crate::info(&format!("placed {name} -> {}", destination.display()));
     Ok(())
 }
 

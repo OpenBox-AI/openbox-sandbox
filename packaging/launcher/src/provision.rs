@@ -69,7 +69,8 @@ fn curl_download(
     let url = format!("https://github.com/{repo}/releases/download/{tag}/{asset}");
     let status = Command::new("curl")
         .current_dir(cwd)
-        .args(["-fL", "--retry", "3", "-o"])
+        // -sS: no progress meter in structured output, but errors still shown.
+        .args(["-fsSL", "--retry", "3", "-o"])
         .arg(destination)
         .arg(&url)
         .stdout(Stdio::inherit())
@@ -80,6 +81,24 @@ fn curl_download(
         Ok(())
     } else {
         Err(format!("curl exited {status} while downloading {url}"))
+    }
+}
+
+/// A file's size, rendered for a progress line.
+///
+/// Downloads are silent now, so the size is reported once the file is on disk
+/// rather than through a progress meter that broke up the structured output.
+fn human_size(path: &Path) -> String {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return "unknown size".to_owned();
+    };
+    let bytes = metadata.len();
+    if bytes >= 1_048_576 {
+        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+    } else if bytes >= 1024 {
+        format!("{:.1} kB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
     }
 }
 
@@ -181,7 +200,10 @@ fn download_openbox_asset(cwd: &Path, tag: &str, asset: &str, destination: &Path
     };
     match file_digest(destination) {
         Some(actual) if actual == expected => {
-            ok(&format!("{asset} verified against {tag} SHA256SUMS"));
+            ok(&format!(
+                "{asset} verified against {tag} SHA256SUMS ({})",
+                human_size(destination)
+            ));
             true
         }
         Some(actual) => {
@@ -765,6 +787,13 @@ pub fn run_provision(
         err("OPENBOX_PROVIDER must be native or openshell");
         return ExitCode::FAILURE;
     }
+    // Asset resolution ran before any phase banner, so the first thing an
+    // operator saw was unlabelled download chatter. Both providers now open
+    // with the same phase.
+    banner_phase("ASSETS");
+    info(&format!(
+        "provider={provider}; every asset is verified against the release manifest"
+    ));
     let fetched = if provider == "native" {
         auto_fetch_native_assets()
     } else {

@@ -173,7 +173,6 @@ fn run_inner(
         "release line: {} (the launcher passes the binary's channel; --dev/--base override)",
         settings.release_line
     ));
-    eprintln!("openbox-sandbox local stack");
     info(&format!("state:  {}", settings.state_root.display()));
     info(&format!("config: {}", settings.config_root.display()));
 
@@ -206,7 +205,7 @@ fn run_inner(
         prepare_dev_image(settings)?;
     }
 
-    info("Teardown (always)");
+    info("teardown (always)");
     stop_zot(settings)?;
     stop_pid_file(
         &settings.sandbox_pid_file,
@@ -1254,7 +1253,7 @@ fn stop_zot(settings: &Settings) -> Result<(), String> {
 }
 
 fn state_clean(settings: &Settings, options: Options) -> Result<(), String> {
-    info("Removing launcher state");
+    info("removing launcher state");
     remove_tree(&settings.state_root)?;
     remove_tree(&settings.config_root)?;
     remove_tree(&settings.gateway_meta_dir)?;
@@ -1330,7 +1329,7 @@ fn platform_preflight(settings: &Settings) -> Result<(), String> {
         if !glibc {
             return Err("glibc 2.28+ is required — this system appears to be musl-based (Alpine or similar), which the release binaries do not support".to_owned());
         }
-        info("Linux pre-flight ok (/dev/kvm readable, glibc present)");
+        info("linux pre-flight ok (/dev/kvm readable, glibc present)");
     }
     #[cfg(target_os = "macos")]
     {
@@ -1353,19 +1352,25 @@ fn platform_preflight(settings: &Settings) -> Result<(), String> {
                 "developer mode is disabled — run: sudo DevToolsSecurity -enable".to_owned(),
             );
         }
-        info("Codesigning openshell-driver-vm with Hypervisor entitlement");
+        info("codesigning openshell-driver-vm with the hypervisor entitlement");
         create_private_dir(&settings.state_root)?;
         let entitlements = settings.state_root.join("driver-vm.entitlements.plist");
         write_private(&entitlements, ENTITLEMENTS.as_bytes())?;
-        let status = Command::new("codesign")
+        // Captured, not inherited: codesign reports "replacing existing
+        // signature" on every run, which is noise until it fails.
+        let signed = Command::new("codesign")
             .args(["--entitlements"])
             .arg(&entitlements)
             .args(["--force", "-s", "-"])
             .arg(&settings.driver_bin)
-            .status()
+            .output()
             .map_err(|error| format!("cannot run codesign: {error}"))?;
+        let status = signed.status;
         if !status.success() {
-            err("codesign failed (see above) — the Hypervisor entitlement requires Xcode Command Line Tools and developer mode");
+            for line in String::from_utf8_lossy(&signed.stderr).lines() {
+                err(line);
+            }
+            err("codesign failed — the hypervisor entitlement requires Xcode Command Line Tools and developer mode");
             info("run: xcode-select --install");
             info("then: DevToolsSecurity -enable");
             return Err("cannot sign the VM driver without developer tools".to_owned());
@@ -1498,12 +1503,13 @@ fn start_registry(settings: &mut Settings) -> Result<Option<u32>, String> {
 fn trust_registry_ca(settings: &Settings, cert: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
+        // Captured: verify-cert prints a full trust report either way.
         let verified = Command::new("security")
             .args(["verify-cert", "-c"])
             .arg(cert)
             .args(["-p", "ssl"])
-            .status()
-            .is_ok_and(|status| status.success());
+            .output()
+            .is_ok_and(|output| output.status.success());
         let login = settings.home.join("Library/Keychains/login.keychain-db");
         let login_added = verified
             || Command::new("security")
@@ -1579,7 +1585,7 @@ fn parse_manifest_digest(headers: &[u8]) -> Option<String> {
 
 fn generate_gateway_pki(settings: &Settings) -> Result<(), String> {
     info(&format!(
-        "Generating local PKI into {}",
+        "generating local PKI into {}",
         settings.tls_dir.display()
     ));
     create_private_dir(&settings.tls_dir)?;
@@ -1783,7 +1789,7 @@ fn write_gateway_files(settings: &mut Settings) -> Result<(), String> {
 
 fn start_gateway(settings: &Settings) -> Result<(), String> {
     info(&format!(
-        "Starting gateway on https://127.0.0.1:{}",
+        "starting gateway on https://127.0.0.1:{}",
         settings.gateway_port
     ));
     let log = create_log(&settings.gateway_log)?;
@@ -1858,7 +1864,7 @@ fn start_gateway(settings: &Settings) -> Result<(), String> {
 }
 
 fn generate_service_pki(settings: &mut Settings) -> Result<(), String> {
-    info("Generating runtime-caller mTLS pair");
+    info("generating runtime-caller mTLS pair");
     create_private_dir(&settings.sandbox_tls_dir)?;
     let client_key = settings.sandbox_tls_dir.join("client.key");
     let client_csr = settings.sandbox_tls_dir.join("client.csr");
@@ -2012,7 +2018,7 @@ fn write_service_config(settings: &Settings) -> Result<(), String> {
     ok(&format!("adapter sha:        {adapter_sha}"));
     ok(&format!("policy sha:         {policy_sha}"));
     info(&format!(
-        "Writing sandbox service config -> {}",
+        "writing sandbox service config -> {}",
         settings.service_config.display()
     ));
     create_private_dir(&settings.sandbox_state_dir)?;
@@ -2048,7 +2054,7 @@ fn write_service_config(settings: &Settings) -> Result<(), String> {
 
 fn start_service(settings: &Settings) -> Result<(), String> {
     info(&format!(
-        "Starting sandbox service on 127.0.0.1:{}",
+        "starting sandbox service on 127.0.0.1:{}",
         settings.sandbox_port
     ));
     let log = create_log(&settings.service_log)?;
@@ -2102,7 +2108,7 @@ fn start_service(settings: &Settings) -> Result<(), String> {
 
 fn write_agent_env(settings: &Settings) -> Result<(), String> {
     info(&format!(
-        "Emitting agent env -> {}",
+        "emitting agent env -> {}",
         settings.agent_env.display()
     ));
     let adapter_sha = sha256_file(&settings.sandbox_bin)?;
@@ -2779,7 +2785,7 @@ fn print_log_tail(path: &Path, count: usize) {
 
 fn curl_retry3(url: &str, destination: &Path) -> Result<(), String> {
     let status = Command::new("curl")
-        .args(["-fL", "--retry", "3", "-o"])
+        .args(["-fsSL", "--retry", "3", "-o"])
         .arg(destination)
         .arg(url)
         .stdout(Stdio::null())

@@ -81,7 +81,7 @@ pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
         crate::info(&format!("downloading {pattern}"));
         let url = format!("https://github.com/{repo}/releases/download/{release}/{pattern}");
         let status = Command::new("curl")
-            .args(["-fL", "--retry", "3", "-o", pattern])
+            .args(["-fsSL", "--retry", "3", "-o", pattern])
             .arg(url)
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
