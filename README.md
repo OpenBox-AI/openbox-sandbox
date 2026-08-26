@@ -6,8 +6,6 @@ reaches it over mutual TLS on the loopback interface only.
 The service does one job. It never calls a governance service. It never reads a
 verdict. It never runs a command on the host.
 
----
-
 ## Quick start
 
 These steps are for macOS on Apple Silicon. On Linux x86_64, install the
@@ -22,8 +20,8 @@ curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1
 
 **2. Check the file, then rename it.**
 
-Check the file before you rename it. The manifest lists the release filename.
-The check fails after you rename the file.
+The manifest lists the release filename, so the check fails after you rename
+the file. Check first.
 
 ```bash
 shasum -a 256 -c SHA256SUMS 2>/dev/null | grep obs-darwin-arm64
@@ -73,8 +71,7 @@ Two flags change this behavior.
 | `native` (default) | Seatbelt on macOS, bubblewrap on Linux | Needs no container runtime. Provisioning compiles the profile, pins its SHA-256, and checks it before every execution. |
 | `openshell` | libkrun microVM | Adds a guest kernel boundary. Needs a hypervisor and a prepared image cache. |
 
-You select the provider. The launcher never changes it for you. A failure stops
-the run.
+You select the provider. The launcher never falls back to the other one.
 
 ## What provisioning does
 
@@ -83,13 +80,13 @@ the run.
 3. Starts the service and runs one smoke execution.
 4. Writes `~/.config/openbox-sandbox/agent.env`.
 
-`agent.env` holds the whole boundary contract for an SDK client. The service
-checks the pinned profile before every execution.
+`agent.env` holds the whole boundary contract for an SDK client. Load it in the
+process that talks to the sandbox. The service checks the pinned profile before
+every execution.
 
-Both providers check every asset against the manifest of the release. This
-applies to a file the launcher downloads now and to a file that already sits on
-disk. The launcher deletes a file that does not match, then fetches it again. No flag and no
-environment variable turns this check off.
+That check covers a file the launcher downloads now and a file that already
+sits on disk. The launcher deletes a file that does not match, then fetches it
+again. No flag and no environment variable turns this check off.
 
 A source checkout builds the service that it runs. Everywhere else, the release
 asset must match. Check `obs` yourself, as step 2 shows, because a launcher
