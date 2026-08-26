@@ -156,8 +156,6 @@ cargo clippy --manifest-path packaging/release/Cargo.toml --all-targets -- -D wa
 cargo test --manifest-path packaging/release/Cargo.toml
 ```
 
-`cargo test` also runs the repository language gate.
-
 ### Build a release
 
 Remap the paths of the build machine. A release artifact must not name the home
