@@ -270,8 +270,27 @@ OPENBOX_PROVIDER=native\n",
     info(&format!("agent env: {}", settings.agent_env.display()));
 
     if let Some(mut child) = foreground {
-        info("service is running in this terminal; press Ctrl-C to stop it");
+        // A foreground service is silent until it handles a request, so the
+        // terminal looks like it hung. Say plainly that this is the running
+        // state, and prove it by re-checking the port rather than asserting it.
+        let live = port_listening(&settings.sandbox_port);
+        crate::step("RUNNING");
+        if live {
+            ok(&format!(
+                "accepting mTLS connections on 127.0.0.1:{} (pid {})",
+                settings.sandbox_port,
+                child.id()
+            ));
+        } else {
+            crate::warn(&format!(
+                "port 127.0.0.1:{} is not accepting connections",
+                settings.sandbox_port
+            ));
+        }
+        info("this terminal is now the service; it stays here until you stop it");
+        info("press Ctrl-C to stop and drain work in flight");
         info("run the agent from another shell, or re-run with --detach");
+        info("service output appears below as requests arrive");
         // Ctrl-C reaches the child through the process group. The service
         // drains and exits on SIGINT, so waiting here is the graceful path.
         let status = child
