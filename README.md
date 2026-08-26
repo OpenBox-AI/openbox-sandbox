@@ -6,8 +6,6 @@ reaches it over mutual TLS on the loopback interface only.
 The service does one job. It never calls a governance service. It never reads a
 verdict. It never runs a command on the host.
 
-Integration PoC/showcase material belongs exclusively to the separate `OpenBox-AI/openbox-sandbox-poc` repository and is not a dependency.
-
 ---
 
 ## Quick start

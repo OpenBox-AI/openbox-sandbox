@@ -19,23 +19,9 @@ const SKIPPED_EXTENSIONS: &[&str] = &[
     "dylib", "wasm",
 ];
 
-/// The one sentence allowed to name the separate showcase repository.
-fn allowed_boundary() -> String {
-    format!(
-        "Integration {short}/showcase material belongs exclusively to the separate \
-         `OpenBox-AI/openbox-sandbox-{lower}` repository and is not a dependency.",
-        short = short_term_mixed(),
-        lower = short_term(),
-    )
-}
-
 /// `p` + `o` + `c`, never written literally.
 fn short_term() -> String {
     ['p', 'o', 'c'].iter().collect()
-}
-
-fn short_term_mixed() -> String {
-    ['P', 'o', 'C'].iter().collect()
 }
 
 /// The long spelling, in the three separator forms the old pattern accepted.
@@ -127,7 +113,6 @@ fn repository_root() -> PathBuf {
 #[test]
 fn the_repository_avoids_the_forbidden_terms() {
     let root = repository_root();
-    let readme = root.join("README.md");
     let mut files = Vec::new();
     collect(&root, &mut files);
 
@@ -138,11 +123,6 @@ fn the_repository_avoids_the_forbidden_terms() {
         };
         for (number, line) in body.lines().enumerate() {
             if !violations(line) {
-                continue;
-            }
-            // The README carries exactly one sentence naming the separate
-            // showcase repository. Nothing else may.
-            if path == readme && line.trim() == allowed_boundary() {
                 continue;
             }
             findings.push(format!(
@@ -156,14 +136,5 @@ fn the_repository_avoids_the_forbidden_terms() {
         findings.is_empty(),
         "forbidden repository language at: {}",
         findings.join(", ")
-    );
-}
-
-#[test]
-fn the_readme_keeps_the_boundary_sentence() {
-    let readme = fs::read_to_string(repository_root().join("README.md")).expect("README.md");
-    assert!(
-        readme.contains(&allowed_boundary()),
-        "the README must state the showcase repository boundary"
     );
 }
