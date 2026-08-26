@@ -10,6 +10,7 @@
 //! the dev host. Shells out to `gh` and `sha256sum`; the launcher stays
 //! dependency-free.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
@@ -425,13 +426,47 @@ fn manifest_covers_payload(dir: &Path, sums: &Path) -> Result<(), String> {
 }
 
 fn notes_markdown(tag: &str, assets: &[String]) -> String {
-    let mut listed: Vec<&String> = assets.iter().collect();
-    listed.sort();
-    let asset_lines = listed
-        .iter()
-        .map(|name| format!("- `{name}`"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    // Group the payload by purpose. A flat list of thirteen filenames tells a
+    // reader nothing about which one to download. Anything unrecognised lands
+    // in its own row rather than being dropped, so the table always accounts
+    // for every asset.
+    let mut launcher = Vec::new();
+    let mut service = Vec::new();
+    let mut policy = Vec::new();
+    let mut images = Vec::new();
+    let mut manifest = Vec::new();
+    let mut other = Vec::new();
+    let mut sorted: Vec<&String> = assets.iter().collect();
+    sorted.sort();
+    for name in sorted {
+        let bucket = if name == "SHA256SUMS" {
+            &mut manifest
+        } else if name.starts_with("obs-") {
+            &mut launcher
+        } else if name.starts_with("policy-") {
+            &mut policy
+        } else if name.ends_with(".tar.gz") {
+            &mut images
+        } else if name.starts_with("openbox-sandbox-") {
+            &mut service
+        } else {
+            &mut other
+        };
+        bucket.push(format!("`{name}`"));
+    }
+    let mut rows = String::new();
+    for (label, files) in [
+        ("Launcher", &launcher),
+        ("Service", &service),
+        ("Policy templates", &policy),
+        ("OpenShell images (optional)", &images),
+        ("Manifest", &manifest),
+        ("Other", &other),
+    ] {
+        if !files.is_empty() {
+            let _ = writeln!(rows, "| {label} | {} |", files.join("<br>"));
+        }
+    }
     let platforms = {
         let mac = assets.iter().any(|name| name.contains("darwin-arm64"));
         let linux = assets.iter().any(|name| name.contains("linux-x86_64"));
@@ -442,37 +477,44 @@ fn notes_markdown(tag: &str, assets: &[String]) -> String {
             (false, false) => "none detected",
         }
     };
+    let version = tag.trim_start_matches('v');
     format!(
         "## OpenBox Sandbox {version}
 
-Runs one authorized command inside an isolated sandbox, behind a loopback-only
-TLS 1.3 mTLS service.
+Runs one authorized command in an isolated sandbox, behind a loopback-only mTLS
+service.
 
-Platforms: {platforms}
+**Platforms:** {platforms} · **OpenShell:** locked release 0.0.88, sha256-verified
 
-Pinned components:
-- `openbox-sandbox` service and `obs` launcher: built from this tag
-- OpenShell: locked release **0.0.88**, sha256-verified
+### Start
 
-Assets:
-{asset_lines}
-
-Verify before use:
-```
-sha256sum -c SHA256SUMS
+```bash
+curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/{tag}/obs-darwin-arm64
+curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/{tag}/SHA256SUMS
+shasum -a 256 -c SHA256SUMS 2>/dev/null | grep obs-darwin-arm64
+chmod +x obs-darwin-arm64 && mv obs-darwin-arm64 obs
+./obs provision
 ```
 
-Use:
-```
-chmod +x obs
-./obs provision            # service runs in this terminal; Ctrl-C drains and stops it
-./obs provision --detach   # background, in its own process group
-./obs provision --systemd  # Linux: supervised by systemd, restarts on failure
-```
+Check the file before you rename it. On Linux, use `obs-linux-x86_64` and
+`sha256sum -c SHA256SUMS`.
 
-Provisioning writes `~/.config/openbox-sandbox/agent.env`, which is the whole
-boundary contract an SDK client needs.",
-        version = tag.trim_start_matches('v')
+### Run modes
+
+| Command | Behavior |
+|---|---|
+| `obs provision` | Runs in this terminal. Ctrl-C drains, then stops it. |
+| `obs provision --detach` | Runs in the background, in its own process group. |
+| `obs provision --systemd` | Linux only. systemd restarts it after a failure. |
+
+Provisioning writes `~/.config/openbox-sandbox/agent.env`, the boundary contract
+for an SDK client.
+
+### Assets
+
+| Purpose | Files |
+|---|---|
+{rows}"
     )
 }
 
