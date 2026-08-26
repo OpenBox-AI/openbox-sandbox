@@ -465,9 +465,9 @@ sha256sum -c SHA256SUMS
 Use:
 ```
 chmod +x obs
-./obs provision --yes            # service runs here; Ctrl-C drains and stops it
-./obs provision --yes --detach   # background, own process group
-./obs provision --yes --systemd  # Linux: supervised, restarts on failure
+./obs provision            # service runs in this terminal; Ctrl-C drains and stops it
+./obs provision --detach   # background, in its own process group
+./obs provision --systemd  # Linux: supervised by systemd, restarts on failure
 ```
 
 Provisioning writes `~/.config/openbox-sandbox/agent.env`, which is the whole
