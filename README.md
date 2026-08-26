@@ -1,8 +1,10 @@
 # OpenBox Sandbox
 
-Runs one authorized command inside an isolated sandbox, behind a loopback-only
-TLS 1.3 mTLS service. The service is provider-only: it never calls governance
-services, interprets verdicts, or executes commands on the host.
+OpenBox Sandbox runs one authorized command in an isolated sandbox. A client
+reaches it over mutual TLS on the loopback interface only.
+
+The service does one job. It never calls a governance service. It never reads a
+verdict. It never runs a command on the host.
 
 Integration PoC/showcase material belongs exclusively to the separate `OpenBox-AI/openbox-sandbox-poc` repository and is not a dependency.
 
@@ -10,140 +12,161 @@ Integration PoC/showcase material belongs exclusively to the separate `OpenBox-A
 
 ## Quick start
 
-macOS on Apple Silicon. For Linux x86_64, install the `bubblewrap` package and
-download `obs-linux-x86_64` instead.
+These steps are for macOS on Apple Silicon. On Linux x86_64, install the
+`bubblewrap` package first, then download `obs-linux-x86_64` instead.
 
-```sh
-# 1. Download the launcher and the manifest
+**1. Download the launcher and the manifest.**
+
+```bash
 curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1.0-dev/obs-darwin-arm64
 curl -fL -O https://github.com/OpenBox-AI/openbox-sandbox/releases/download/v0.1.0-dev/SHA256SUMS
+```
 
-# 2. Verify, then rename
+**2. Check the file, then rename it.**
+
+Check the file before you rename it. The manifest lists the release filename.
+The check fails after you rename the file.
+
+```bash
 shasum -a 256 -c SHA256SUMS 2>/dev/null | grep obs-darwin-arm64
-chmod +x obs-darwin-arm64 && mv obs-darwin-arm64 obs
+chmod +x obs-darwin-arm64
+mv obs-darwin-arm64 obs
+```
 
-# 3. Provision
+The command shows one line, because you downloaded one file. Every other asset
+in the manifest reports `FAILED open or read`. Ignore those lines.
+
+This check finds a corrupt download. It also finds assets that came from two
+different releases. It does not prove who built the file, because the manifest
+comes from the same release.
+
+**3. Provision the stack.**
+
+```bash
 ./obs provision
 ```
 
-Verify **before** renaming: the manifest lists the release filename, so the
-check only works while the file still has it. Assets you did not download report
-`FAILED open or read`, which is why the check is filtered to the one line that
-matters.
-
-That check detects a corrupt download or assets mixed between releases. It is
-not proof of authorship, because the manifest ships from the same release.
-
 ## Commands
 
-| Command | Does |
+| Command | Result |
 |---|---|
-| `obs provision` | Compile the policy, start the service, write `agent.env` |
-| `obs status` | Report readiness |
-| `obs verify` | Prove a live create → exec → delete over mTLS |
-| `obs uninstall` | Remove everything it created |
-| `obs update` | Replace `obs` itself from a release |
+| `obs provision` | Compiles the policy, starts the service, writes `agent.env` |
+| `obs status` | Reports what is ready |
+| `obs verify` | Proves a live create, exec, and delete over mutual TLS |
+| `obs uninstall` | Removes everything the launcher created |
+| `obs update` | Replaces `obs` from a release |
 
 ## How the service runs
 
-By default the service runs in your terminal, and Ctrl-C stops it after draining
-work in flight. Two flags change that:
+The service runs in your terminal. Press Ctrl-C to stop it. The service first
+drains the work in flight, then exits.
 
-| Flag | Effect |
+Two flags change this behavior.
+
+| Flag | Result |
 |---|---|
-| `--detach` | Background, with a PID file, in its own process group, so a closing terminal cannot kill it. |
-| `--systemd` | Linux only. Write a systemd unit and enable it, so the service restarts on failure. Root installs a system unit, any other user a user unit. |
+| `--detach` | Runs the service in the background with a PID file. The service gets its own process group, so it survives when you close the terminal. |
+| `--systemd` | Linux only. Writes a systemd unit and enables it, so systemd restarts the service after a failure. Root gets a system unit. Any other user gets a user unit. |
 
 ## Providers
 
 | Provider | Isolation | Notes |
 |---|---|---|
-| `native` (default) | Seatbelt on macOS, bubblewrap on Linux | No container runtime. The profile is compiled at provisioning, SHA-256 pinned, and verified before every execution. |
-| `openshell` | libkrun microVM | Guest-kernel boundary. Needs a hypervisor and a prepared image cache. |
+| `native` (default) | Seatbelt on macOS, bubblewrap on Linux | Needs no container runtime. Provisioning compiles the profile, pins its SHA-256, and checks it before every execution. |
+| `openshell` | libkrun microVM | Adds a guest kernel boundary. Needs a hypervisor and a prepared image cache. |
 
-Selection is explicit and fails closed. There is no fallback.
+You select the provider. The launcher never changes it for you. A failure stops
+the run.
 
 ## What provisioning does
 
-1. Resolves every asset and checks it against that release's `SHA256SUMS`.
+1. Resolves each asset and checks it against the `SHA256SUMS` of the release.
 2. Compiles the policy into a profile and pins its SHA-256 in `service.json`.
-3. Starts the mTLS service and runs one smoke execution.
-4. Writes `~/.config/openbox-sandbox/agent.env`, the entire boundary contract
-   for an SDK client.
+3. Starts the service and runs one smoke execution.
+4. Writes `~/.config/openbox-sandbox/agent.env`.
 
-The pinned profile is verified before every execution.
+`agent.env` holds the whole boundary contract for an SDK client. The service
+checks the pinned profile before every execution.
 
-Asset verification covers files that were already on disk as well as fresh
-downloads, and a mismatch is re-fetched. No flag or environment variable
-switches it off. A source checkout builds the service it runs; everywhere else
-the release asset must match. Verify `obs` itself as shown above, because a
-launcher cannot vouch for itself.
+Both providers check every asset against the manifest of the release. This
+applies to a file the launcher downloads now and to a file that already sits on
+disk. The launcher deletes a file that does not match, then fetches it again. No flag and no
+environment variable turns this check off.
+
+A source checkout builds the service that it runs. Everywhere else, the release
+asset must match. Check `obs` yourself, as step 2 shows, because a launcher
+cannot vouch for itself.
 
 ## Lifecycle and policy
 
-`create → ready → exec → delete → terminal absence`, with durable ownership and
-restart reconciliation. Output is bounded and failures are conservative.
+A sandbox moves through five states: create, ready, exec, delete, and terminal
+absence. The service owns this lifecycle across a restart. Output has a fixed
+limit. A failure stops the run.
 
-**Filesystem.** Writable paths are exactly `[/sandbox]`. Every non-empty network
-policy declares `/tmp` read-only once, with no network middleware, so the proxy
-baseline cannot widen it.
+### Filesystem
 
-**Network.** A network-enabled policy starts an execution-scoped HTTP proxy on
-an ephemeral loopback port. The command environment is cleared, then
-`HTTP_PROXY` and its variants are set. The proxy resolves DNS outside the
-sandbox and refuses any host the pinned policy does not list.
+A command writes to `/sandbox` and to nothing else. Each network policy declares
+`/tmp` as read only, one time. No network middleware runs, so the proxy cannot
+widen that rule.
 
-- On macOS, Seatbelt permits only that port, so a direct socket has no path out.
-- On Linux, a shared network namespace cannot be filtered by address. Use a
-  deny-network policy, or `openshell`, where that matters.
+### Network
 
-**Evidence.** Results carry typed `sandbox_evidence`: every proxy request with
-its allowed or denied decision, host, and port. On macOS the service also
-reports violation counts and categories from the unified log.
+A network policy starts one HTTP proxy for each execution, on a loopback port
+that the service picks at runtime. The service clears the command environment.
+It then sets `HTTP_PROXY` and the related variables.
+
+The proxy resolves DNS outside the sandbox. It refuses every host that the
+pinned policy does not list.
+
+- On macOS, Seatbelt opens that one port. A direct socket has no route out.
+- On Linux, bubblewrap shares the network namespace and cannot filter by
+  address. Use a deny-network policy, or use `openshell`.
+
+### Evidence
+
+A result carries typed `sandbox_evidence`. The evidence names each proxy
+request, its host, its port, and the decision to allow it or to deny it. On
+macOS the service also reports violation counts and categories from the unified
+log.
 
 ## Layout
 
-| Path | Is |
+| Path | Contents |
 |---|---|
-| `openbox-sandbox` (root) | The mTLS sandbox service |
-| `packaging/launcher` → `obs` | The operator and developer launcher |
-| `packaging/release` → `obs-release` | Maintainer-only release tooling, never published as a release asset |
-| OpenShell | External gateway and driver runtime, pinned but not maintained here |
+| `openbox-sandbox` (root) | The sandbox service |
+| `packaging/launcher` | `obs`, the launcher for operators and developers |
+| `packaging/release` | `obs-release`, the release tool for maintainers only. No release carries it. |
+| OpenShell | The external gateway and driver runtime. Pinned here, maintained elsewhere. |
 
-The repository contains no shell scripts. Everything the launcher does is Rust.
+This repository contains no shell scripts. The launcher does everything in Rust.
 
 ## Development
 
-Every gate, in the order CI would run them:
+Run these gates in this order.
 
-```sh
+```bash
 cargo build --release --locked --bin openbox-sandbox
-
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 cargo deny check
-
 cargo fmt --manifest-path packaging/launcher/Cargo.toml -- --check
 cargo clippy --manifest-path packaging/launcher/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path packaging/launcher/Cargo.toml
-
 cargo fmt --manifest-path packaging/release/Cargo.toml -- --check
 cargo clippy --manifest-path packaging/release/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path packaging/release/Cargo.toml
 ```
 
-The repository language gate runs as part of `cargo test`.
+`cargo test` also runs the repository language gate.
 
-### Building a release
+### Build a release
 
-Release binaries are built with the build machine's paths remapped, so no
-artifact carries the builder's home directory:
+Remap the paths of the build machine. A release artifact must not name the home
+directory of the person who built it.
 
-```sh
-export RUSTFLAGS="--remap-path-prefix=$PWD=/openbox-sandbox \
-  --remap-path-prefix=$HOME/.cargo=/cargo \
-  --remap-path-prefix=$HOME/.rustup=/rustup"
+```bash
+export RUSTFLAGS="--remap-path-prefix=$PWD=/openbox-sandbox --remap-path-prefix=$HOME/.cargo=/cargo --remap-path-prefix=$HOME/.rustup=/rustup"
 ```
 
-`obs-release publish` refuses a payload that still contains them.
+`obs-release publish` refuses a payload that still holds those paths.
