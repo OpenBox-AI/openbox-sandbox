@@ -1,44 +1,41 @@
 # `obs` cross-platform launcher
 
-`obs` is the dependency-free operator/developer launcher in
-`packaging/launcher`. It is not the production sandbox service:
+`obs` is the operator and developer launcher in `packaging/launcher`. It is not
+the sandbox service:
 
 - root `openbox-sandbox` binary: mTLS sandbox service and durable lifecycle owner;
-- `obs`: artifact discovery, external gateway launch, and source-checkout local provisioning commands;
-- OpenShell: external gateway/driver runtime, never embedded in either artifact.
+- `obs`: asset resolution, provisioning, and lifecycle commands;
+- OpenShell: external gateway and driver runtime, never embedded in either.
 
-The launcher release keeps the existing download names for compatibility:
-
-- `openbox-sandbox-darwin-arm64`
-- `openbox-sandbox-linux-amd64`
-- `openbox-sandbox-linux-arm64`
-
-Those files contain the `obs` executable. This cross-platform launcher track is
-distinct from the Linux system service, which `obs install` deploys from a
-verified release directory.
+Release assets carrying the launcher are `obs-darwin-arm64` and
+`obs-linux-x86_64`. The service ships beside them as
+`openbox-sandbox-darwin-arm64` and `openbox-sandbox-linux-x86_64`.
 
 ## Build and basic use
 
 ```sh
-cd packaging/launcher
-cargo build --release
-cargo run -- --help
-cargo run -- --dry-run
-cargo run -- --driver vm
+cargo build --release --manifest-path packaging/launcher/Cargo.toml
+packaging/launcher/target/release/obs --help
+packaging/launcher/target/release/obs provision --dry-run
 ```
 
 The launcher resolves an operator-provided OpenShell installation from
-`OPENBOX_BUNDLE_DIR`, well-known prefixes, or `PATH`. OpenShell remains
-external.
+`OPENBOX_BUNDLE_DIR`, well-known prefixes, or `PATH`. OpenShell stays external.
+Bundle acquisition and verification are part of `obs provision`, which manages
+the gateway as a per-user process.
 
-`obs setup` no longer exists: bundle acquisition + verification is part of
-`obs provision` (auto-fetch via `OPENBOX_OPENSHELL_BUNDLE_URL`). The external
-gateway is managed as a per-user process by `obs provision`.
+`obs --verify-runtime` checks local artifact presence, the exact release
+version, and any operator-supplied hashes. It does not connect to a gateway,
+validate mTLS, create a sandbox, or prove execution. There is no way to switch
+those checks off.
 
-`obs --verify-runtime` verifies only local artifact presence, exact release
-version, and any operator-supplied hashes. For development, append
-does **not** connect to a gateway, validate mTLS, create a sandbox, or prove
-execution.
+## Asset verification
+
+Every asset the launcher resolves is checked against the `SHA256SUMS` of the
+release line in use, whether it was just downloaded or already on disk, and a
+mismatch is removed and re-fetched. A source checkout builds the service it
+runs, because no manifest exists for a build that has not happened yet.
+`--sandbox-bin` says where a binary is, not whether to check it.
 
 ## Drivers
 
@@ -54,13 +51,13 @@ is unsupported directly; use WSL2.
 
 ## Version gate
 
-The root service protocol was pinned to OpenShell source commit
-`f169084923503a02a94425857b938de2841cab0c` (`f1690849`). The hosted-bin flow
-locks the released version **0.0.88** instead of building from source; the
-launcher accepts either the `gf1690849` source marker or the locked release, and
-the live verify test proves the wire contract at runtime.
+The service protocol is pinned to OpenShell source commit
+`f169084923503a02a94425857b938de2841cab0c` (`f1690849`). The launcher accepts
+either that source marker or the locked release **0.0.88**, and the live verify
+test proves the wire contract at runtime. Neither the pin nor the hash check can
+be overridden.
 
-For source builds at the exact pin, use:
+For a source build at the exact pin:
 
 ```sh
 cargo build --release --locked --bin openbox-sandbox
@@ -71,69 +68,34 @@ packaging/launcher/target/release/obs verify
 packaging/launcher/target/release/obs uninstall
 ```
 
-For the default `native` provider, provisioning compiles the selected
-release policy into an owner-only Seatbelt/bubblewrap profile and pins its hash.
-Network-enabled profiles cause the service to create an ephemeral localhost
-HTTP(S) proxy for each execution; no proxy port is persisted in launcher or
-service configuration. On macOS the compiled profile admits only that runtime
-port and the service attaches proxy decisions plus unified-log Seatbelt
-violation counts to terminal results. Linux has no unprivileged bubblewrap deny
-log, so violation evidence is omitted; see the root README for the Linux
-address-filter limitation. These changes require no launcher configuration or
-launcher binary update.
+## Native provider
 
-`obs verify` first hashes the exact root service binary recorded in `agent.env`
-and requires it to match the provisioned adapter identity. It then runs the
-actual live proof: client → mTLS root service → external OpenShell gateway →
-create → ready → exec → delete → terminal absence. It needs a provisioned source
-checkout and a working host VM/OpenShell runtime. Teardown signals only
-PID-file processes whose command identity matches the launcher; unrelated port
-listeners and VM drivers are reported and left untouched.
+Provisioning compiles the selected release policy into an owner-only
+Seatbelt or bubblewrap profile and pins its hash. Network-enabled profiles make
+the service create an ephemeral localhost proxy for each execution; no proxy
+port is persisted in launcher or service configuration. On macOS the compiled
+profile admits only that runtime port, and the service attaches proxy decisions
+plus unified-log Seatbelt violation counts to terminal results. Linux has no
+unprivileged bubblewrap deny log, so violation evidence is omitted; see the root
+README for the Linux address-filter limitation.
 
-## Release verification
+## Verify and teardown
 
-Release artifacts are checksummed in `SHA256SUMS`. Verify a downloaded
+`obs verify` first hashes the service binary recorded in `agent.env` and
+requires it to match the provisioned adapter identity. It then runs the live
+proof: client → mTLS service → gateway → create → ready → exec → delete →
+terminal absence. It needs a provisioned source checkout and a working host
+runtime.
+
+Teardown signals only PID-file processes whose command identity matches the
+launcher. Unrelated port listeners and VM drivers are reported and left
+untouched, so a stale listener is refused rather than killed.
+
+## Releases
+
+Release artifacts are checksummed in `SHA256SUMS`; verify a downloaded
 directory with `sha256sum -c SHA256SUMS`. Cutting and publishing a release is
-`obs-release`, a maintainer-only binary in `packaging/release`; it is not part
-of `obs` and is never published as a release asset.
-
-## Hosted-bin (toolchain-free) flow
-
-OpenShell is locked to released version **0.0.88** (NVIDIA's prebuilt
-tarballs, sha256-verified; the released VM driver ships with the supervisor
-embedded) and assembled with our binaries into GitHub release assets.
-Consumers never install a toolchain, never build, and never need the source
-tree:
-
-1. `curl` the release assets (stable URLs once public; versioned tags like
-   `v0.1.0`, and `releases/latest/download/` always points at the current
-   release):
-   `https://github.com/OpenBox-AI/openbox-sandbox/releases/latest/download/<asset>`
-   — obs (single binary with provisioning implemented in Rust), the
-   `openbox-sandbox` service, the prebuilt verify harness, the OpenShell
-   bundle tarball, the sandbox policy, and `SHA256SUMS`.
-2. Verify checksums: `sha256sum -c SHA256SUMS`.
-3. `obs provision` with `OPENBOX_OPENSHELL_BUNDLE_URL=<release base>`
-   (public HTTP; no GitHub account or token), `OPENBOX_SANDBOX_BIN`
-   (absolute), and `OPENBOX_POLICY_FILE` (absolute — the policy is a release
-   asset, not a repo file) auto-fetches + verifies the bundle, starts the
-   stack, and warms the VM driver image cache by default (one create→ready→
-   delete cycle; `OPENBOX_WARM_CACHE=0` skips). The version gate accepts the
-   locked release `0.0.88` or the root-protocol source marker `gf1690849`.
-5. `obs verify` with `OPENBOX_VERIFY_BIN=<prebuilt-harness>` runs the live
-   lifecycle proof without cargo.
-6. `obs uninstall` tears the stack down cleanly. Pass the **same**
-   `OPENBOX_SANDBOX_BIN`/`OPENSHELL_BUNDLE_DIR`/`OPENBOX_POLICY_FILE` env used
-   for provision: the provisioner's teardown safety check compares the running
-   service's command line against the resolved binary path and refuses to
-   signal mismatches.
-
-Publish immutable versioned releases with the manual `hosted-bin release`
-GitHub Actions workflow on `main`. Supply a new semantic version for each run;
-the workflow rejects existing release tags, verifies checksums, creates and
-validates a draft, then publishes it. If a run fails after creating its draft,
-delete that unpublished draft before retrying the same version.
-
-`mise` and the `gh` CLI are **not** required anywhere in this flow: the
-OpenShell `tasks/scripts/vm/*` build scripts run directly, and the vm-runtime
-tarball is publicly downloadable with `curl`.
+`obs-release`, a maintainer-only binary in `packaging/release`. It is not part
+of `obs` and is never published as a release asset. It refuses to publish a
+payload whose manifest does not cover every file, whose binaries embed the
+build machine's paths, or that contains credential material.
