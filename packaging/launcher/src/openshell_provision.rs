@@ -300,7 +300,7 @@ impl Settings {
             .ok()
             .and_then(|path| path.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| cwd.clone());
-        let release_line = env_or("OPENBOX_RELEASE_LINE", "base");
+        let release_line = env_or("OPENBOX_RELEASE_LINE", crate::channel());
         let project_root =
             nonempty_env_path("OPENBOX_PROJECT_ROOT").unwrap_or_else(default_project_root);
         let bundle_dir = resolve_bundle_dir(&cwd, &project_root)?;

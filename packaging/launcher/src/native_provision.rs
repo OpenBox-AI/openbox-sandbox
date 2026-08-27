@@ -441,7 +441,7 @@ fn policy_defaults(release_line: &str) -> (&'static str, &'static str) {
 }
 
 fn select_policy(cwd: &Path, project_root: &Path) -> (PathBuf, String) {
-    let release_line = env_or("OPENBOX_RELEASE_LINE", "base");
+    let release_line = env_or("OPENBOX_RELEASE_LINE", crate::channel());
     let (template, default_id) = policy_defaults(&release_line);
     let policy_file = nonempty_env_path("OPENBOX_POLICY_FILE").unwrap_or_else(|| {
         let local = cwd.join(template);
