@@ -701,10 +701,13 @@ fn verify_asset(path: &Path, name: &str, settings: &mut Settings) -> Result<(), 
     }
     let expected = published_checksum(name, settings)?;
     let Some(expected) = expected else {
-        warn(&format!(
-            "no published checksum for {name} — using local copy"
+        // The manifest is the root of trust. Without a published checksum the
+        // file cannot be proven to be the release asset, so accepting it would
+        // recreate the silent skip-hash bypass. Fail closed instead: the
+        // operator re-runs once the manifest is reachable.
+        return Err(format!(
+            "{name}: no published checksum available (SHA256SUMS unreachable) — refusing to use an unverified copy"
         ));
-        return Ok(());
     };
     let actual = sha256_file(path)?;
     if actual == expected {
