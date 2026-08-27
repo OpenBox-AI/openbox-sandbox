@@ -10,6 +10,38 @@ use std::time::Duration;
 
 use crate::{info, ok};
 
+// Foreground Ctrl-C: the terminal sends SIGINT to the whole foreground
+// process group, so the launcher and the service receive it together. The
+// launcher must survive the signal long enough to report the service's exit.
+// Rust programs die on SIGINT by default, so install a catcher via FFI. No
+// signal crate is allowed here; libc's `signal` and `kill` are enough.
+// SIGINT is 2 on macOS and Linux.
+#[cfg(unix)]
+mod fg_signal {
+    use std::sync::atomic::{AtomicI32, Ordering};
+    static CHILD_PID: AtomicI32 = AtomicI32::new(0);
+    extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    extern "C" fn on_sigint(_: i32) {
+        let pid = CHILD_PID.load(Ordering::SeqCst);
+        if pid > 0 {
+            // Forward the interrupt to the service so a Ctrl-C that only
+            // reached the launcher still drains the service.
+            unsafe { kill(pid, 2) };
+        }
+    }
+    pub fn install(pid: i32) {
+        CHILD_PID.store(pid, Ordering::SeqCst);
+        unsafe { signal(2, on_sigint as *const () as usize) };
+    }
+}
+#[cfg(not(unix))]
+mod fg_signal {
+    pub fn install(_pid: i32) {}
+}
+
 const CLIENT_EXT: &str = "basicConstraints=critical,CA:FALSE\n\
 keyUsage=critical,digitalSignature\n\
 extendedKeyUsage=clientAuth\n";
@@ -292,7 +324,11 @@ OPENBOX_PROVIDER=native\n",
         info("run the agent from another shell, or re-run with --detach");
         info("service output appears below as requests arrive");
         // Ctrl-C reaches the child through the process group. The service
-        // drains and exits on SIGINT, so waiting here is the graceful path.
+        // drains and exits on SIGINT. Without a catcher, the terminal's
+        // SIGINT kills the launcher before `wait` returns and before the
+        // final message prints. Install a catcher, forward the signal to
+        // the service, and only then wait.
+        fg_signal::install(child.id() as i32);
         let status = child
             .wait()
             .map_err(|error| format!("cannot wait for the sandbox service: {error}"))?;
