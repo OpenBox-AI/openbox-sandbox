@@ -48,14 +48,14 @@ comes from the same release.
 |---|---|
 | `obs provision` | Compiles the policy, starts the service, writes `agent.env` |
 | `obs status` | Reports what is ready |
-| `obs verify` | Proves a live create, exec, and delete over mutual TLS |
 | `obs uninstall` | Removes everything the launcher created |
 | `obs update` | Replaces `obs` from a release |
 
 ## How the service runs
 
 The service runs in your terminal. Press Ctrl-C to stop it. The service first
-drains the work in flight, then exits.
+drains the work in flight, then exits, and the launcher prints
+`sandbox service stopped`.
 
 Two flags change this behavior.
 
