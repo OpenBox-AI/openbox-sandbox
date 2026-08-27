@@ -356,14 +356,6 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     }
 }
 
-fn dev_tar_name(is_darwin_arm64: bool) -> &'static str {
-    if is_darwin_arm64 {
-        "openbox-sandbox-dev-darwin-arm64.tar.gz"
-    } else {
-        "openbox-sandbox-dev-linux-x86_64.tar.gz"
-    }
-}
-
 fn auto_fetch_bundle() -> Result<(), ExitCode> {
     // Always compute the bundle dir from the CWD — never inherit from
     // the parent environment (a leaked OPENSHELL_BUNDLE_DIR from a
@@ -391,24 +383,13 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     } else {
         "openbox-sandbox"
     };
-    // Fallback policy name for the bundle-readiness check only — the actual
-    // channel-aware policy fetch happens in ensure_release_assets.
-    let policy_name = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
-        Ok("dev") => "policy-allow-network-dev.yaml",
-        Ok(_) => "policy-deny-network-dev.yaml",
-        Err(_) => {
-            if cwd.join("policy-allow-network-dev.yaml").is_file()
-                || cwd
-                    .join(dev_tar_name(
-                        cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-                    ))
-                    .is_file()
-            {
-                "policy-allow-network-dev.yaml"
-            } else {
-                "policy-deny-network-dev.yaml"
-            }
-        }
+    // The default policy comes from the release line alone: the operator's
+    // --dev/--base choice, else the channel baked into this launcher. Files
+    // that happen to sit in the working directory never change the default.
+    let policy_name = if release_line_is_dev() {
+        "policy-allow-network-dev.yaml"
+    } else {
+        "policy-deny-network-dev.yaml"
     };
     // Already present — pin it and let the launcher proceed.
     // The service binary and policy are SEPARATE release assets that land
@@ -458,22 +439,10 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     };
     if !svc_bin.is_file() {
         info(&format!("sandbox service missing — fetching {svc_name}"));
-        let fetch_tag = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
-            Ok("dev") => "v0.1.0-dev",
-            Ok(_) => "v0.1.0",
-            Err(_) => {
-                if cwd.join("policy-allow-network-dev.yaml").is_file()
-                    || cwd
-                        .join(dev_tar_name(
-                            cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-                        ))
-                        .is_file()
-                {
-                    "v0.1.0-dev"
-                } else {
-                    "v0.1.0"
-                }
-            }
+        let fetch_tag = if release_line_is_dev() {
+            "v0.1.0-dev"
+        } else {
+            "v0.1.0"
         };
         if !download_openbox_asset(&cwd, fetch_tag, svc_name, &svc_bin) {
             err(&format!(
@@ -540,22 +509,10 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     let policy_path = bundle_dir.join(policy_name);
     if !policy_path.is_file() {
         info(&format!("policy file missing — fetching {policy_name}"));
-        let fetch_tag = match std::env::var("OPENBOX_RELEASE_LINE").as_deref() {
-            Ok("dev") => "v0.1.0-dev",
-            Ok(_) => "v0.1.0",
-            Err(_) => {
-                if cwd.join("policy-allow-network-dev.yaml").is_file()
-                    || cwd
-                        .join(dev_tar_name(
-                            cfg!(target_os = "macos") && cfg!(target_arch = "aarch64"),
-                        ))
-                        .is_file()
-                {
-                    "v0.1.0-dev"
-                } else {
-                    "v0.1.0"
-                }
-            }
+        let fetch_tag = if release_line_is_dev() {
+            "v0.1.0-dev"
+        } else {
+            "v0.1.0"
         };
         if !download_openbox_asset(&cwd, fetch_tag, policy_name, &policy_path) {
             err(&format!("failed to fetch the sandbox policy {policy_name}"));
@@ -738,6 +695,18 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     ] {
         if policy.as_ref().is_none_or(|path| !path.is_file()) && candidate.is_file() {
             policy = Some(candidate);
+        }
+    }
+    // Every provision fetches BOTH policy templates regardless of line, so
+    // switching lines later never needs a re-download. The channel only
+    // selects which one is the default.
+    for (template, from_tag) in [
+        ("policy-allow-network-dev.yaml", "v0.1.0-dev"),
+        ("policy-deny-network-dev.yaml", "v0.1.0"),
+    ] {
+        let dest = cwd.join(template);
+        if !dest.is_file() {
+            let _ = download_openbox_asset(&cwd, from_tag, template, &dest);
         }
     }
     if policy.as_ref().is_none_or(|path| !path.is_file()) {
