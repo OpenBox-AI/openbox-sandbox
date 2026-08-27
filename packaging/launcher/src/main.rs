@@ -131,7 +131,6 @@ enum CommandLine {
     Status,
     VerifyRuntime,
     Update {
-        release: Option<String>,
         all: bool,
     },
     Launch,
@@ -338,29 +337,15 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
             Ok(CommandLine::Status)
         }
         "update" => {
-            let mut release = None;
             let mut all = false;
             for arg in &args[1..] {
-                if let Some(value) = arg.strip_prefix("--release=") {
-                    release = Some(value.to_owned());
-                } else if arg == "--release" {
-                    let Some(value) = args.get(2).cloned() else {
-                        return Err("--release requires a value".to_owned());
-                    };
-                    release = Some(value);
-                } else if arg == "--all" {
+                if arg == "--all" {
                     all = true;
-                } else if arg == "--dev" {
-                    release = Some("v0.1.0-dev".to_owned());
-                } else if arg == "--base" {
-                    release = Some("v0.1.0".to_owned());
-                } else if arg.starts_with('-') {
-                    return Err(format!("unknown update option '{arg}'"));
-                } else if release.is_none() {
-                    release = Some(arg.clone());
+                } else {
+                    return Err(format!("unknown update option '{arg}' (only --all is supported; update always stays on its own release line)"));
                 }
             }
-            Ok(CommandLine::Update { release, all })
+            Ok(CommandLine::Update { all })
         }
         value if !value.starts_with('-') => Err(format!("unknown subcommand: {value}")),
         _ => {
@@ -433,7 +418,7 @@ fn main() -> ExitCode {
         Ok(CommandLine::Status) => return provision::run_status(),
         Ok(CommandLine::VerifyRuntime) => return verify_runtime(),
 
-        Ok(CommandLine::Update { release, all }) => return update::run(release.as_deref(), all),
+        Ok(CommandLine::Update { all }) => return update::run(all),
         Ok(CommandLine::Launch) => {}
         Err(message) => {
             err(&message);
@@ -791,12 +776,10 @@ USAGE:
   obs uninstall [--keep-pki]   Teardown and delete launcher-owned state.
   obs verify                   Prove mTLS create→ready→exec→delete live.
   obs status                   Report stack readiness.
-  obs update [TAG] [--all]    Update obs itself from TAG (default: latest
-                              release = v0.1.0-dev) into the current dir,
-                              verify its checksum, and replace obs. --dev or
-                              --base picks the line explicitly. --all also
-                              downloads the service binary, templates, cache,
-                              and dev image tar.
+  obs update [--all]          Update obs itself within the same release line
+                              into the current dir, verify its checksum, and
+                              replace obs. --all also downloads the service
+                              binary, templates, cache, and dev image tar.
   obs [OPTIONS]                Start the external OpenShell gateway.
 
 MODULES:

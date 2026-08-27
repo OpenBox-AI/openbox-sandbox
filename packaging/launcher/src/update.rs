@@ -2,31 +2,22 @@
 
 use std::process::{Command, ExitCode, Stdio};
 
-/// Download the platform release assets for `tag` (default: latest release)
-/// into the current directory, verify SHA256SUMS, and replace the local obs.
-pub fn run(tag: Option<&str>, all: bool) -> ExitCode {
+/// Download the release assets for the launcher's own line into the current
+/// directory, verify SHA256SUMS, and replace the local obs.
+pub fn run(all: bool) -> ExitCode {
     let repo = "OpenBox-AI/openbox-sandbox";
-    // The binary knows its channel — update targets the SAME line by default.
-    let release = match tag {
-        Some(t) => t.to_owned(),
-        None => {
-            let t = if crate::channel() == "base" {
-                "v0.1.0"
-            } else {
-                "v0.1.0-dev"
-            };
-            crate::info(&format!(
-                "release line: {} — updating within the same channel",
-                crate::channel()
-            ));
-            t.to_owned()
-        }
+    // A launcher updates within its own release line and never switches lines:
+    // a dev binary replacing itself with a base binary would quietly start
+    // provisioning deny-network on the next run.
+    let release = if crate::channel() == "base" {
+        "v0.1.0"
+    } else {
+        "v0.1.0-dev"
     };
-    if release.is_empty() {
-        crate::err("no release tag resolved");
-        return ExitCode::FAILURE;
-    }
-    crate::info(&format!("updating to {release} into the current directory"));
+    crate::info(&format!(
+        "release line: {} — updating within the same channel to {release}",
+        crate::channel()
+    ));
 
     let (svc, dev_tar) = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
         (
