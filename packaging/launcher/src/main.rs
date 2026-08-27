@@ -127,7 +127,6 @@ enum CommandLine {
     Uninstall {
         keep_pki: bool,
     },
-    Verify,
     Status,
     VerifyRuntime,
     Update {
@@ -328,10 +327,6 @@ fn parse_command(args: &[String]) -> Result<CommandLine, String> {
                 keep_pki: args[1..].iter().any(|arg| arg == "--keep-pki"),
             })
         }
-        "verify" => {
-            ensure_options(&args[1..], &[])?;
-            Ok(CommandLine::Verify)
-        }
         "status" => {
             ensure_options(&args[1..], &[])?;
             Ok(CommandLine::Status)
@@ -414,7 +409,6 @@ fn main() -> ExitCode {
             overrides,
         }) => return provision::run_provision(clean_rerun, keep_pki, overrides),
         Ok(CommandLine::Uninstall { keep_pki }) => return provision::run_uninstall(keep_pki),
-        Ok(CommandLine::Verify) => return provision::run_verify(),
         Ok(CommandLine::Status) => return provision::run_status(),
         Ok(CommandLine::VerifyRuntime) => return verify_runtime(),
 
@@ -774,7 +768,6 @@ USAGE:
   obs version                 Print the version and the baked release line.
   obs provision [OPTIONS]      Teardown stale state, then provision locally.
   obs uninstall [--keep-pki]   Teardown and delete launcher-owned state.
-  obs verify                   Prove mTLS create→ready→exec→delete live.
   obs status                   Report stack readiness.
   obs update [--all]          Update obs itself within the same release line
                               into the current dir, verify its checksum, and

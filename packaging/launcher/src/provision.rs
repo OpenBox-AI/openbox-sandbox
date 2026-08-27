@@ -19,26 +19,6 @@ use std::process::{Command, ExitCode, Stdio};
 
 use crate::{err, info, ok, step, warn};
 
-/// Resolve the source repository used by local lifecycle commands.
-fn repo_root() -> PathBuf {
-    if let Some(root) = std::env::var_os("OPENBOX_SOURCE_ROOT").map(PathBuf::from) {
-        return root;
-    }
-    if let Ok(current) = std::env::current_dir() {
-        for candidate in current.ancestors() {
-            if candidate.join("Cargo.toml").is_file()
-                && candidate.join("packaging/launcher/Cargo.toml").is_file()
-            {
-                return candidate.to_path_buf();
-            }
-        }
-    }
-    // No compile-time fallback: env!("CARGO_MANIFEST_DIR") would bake the
-    // build machine's absolute path into every published binary and point at a
-    // directory that does not exist on the machine running it.
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-}
-
 fn selected_provider() -> String {
     if let Ok(provider) = std::env::var("OPENBOX_PROVIDER") {
         return provider;
@@ -841,60 +821,6 @@ fn run_openshell(options: crate::openshell_provision::Options) -> ExitCode {
     }
 }
 
-/// `obs verify` — drive a real create→exec→delete against the live stack.
-pub fn run_verify() -> ExitCode {
-    banner_phase("VERIFY");
-    let agent_env = agent_env_path();
-    if !agent_env.is_file() {
-        err(&format!(
-            "agent.env not found at {} — run `obs provision` first",
-            agent_env.display()
-        ));
-        return ExitCode::FAILURE;
-    }
-    info(&format!("loading env from {}", agent_env.display()));
-    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let mut cmd = Command::new(cargo);
-    cmd.current_dir(repo_root())
-        .args([
-            "test",
-            "--lib",
-            "live_service_create_exec_delete",
-            "--",
-            // The test is #[ignore] so a default `cargo test` cannot report it
-            // as passed while skipping. Verification must ask for it by name.
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    if let Err(error) = apply_agent_env(&mut cmd, &agent_env) {
-        err(&format!("cannot load agent environment: {error}"));
-        return ExitCode::FAILURE;
-    }
-    if agent_env_selects_native(&agent_env) {
-        cmd.env("OPENBOX_LIVE_SERVICE_CMD", "printf native-ready");
-    }
-    info("running `cargo test --lib live_service_create_exec_delete`");
-    match cmd.status() {
-        Ok(s) if s.success() => {
-            ok("live lifecycle SUCCEEDED");
-            ExitCode::SUCCESS
-        }
-        Ok(s) => {
-            err(&format!("verify failed (exit {})", s.code().unwrap_or(-1)));
-            info("see the test output above; the service retains durable cleanup ownership");
-            ExitCode::FAILURE
-        }
-        Err(error) => {
-            err(&format!("could not run cargo: {error}"));
-            ExitCode::FAILURE
-        }
-    }
-}
-
 /// `obs status` — quick run-state report.
 pub fn run_status() -> ExitCode {
     banner_phase("STATUS");
@@ -1030,34 +956,7 @@ fn artifact_phase(path: &Path, label: &str) {
         warn(&format!("{label}: missing -> {}", path.display()));
     }
 }
-
-fn agent_env_path() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    std::env::var_os("OPENBOX_CONFIG_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(".config/openbox-sandbox"))
-        .join("agent.env")
-}
-
-fn agent_env_selects_native(env_path: &Path) -> bool {
-    std::fs::read_to_string(env_path).is_ok_and(|body| {
-        body.lines()
-            .any(|line| line.trim() == "OPENBOX_PROVIDER=native")
-    })
-}
-
-fn apply_agent_env(cmd: &mut Command, env_path: &Path) -> Result<(), String> {
-    // Parse the generated env file ourselves so verification needs no shell.
-    let body = std::fs::read_to_string(env_path).map_err(|error| error.to_string())?;
-    let values = parse_agent_env(&body)?;
-    verify_service_binary(&values)?;
-    for (key, value) in values {
-        cmd.env(key, value);
-    }
-    Ok(())
-}
+#[cfg(test)]
 
 fn verify_service_binary(values: &[(&str, &str)]) -> Result<(), String> {
     let binary = env_value(values, "OPENBOX_SANDBOX_BINARY")
@@ -1075,12 +974,14 @@ fn verify_service_binary(values: &[(&str, &str)]) -> Result<(), String> {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn env_value<'a>(values: &'a [(&str, &str)], key: &str) -> Option<&'a str> {
     values
         .iter()
         .find_map(|(candidate, value)| (*candidate == key).then_some(*value))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn file_sha256(path: &Path) -> Result<String, String> {
     let (program, prefix): (&str, &[&str]) = if cfg!(target_os = "macos") {
         ("shasum", &["-a", "256"])
@@ -1108,6 +1009,7 @@ fn file_sha256(path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("cannot parse service binary hash for {}", path.display()))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn parse_agent_env(body: &str) -> Result<Vec<(&str, &str)>, String> {
     let mut values = Vec::new();
     let mut has_endpoint = false;

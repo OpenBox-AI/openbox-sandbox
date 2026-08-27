@@ -53,9 +53,9 @@ is unsupported directly; use WSL2.
 
 The service protocol is pinned to OpenShell source commit
 `f169084923503a02a94425857b938de2841cab0c` (`f1690849`). The launcher accepts
-either that source marker or the locked release **0.0.88**, and the live verify
-test proves the wire contract at runtime. Neither the pin nor the hash check can
-be overridden.
+either that source marker or the locked release **0.0.88**, and the live
+lifecycle test proves the wire contract at runtime. Neither the pin nor the
+hash check can be overridden.
 
 For a source build at the exact pin:
 
@@ -64,8 +64,7 @@ cargo build --release --locked --bin openbox-sandbox
 cargo build --release --manifest-path packaging/launcher/Cargo.toml
 OPENSHELL_BIN_OVERRIDE=/path/to/openshell-target/release \
   packaging/launcher/target/release/obs provision
-packaging/launcher/target/release/obs verify
-packaging/launcher/target/release/obs uninstall
+  packaging/launcher/target/release/obs uninstall
 ```
 
 ## Native provider
@@ -79,13 +78,13 @@ plus unified-log Seatbelt violation counts to terminal results. Linux has no
 unprivileged bubblewrap deny log, so violation evidence is omitted; see the root
 README for the Linux address-filter limitation.
 
-## Verify and teardown
+## Live lifecycle proof
 
-`obs verify` first hashes the service binary recorded in `agent.env` and
-requires it to match the provisioned adapter identity. It then runs the live
-proof: client → mTLS service → gateway → create → ready → exec → delete →
-terminal absence. It needs a provisioned source checkout and a working host
-runtime.
+The live create → ready → exec → delete proof lives as the ignored Go/Rust
+integration test `live_service_create_exec_delete` in the source tree, run
+from a provisioned checkout with `cargo test`. It is not a subcommand:
+`obs verify` was removed because a shipped binary cannot assume a local
+toolchain.
 
 Teardown signals only PID-file processes whose command identity matches the
 launcher. Unrelated port listeners and VM drivers are reported and left
