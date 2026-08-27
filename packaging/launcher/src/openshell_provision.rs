@@ -470,6 +470,12 @@ fn resolve_sandbox_binary(bundle_dir: &Path, project_root: &Path) -> Result<Path
             break;
         }
     }
+    if !selected.is_file() {
+        return Err(format!(
+            "sandbox service binary not found at {} — set OPENBOX_SANDBOX_BIN or run from a release layout",
+            selected.display()
+        ));
+    }
     Ok(selected)
 }
 

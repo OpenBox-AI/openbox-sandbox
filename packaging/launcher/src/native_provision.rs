@@ -363,7 +363,7 @@ impl Settings {
         let cwd = std::env::current_dir().map_err(|error| format!("cannot read cwd: {error}"))?;
         let project_root =
             nonempty_env_path("OPENBOX_PROJECT_ROOT").unwrap_or_else(default_project_root);
-        let sandbox_bin = select_sandbox_binary(&cwd, &project_root);
+        let sandbox_bin = select_sandbox_binary(&cwd, &project_root)?;
         let (policy_file, policy_id) = select_policy(&cwd, &project_root);
         let workspace_root = nonempty_env_path("OPENBOX_NATIVE_WORKSPACE_ROOT")
             .unwrap_or_else(|| state_root.join("workspaces"));
@@ -412,9 +412,9 @@ impl Settings {
     }
 }
 
-fn select_sandbox_binary(cwd: &Path, project_root: &Path) -> PathBuf {
+fn select_sandbox_binary(cwd: &Path, project_root: &Path) -> Result<PathBuf, String> {
     if let Some(path) = nonempty_env_path("OPENBOX_SANDBOX_BIN") {
-        return path;
+        return Ok(path);
     }
     let local_name = if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
         Some("openbox-sandbox-darwin-arm64")
@@ -426,10 +426,21 @@ fn select_sandbox_binary(cwd: &Path, project_root: &Path) -> PathBuf {
     if let Some(name) = local_name {
         let candidate = cwd.join(name);
         if is_executable(&candidate) {
-            return candidate;
+            return Ok(candidate);
         }
     }
-    project_root.join("target/release/openbox-sandbox")
+    // A source checkout that has already been built for this line is a valid
+    // target; otherwise the operator must set OPENBOX_SANDBOX_BIN or run from
+    // a release layout. Returning a path that may not exist only moves the
+    // failure to a later require_executable with a less useful message.
+    let built = project_root.join("target/release/openbox-sandbox");
+    if built.is_file() {
+        return Ok(built);
+    }
+    Err(
+        "sandbox service binary not found: set OPENBOX_SANDBOX_BIN or run from a release layout (a built source checkout also works)"
+            .to_owned(),
+    )
 }
 
 fn policy_defaults(release_line: &str) -> (&'static str, &'static str) {
