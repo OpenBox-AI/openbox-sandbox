@@ -17,6 +17,7 @@ const LOCKED_VERSION: &str = "0.0.88";
 const DEFAULT_IMAGE: &str = "ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e";
 const CLIENT_EXT: &str = "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n";
 const CA_EXT: &str = "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n";
+const REGISTRY_CNF: &str = "[req]\ndistinguished_name = dn\nprompt = no\n[dn]\nCN = 127.0.0.1\n[v3_req]\nbasicConstraints = critical, CA:FALSE\nkeyUsage = critical, digitalSignature, keyEncipherment\nextendedKeyUsage = serverAuth\nsubjectAltName = @alt_names\n[alt_names]\nDNS.1 = localhost\nIP.1 = 127.0.0.1\n";
 const SERVER_CNF: &str = "[req]\ndistinguished_name = dn\nreq_extensions = v3_req\nprompt = no\n[dn]\nCN = localhost\n[v3_req]\nkeyUsage = critical, digitalSignature, keyEncipherment\nextendedKeyUsage = serverAuth\nsubjectAltName = @alt_names\n[alt_names]\nDNS.1 = localhost\nIP.1 = 127.0.0.1\n";
 const ENTITLEMENTS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n    <key>com.apple.security.hypervisor</key>\n    <true/>\n</dict>\n</plist>\n";
 
@@ -287,7 +288,7 @@ fn run_inner(
         settings.sandbox_pid_file.display()
     ));
     info(&format!("agent env: {}", settings.agent_env.display()));
-    info("verify:    obs verify");
+    info("verify:    obs --verify-runtime");
     Ok(())
 }
 
@@ -806,11 +807,7 @@ fn published_checksum(name: &str, settings: &mut Settings) -> Result<Option<Stri
 }
 
 fn channel_tag(release_line: &str) -> &'static str {
-    if release_line == "dev" {
-        "v0.1.0-dev"
-    } else {
-        "v0.1.0"
-    }
+    crate::asset_tag(release_line == "dev")
 }
 
 fn require_compatible_binary(path: &Path, label: &str, locked_version: &str) -> Result<(), String> {
@@ -1415,29 +1412,92 @@ fn start_registry(settings: &mut Settings) -> Result<Option<u32>, String> {
             layout.display()
         ));
     }
+    // The registry must present an END-ENTITY certificate. `openssl req -x509`
+    // defaults to basicConstraints=critical,CA:TRUE, and the VM driver verifies
+    // through rustls, which rejects a CA offered as a leaf with
+    // `CaUsedAsEndEntity` — the image pull then fails with an opaque
+    // "failed to authenticate registry access". Issue a small CA and serve a
+    // leaf signed by it, then trust only the CA, matching the gateway PKI.
+    let registry_ca_key = tls_dir.join("registry-ca.key");
+    let registry_ca_cert = tls_dir.join("registry-ca.crt");
     run_openssl(
         [
             OsString::from("req"),
             OsString::from("-x509"),
             OsString::from("-newkey"),
             OsString::from("rsa:2048"),
+            OsString::from("-nodes"),
+            OsString::from("-sha256"),
+            OsString::from("-days"),
+            OsString::from("825"),
+            OsString::from("-subj"),
+            OsString::from("/CN=OpenBox Local Registry CA"),
+            OsString::from("-keyout"),
+            registry_ca_key.clone().into_os_string(),
+            OsString::from("-out"),
+            registry_ca_cert.clone().into_os_string(),
+            OsString::from("-addext"),
+            OsString::from("basicConstraints=critical,CA:TRUE,pathlen:0"),
+            OsString::from("-addext"),
+            OsString::from("keyUsage=critical,keyCertSign,cRLSign"),
+        ],
+        "failed to generate the registry CA",
+    )?;
+    let registry_cnf = tls_dir.join("registry.cnf");
+    let leaf_csr = tls_dir.join("registry-leaf.csr");
+    let leaf_cert = tls_dir.join("registry-leaf.crt");
+    write_private(&registry_cnf, REGISTRY_CNF.as_bytes())?;
+    run_openssl(
+        [
+            OsString::from("req"),
+            OsString::from("-new"),
+            OsString::from("-newkey"),
+            OsString::from("rsa:2048"),
+            OsString::from("-nodes"),
             OsString::from("-keyout"),
             tls_dir.join("key.pem").into_os_string(),
             OsString::from("-out"),
-            tls_dir.join("cert.pem").into_os_string(),
+            leaf_csr.clone().into_os_string(),
+            OsString::from("-config"),
+            registry_cnf.clone().into_os_string(),
+        ],
+        "failed to generate the registry leaf key",
+    )?;
+    run_openssl(
+        [
+            OsString::from("x509"),
+            OsString::from("-req"),
+            OsString::from("-sha256"),
             OsString::from("-days"),
             OsString::from("825"),
-            OsString::from("-nodes"),
-            OsString::from("-subj"),
-            OsString::from("/CN=127.0.0.1"),
-            OsString::from("-addext"),
-            OsString::from("subjectAltName=IP:127.0.0.1,DNS:localhost"),
+            OsString::from("-in"),
+            leaf_csr.into_os_string(),
+            OsString::from("-CA"),
+            registry_ca_cert.clone().into_os_string(),
+            OsString::from("-CAkey"),
+            registry_ca_key.into_os_string(),
+            OsString::from("-CAcreateserial"),
+            OsString::from("-out"),
+            leaf_cert.clone().into_os_string(),
+            OsString::from("-extfile"),
+            registry_cnf.into_os_string(),
+            OsString::from("-extensions"),
+            OsString::from("v3_req"),
         ],
-        "failed to generate the registry TLS certificate",
+        "failed to sign the registry TLS certificate",
     )?;
+    // zot serves leaf-then-CA so clients can build the chain.
+    let mut chain = fs::read(&leaf_cert)
+        .map_err(|error| format!("cannot read the registry leaf certificate: {error}"))?;
+    chain.extend_from_slice(
+        &fs::read(&registry_ca_cert)
+            .map_err(|error| format!("cannot read the registry CA: {error}"))?,
+    );
+    fs::write(tls_dir.join("cert.pem"), &chain)
+        .map_err(|error| format!("cannot write the registry certificate chain: {error}"))?;
     chmod(&tls_dir.join("key.pem"), 0o600)?;
     chmod(&tls_dir.join("cert.pem"), 0o644)?;
-    trust_registry_ca(settings, &tls_dir.join("cert.pem"))?;
+    trust_registry_ca(settings, &registry_ca_cert)?;
     let config = format!(
         "{{\n  \"storage\": {{ \"rootDirectory\": \"{}\" }},\n  \"http\": {{\n    \"address\": \"127.0.0.1\",\n    \"port\": {},\n    \"tls\": {{ \"cert\": \"{}\", \"key\": \"{}\" }}\n  }},\n  \"log\": {{ \"level\": \"error\" }}\n}}\n",
         layout_dir.display(),
@@ -1565,17 +1625,46 @@ fn trust_registry_ca(settings: &Settings, cert: &Path) -> Result<(), String> {
         create_private_dir(&cert_dir)?;
         fs::copy(cert, cert_dir.join("openbox-registry-ca.crt"))
             .map_err(|error| format!("cannot copy registry CA: {error}"))?;
-        let copied = Command::new("sudo")
-            .args(["-n", "cp"])
-            .arg(cert)
-            .arg("/usr/local/share/ca-certificates/openbox-registry-ca.crt")
-            .status()
-            .is_ok_and(|status| status.success());
-        let updated = copied
-            && Command::new("sudo")
-                .args(["-n", "update-ca-certificates"])
+        // Debian/Ubuntu and the RHEL family (Amazon Linux, Fedora, CentOS) use
+        // different anchor directories and refresh commands. Calling only the
+        // Debian pair leaves the CA untrusted everywhere else — the host has no
+        // `update-ca-certificates`, the copy target does not exist, and the
+        // driver then rejects the registry certificate. Use whichever the host
+        // actually provides.
+        let anchors: [(&str, &str, &[&str]); 2] = [
+            (
+                "/etc/pki/ca-trust/source/anchors",
+                "update-ca-trust",
+                &["extract"],
+            ),
+            (
+                "/usr/local/share/ca-certificates",
+                "update-ca-certificates",
+                &[],
+            ),
+        ];
+        let mut updated = false;
+        for (dir, refresh, args) in anchors {
+            if !Path::new(dir).is_dir() {
+                continue;
+            }
+            let copied = Command::new("sudo")
+                .args(["-n", "cp"])
+                .arg(cert)
+                .arg(Path::new(dir).join("openbox-registry-ca.crt"))
                 .status()
                 .is_ok_and(|status| status.success());
+            if copied
+                && Command::new("sudo")
+                    .args(["-n", refresh])
+                    .args(args)
+                    .status()
+                    .is_ok_and(|status| status.success())
+            {
+                updated = true;
+                break;
+            }
+        }
         if !updated {
             warn("could not install the registry CA system-wide (sudo required) — the driver may reject the registry certificate");
         }

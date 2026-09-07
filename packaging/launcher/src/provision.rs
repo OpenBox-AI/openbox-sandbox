@@ -1,4 +1,4 @@
-//! Local lifecycle — `obs provision`, `obs uninstall`, `obs verify`,
+//! Local lifecycle — `obs provision`, `obs uninstall`, `obs --verify-runtime`,
 //! `obs status`.
 //!
 //! Both the OpenShell and native providers are implemented in-crate.
@@ -7,7 +7,8 @@
 //!
 //! - `obs provision` = teardown, then provision.
 //! - `obs uninstall` = teardown, delete launcher-owned state, and exit.
-//! - `obs verify` = prove create→ready→exec→delete over mTLS through the root
+//! - live create→ready→exec→delete proof over mTLS through the root: removed;
+//!   `obs --verify-runtime` covers artifact/version checks only
 //!   service and the external `OpenShell` microVM runtime.
 //! - `obs status` = report ports, PID files, and generated artifacts.
 //!
@@ -266,7 +267,7 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
         Ok(_) => false,
         Err(_) => crate::channel() != "base",
     };
-    let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
+    let tag = crate::asset_tag(dev_channel);
     info(&format!(
         "release line: {} ({tag}) — OpenBox assets fetch from this tag only ({} template)",
         if dev_channel { "dev" } else { "base" },
@@ -286,25 +287,33 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
     // cannot have it.
     let _ = ensure_verified_asset(
         cwd,
-        "v0.1.0-dev",
+        crate::asset_tag(true),
         "policy-allow-network-dev.yaml",
         "allow policy template",
     );
     let _ = ensure_verified_asset(
         cwd,
-        "v0.1.0",
+        crate::asset_tag(false),
         "policy-deny-network-dev.yaml",
         "deny policy template",
     );
     // Channel-locked assets beyond the templates.
     if dev_channel {
         if !dev_tar.is_empty() && !cwd.join(dev_tar).is_file() {
-            info(&format!("{dev_tar} missing — fetching from v0.1.0-dev"));
-            let _ = download_openbox_asset(cwd, "v0.1.0-dev", dev_tar, &cwd.join(dev_tar));
+            info(&format!(
+                "{dev_tar} missing — fetching from {}",
+                crate::asset_tag(true)
+            ));
+            let _ =
+                download_openbox_asset(cwd, crate::asset_tag(true), dev_tar, &cwd.join(dev_tar));
         }
         if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
-            info(&format!("{vm_cache} missing — fetching from v0.1.0-dev"));
-            let _ = download_openbox_asset(cwd, "v0.1.0-dev", vm_cache, &cwd.join(vm_cache));
+            info(&format!(
+                "{vm_cache} missing — fetching from {}",
+                crate::asset_tag(true)
+            ));
+            let _ =
+                download_openbox_asset(cwd, crate::asset_tag(true), vm_cache, &cwd.join(vm_cache));
         }
         // Runtime-agnostic registry assets: our OCI layout plus the separately
         // pinned binary from project-zot's official release.
@@ -316,8 +325,16 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
             ""
         };
         if !oci_layout.is_empty() && !cwd.join(oci_layout).is_file() {
-            info(&format!("{oci_layout} missing — fetching from v0.1.0-dev"));
-            let _ = download_openbox_asset(cwd, "v0.1.0-dev", oci_layout, &cwd.join(oci_layout));
+            info(&format!(
+                "{oci_layout} missing — fetching from {}",
+                crate::asset_tag(true)
+            ));
+            let _ = download_openbox_asset(
+                cwd,
+                crate::asset_tag(true),
+                oci_layout,
+                &cwd.join(oci_layout),
+            );
         }
         if let Some(pin) = zot_pin.filter(|pin| !cwd.join(pin.local_name).is_file()) {
             info(&format!(
@@ -331,8 +348,11 @@ fn ensure_release_assets(cwd: &std::path::Path, svc_name: &str) {
             }
         }
     } else if !vm_cache.is_empty() && !cwd.join(vm_cache).is_file() {
-        info(&format!("{vm_cache} missing — fetching from v0.1.0"));
-        let _ = download_openbox_asset(cwd, "v0.1.0", vm_cache, &cwd.join(vm_cache));
+        info(&format!(
+            "{vm_cache} missing — fetching from {}",
+            crate::asset_tag(false)
+        ));
+        let _ = download_openbox_asset(cwd, crate::asset_tag(false), vm_cache, &cwd.join(vm_cache));
     }
 }
 
@@ -419,11 +439,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     };
     if !svc_bin.is_file() {
         info(&format!("sandbox service missing — fetching {svc_name}"));
-        let fetch_tag = if release_line_is_dev() {
-            "v0.1.0-dev"
-        } else {
-            "v0.1.0"
-        };
+        let fetch_tag = crate::asset_tag(release_line_is_dev());
         if !download_openbox_asset(&cwd, fetch_tag, svc_name, &svc_bin) {
             err(&format!(
                 "failed to fetch the sandbox service binary {svc_name}"
@@ -489,11 +505,7 @@ fn auto_fetch_bundle() -> Result<(), ExitCode> {
     let policy_path = bundle_dir.join(policy_name);
     if !policy_path.is_file() {
         info(&format!("policy file missing — fetching {policy_name}"));
-        let fetch_tag = if release_line_is_dev() {
-            "v0.1.0-dev"
-        } else {
-            "v0.1.0"
-        };
+        let fetch_tag = crate::asset_tag(release_line_is_dev());
         if !download_openbox_asset(&cwd, fetch_tag, policy_name, &policy_path) {
             err(&format!("failed to fetch the sandbox policy {policy_name}"));
             return Err(ExitCode::FAILURE);
@@ -581,11 +593,7 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     // service binary as well as the policy. Honouring it for only one of them
     // mixed a base service with a dev policy, which is exactly the split the
     // release notes warn against.
-    let tag = if release_line_is_dev() {
-        "v0.1.0-dev"
-    } else {
-        "v0.1.0"
-    };
+    let tag = crate::asset_tag(release_line_is_dev());
     // Exactly one rule decides the service binary, with no silent alternative.
     //
     // A source checkout builds the binary it is going to run: there is no
@@ -667,7 +675,7 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     } else {
         "policy-deny-network-dev.yaml"
     };
-    let tag = if dev_channel { "v0.1.0-dev" } else { "v0.1.0" };
+    let tag = crate::asset_tag(dev_channel);
     let mut policy = std::env::var_os("OPENBOX_POLICY_FILE").map(PathBuf::from);
     for candidate in [
         cwd.join(policy_name),
@@ -681,8 +689,8 @@ fn auto_fetch_native_assets() -> Result<(), ExitCode> {
     // switching lines later never needs a re-download. The channel only
     // selects which one is the default.
     for (template, from_tag) in [
-        ("policy-allow-network-dev.yaml", "v0.1.0-dev"),
-        ("policy-deny-network-dev.yaml", "v0.1.0"),
+        ("policy-allow-network-dev.yaml", crate::asset_tag(true)),
+        ("policy-deny-network-dev.yaml", crate::asset_tag(false)),
     ] {
         let dest = cwd.join(template);
         if !dest.is_file() {
@@ -865,7 +873,7 @@ pub fn run_status() -> ExitCode {
     info(&format!("sandbox log: {}", sandbox_log.display()));
     let all_up = port_open(sandbox_port) && (provider == "native" || port_open(gateway_port));
     if all_up {
-        ok("stack ready — run `obs verify` to exercise the lifecycle");
+        ok("stack ready — `obs --verify-runtime` checks the launcher artifacts and version pin");
     } else {
         warn("stack not fully up — run `obs provision`");
     }

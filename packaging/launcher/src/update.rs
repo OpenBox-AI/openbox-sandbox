@@ -9,11 +9,33 @@ pub fn run(all: bool) -> ExitCode {
     // A launcher updates within its own release line and never switches lines:
     // a dev binary replacing itself with a base binary would quietly start
     // provisioning deny-network on the next run.
-    let release = if crate::channel() == "base" {
-        "v0.1.0"
-    } else {
-        "v0.1.0-dev"
-    };
+    //
+    // The tag used to be pinned to v0.1.0/v0.1.0-dev, which made this command a
+    // no-op at best: a newer launcher running `obs update` would fetch the
+    // frozen release and downgrade itself. Resolve the newest published tag on
+    // this line instead, keeping the pin only as an offline fallback.
+    let dev = crate::channel() != "base";
+    let pinned = crate::asset_tag(dev);
+    let release = latest_release(repo, dev, pinned);
+
+    // `obs update` converges on the newest published release for this line,
+    // even when that moves backwards: an unreleased local build carries a
+    // version number, not a guarantee, and refusing to move would leave a
+    // broken build unrepairable by the very command meant to repair it. Going
+    // backwards is legitimate, but it must never be silent — a downgrade
+    // discards whatever the running binary carried, so say so plainly.
+    if let Some(newest) = tag_version(&release) {
+        if newest < parse_version(env!("CARGO_PKG_VERSION")) {
+            crate::warn(&format!(
+                "running {} is NEWER than the newest published {} release ({release})",
+                env!("CARGO_PKG_VERSION"),
+                crate::channel()
+            ));
+            crate::warn(&format!(
+                "updating replaces it with {release} — anything only in the running build is lost"
+            ));
+        }
+    }
     crate::info(&format!(
         "release line: {} — updating within the same channel to {release}",
         crate::channel()
@@ -145,19 +167,95 @@ pub fn run(all: bool) -> ExitCode {
         "obs".to_owned()
     };
     crate::info(&format!("replacing {target}"));
-    if let Err(e) = std::fs::copy(obs_name, &target) {
-        crate::err(&format!("could not replace {target}: {e}"));
+    // Linux refuses to open a running executable for writing (ETXTBSY), so
+    // copying straight over `target` fails with "Text file busy" whenever obs
+    // updates itself — which is every time. Stage the new binary beside it and
+    // rename over the top: rename only swaps the directory entry, the running
+    // process keeps its own inode, and the replacement stays atomic. macOS
+    // allowed the direct copy, which is why this only ever bit Linux.
+    let staged = format!("{target}.new");
+    let _ = std::fs::remove_file(&staged);
+    if let Err(e) = std::fs::copy(obs_name, &staged) {
+        crate::err(&format!("could not stage {staged}: {e}"));
         return ExitCode::FAILURE;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = std::fs::metadata(&target) {
+        if let Ok(meta) = std::fs::metadata(&staged) {
             let mut perms = meta.permissions();
             perms.set_mode(0o755);
-            let _ = std::fs::set_permissions(&target, perms);
+            let _ = std::fs::set_permissions(&staged, perms);
         }
+    }
+    if let Err(e) = std::fs::rename(&staged, &target) {
+        let _ = std::fs::remove_file(&staged);
+        crate::err(&format!("could not replace {target}: {e}"));
+        return ExitCode::FAILURE;
     }
     crate::ok(&format!("{target} updated to {release} — assets verified"));
     ExitCode::SUCCESS
+}
+
+/// Newest published release tag on this launcher's line.
+///
+/// `releases/latest` is unusable here: GitHub marks a single release latest
+/// across every line, and that is the base line, so a dev launcher would
+/// silently pull base assets. List the releases and take the first whose tag
+/// matches this line — the API returns them newest first. Any failure (no
+/// network, rate limit, malformed body) falls back to the pinned tag so
+/// `obs update` degrades to its previous behaviour rather than erroring.
+fn latest_release(repo: &str, dev: bool, pinned: &str) -> String {
+    let output = Command::new("curl")
+        .args([
+            "-fsSL",
+            "--retry",
+            "2",
+            "-H",
+            "Accept: application/vnd.github+json",
+        ])
+        .arg(format!(
+            "https://api.github.com/repos/{repo}/releases?per_page=100"
+        ))
+        .output();
+    let Ok(output) = output else {
+        return pinned.to_owned();
+    };
+    if !output.status.success() {
+        return pinned.to_owned();
+    }
+    let Ok(body) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return pinned.to_owned();
+    };
+    body.as_array()
+        .and_then(|releases| {
+            releases.iter().find_map(|release| {
+                let draft = release
+                    .get("draft")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                if draft {
+                    return None;
+                }
+                let tag = release.get("tag_name")?.as_str()?;
+                (tag.ends_with("-dev") == dev).then(|| tag.to_owned())
+            })
+        })
+        .unwrap_or_else(|| pinned.to_owned())
+}
+
+/// Numeric version from a release tag (`v0.1.0-dev` -> `[0, 1, 0]`).
+fn tag_version(tag: &str) -> Option<[u32; 3]> {
+    let core = tag.trim_start_matches('v').split('-').next()?;
+    let parsed = parse_version(core);
+    (parsed != [0, 0, 0]).then_some(parsed)
+}
+
+/// Lenient dotted-version parse; missing or unparsable parts read as zero.
+fn parse_version(value: &str) -> [u32; 3] {
+    let mut out = [0u32; 3];
+    for (slot, part) in out.iter_mut().zip(value.split('.')) {
+        *slot = part.parse().unwrap_or(0);
+    }
+    out
 }

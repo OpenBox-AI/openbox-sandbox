@@ -11,7 +11,8 @@
 //!
 //! `--verify-runtime` only checks local artifact/version compatibility. It does
 //! not connect to a gateway or prove sandbox execution. From a source checkout,
-//! `obs verify` drives the live mTLS create→ready→exec→delete proof.
+//! `obs --verify-runtime` checks launcher artifacts and the version pin. The
+//! live mTLS create→ready→exec→delete proof is not shipped by this launcher.
 //!
 //! OpenShell supports four drivers; the operator's gateway selects one:
 //!   - podman: rootless container runtime (preferred container path).
@@ -47,6 +48,23 @@ mod update;
 /// (OPENBOX_CHANNEL=dev|base). The channel decides every default: which tag
 /// update targets, which release provision fetches from, which policy
 /// template is the default.
+/// Release tag this launcher fetches assets from, per line.
+///
+/// Assets are deliberately pinned rather than tracking the newest release: the
+/// service binary, policies and VM caches must match the launcher shipped with
+/// them. `obs update` is the one place that moves forward, resolving the newest
+/// tag on the line at run time. Defined once here — this used to be duplicated
+/// as literals across provision, openshell_provision and update, so cutting a
+/// release meant editing every one and a missed site silently fetched stale
+/// assets.
+pub(crate) fn asset_tag(dev: bool) -> &'static str {
+    if dev {
+        "v0.1.0-dev"
+    } else {
+        "v0.1.0"
+    }
+}
+
 pub(crate) fn channel() -> &'static str {
     if option_env!("OPENBOX_CHANNEL") == Some("base") {
         "base"
@@ -508,7 +526,7 @@ fn main() -> ExitCode {
 /// Verify local launcher artifacts and their exact release version.
 ///
 /// This does not connect to the gateway, inspect mTLS, or execute a sandbox.
-/// Use `obs verify` from a provisioned source checkout for that live proof.
+/// The live create→ready→exec→delete proof is not shipped by this launcher.
 fn verify_runtime() -> ExitCode {
     banner();
     let (os, arch) = platform();
@@ -538,7 +556,6 @@ fn verify_runtime() -> ExitCode {
     }
     println!();
     warn("artifact compatibility only: no gateway connection or sandbox was attempted");
-    info("`obs verify` is the live mTLS create→ready→exec→delete proof");
     ExitCode::SUCCESS
 }
 
@@ -785,7 +802,7 @@ LOCAL LOOP (source checkout only):
   cargo build --release --bin openbox-sandbox
   cargo build --release --manifest-path packaging/launcher/Cargo.toml
   OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision
-  obs verify && obs uninstall
+  obs --verify-runtime && obs uninstall
 
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
   --provider NAME        native (default, native OS sandbox) or openshell (explicit).
