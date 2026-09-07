@@ -1420,29 +1420,55 @@ fn start_registry(settings: &mut Settings) -> Result<Option<u32>, String> {
     // leaf signed by it, then trust only the CA, matching the gateway PKI.
     let registry_ca_key = tls_dir.join("registry-ca.key");
     let registry_ca_cert = tls_dir.join("registry-ca.crt");
-    run_openssl(
-        [
-            OsString::from("req"),
-            OsString::from("-x509"),
-            OsString::from("-newkey"),
-            OsString::from("rsa:2048"),
-            OsString::from("-nodes"),
-            OsString::from("-sha256"),
-            OsString::from("-days"),
-            OsString::from("825"),
-            OsString::from("-subj"),
-            OsString::from("/CN=OpenBox Local Registry CA"),
-            OsString::from("-keyout"),
-            registry_ca_key.clone().into_os_string(),
-            OsString::from("-out"),
-            registry_ca_cert.clone().into_os_string(),
-            OsString::from("-addext"),
-            OsString::from("basicConstraints=critical,CA:TRUE,pathlen:0"),
-            OsString::from("-addext"),
-            OsString::from("keyUsage=critical,keyCertSign,cRLSign"),
-        ],
-        "failed to generate the registry CA",
-    )?;
+    // Reuse an existing CA rather than minting one per provision. Every
+    // provision adds its CA to the OS trust store, so regenerating meant a new
+    // trusted root each time and an unbounded pile-up: a real machine had
+    // accumulated 46 stale roots over three weeks. The leaf is still re-issued
+    // below on every run — only the CA, the thing that gets trusted, is
+    // durable. `openssl x509 -checkend` re-mints once the CA is inside its
+    // final day, so an expired CA still self-heals.
+    let ca_usable = registry_ca_key.is_file()
+        && registry_ca_cert.is_file()
+        && Command::new("openssl")
+            .args([
+                OsStr::new("x509"),
+                OsStr::new("-checkend"),
+                OsStr::new("86400"),
+                OsStr::new("-noout"),
+                OsStr::new("-in"),
+            ])
+            .arg(&registry_ca_cert)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+    if ca_usable {
+        info("reusing the existing local registry CA (already trusted)");
+    } else {
+        run_openssl(
+            [
+                OsString::from("req"),
+                OsString::from("-x509"),
+                OsString::from("-newkey"),
+                OsString::from("rsa:2048"),
+                OsString::from("-nodes"),
+                OsString::from("-sha256"),
+                OsString::from("-days"),
+                OsString::from("825"),
+                OsString::from("-subj"),
+                OsString::from("/CN=OpenBox Local Registry CA"),
+                OsString::from("-keyout"),
+                registry_ca_key.clone().into_os_string(),
+                OsString::from("-out"),
+                registry_ca_cert.clone().into_os_string(),
+                OsString::from("-addext"),
+                OsString::from("basicConstraints=critical,CA:TRUE,pathlen:0"),
+                OsString::from("-addext"),
+                OsString::from("keyUsage=critical,keyCertSign,cRLSign"),
+            ],
+            "failed to generate the registry CA",
+        )?;
+    }
     let registry_cnf = tls_dir.join("registry.cnf");
     let leaf_csr = tls_dir.join("registry-leaf.csr");
     let leaf_cert = tls_dir.join("registry-leaf.crt");
