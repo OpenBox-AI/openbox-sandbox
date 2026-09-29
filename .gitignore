@@ -18,3 +18,4 @@
 
 # pi agent local state
 .pi/
+/middleware/target/
