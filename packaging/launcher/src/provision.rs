@@ -964,8 +964,8 @@ fn artifact_phase(path: &Path, label: &str) {
         warn(&format!("{label}: missing -> {}", path.display()));
     }
 }
-#[cfg(test)]
 
+#[cfg(test)]
 fn verify_service_binary(values: &[(&str, &str)]) -> Result<(), String> {
     let binary = env_value(values, "OPENBOX_SANDBOX_BINARY")
         .ok_or_else(|| "OPENBOX_SANDBOX_BINARY is missing".to_owned())?;
