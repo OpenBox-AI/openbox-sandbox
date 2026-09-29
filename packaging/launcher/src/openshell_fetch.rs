@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DARWIN_GATEWAY_SHA256: &str =
-    "5de3e08ad1bdb0cdd01373999f537edca3d8aca22ae1c29bc9926969fe401e45";
-const DARWIN_CLI_SHA256: &str = "522c963f9515c7325b978e89022de76227ac245eefe1371292af1424434e2067";
+    "640068efa16e446d5f4f9ffaec0af769dbab04d686473d2a7bd6bafeb4ef7f45";
+const DARWIN_CLI_SHA256: &str = "cdde7e92bd7eac664031cf171cfe80d29e7f122a6674917b25a4ce0bcbc33466";
 const DARWIN_DRIVER_SHA256: &str =
-    "c33a6f6ebd22c847fee764a0a15b1a577fb29f5624dfcc81c6a727f3eebc421b";
+    "01de38811a2c74e8a61c7b275067fc616f5dcc63b73e3b75d92f3c99d852016a";
 
 struct Asset<'a> {
     name: String,

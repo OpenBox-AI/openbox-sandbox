@@ -801,7 +801,7 @@ MODULES:
 LOCAL LOOP (source checkout only):
   cargo build --release --bin openbox-sandbox
   cargo build --release --manifest-path packaging/launcher/Cargo.toml
-  OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision
+  OPENSHELL_BIN_OVERRIDE=/path/to/6648bd0c/build obs provision
   obs --verify-runtime && obs uninstall
 
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
@@ -883,8 +883,8 @@ LAUNCHER OPTIONS:
                        It does not connect or prove sandbox execution.
   -h, --help           Show this help.
 
-`obs provision` requires OpenShell 0.0.88 (locked release)
-or the root protocol marker f1690849."#
+`obs provision` requires OpenShell 0.1.2 (locked release)
+or the root protocol marker 6648bd0c."#
     );
 }
 

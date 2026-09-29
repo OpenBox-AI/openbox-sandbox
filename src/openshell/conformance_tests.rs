@@ -25,10 +25,10 @@ use crate::{
 };
 use async_trait::async_trait;
 use openshell_core::proto::{
-    CreateSandboxRequest, DeleteSandboxRequest, DeleteSandboxResponse, ExecSandboxRequest,
-    GetSandboxPolicyStatusRequest, GetSandboxPolicyStatusResponse, GetSandboxRequest, ObjectMeta,
-    PolicyStatus, Sandbox, SandboxPhase, SandboxPolicy, SandboxPolicyRevision, SandboxResponse,
-    SandboxSpec, SandboxStatus,
+    CreateSandboxRequest, DeleteSandboxRequest, DeleteSandboxResponse, DeletionOutcome,
+    ExecSandboxRequest, GetSandboxPolicyStatusRequest, GetSandboxPolicyStatusResponse,
+    GetSandboxRequest, ObjectMeta, PolicyStatus, Sandbox, SandboxPhase, SandboxPolicy,
+    SandboxPolicyRevision, SandboxResponse, SandboxSpec, SandboxStatus,
 };
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
@@ -242,7 +242,9 @@ impl ScriptTransport {
                     current_policy_version: u32::from(phase == SandboxPhase::Ready),
                     ..SandboxStatus::default()
                 }),
+                ..Sandbox::default()
             }),
+            ..SandboxResponse::default()
         }
     }
 }
@@ -316,8 +318,14 @@ impl OpenShellTransport for ScriptTransport {
                 version: 1,
                 policy_hash,
                 status: PolicyStatus::Loaded as i32,
-                created_at_ms: 1,
-                loaded_at_ms: 1,
+                created_time: Some(prost_types::Timestamp {
+                    seconds: 1,
+                    nanos: 0,
+                }),
+                loaded_time: Some(prost_types::Timestamp {
+                    seconds: 1,
+                    nanos: 0,
+                }),
                 policy: Some(policy),
                 ..SandboxPolicyRevision::default()
             }),
@@ -351,10 +359,16 @@ impl OpenShellTransport for ScriptTransport {
                 state.deleted = true;
                 Err(tonic::Status::unavailable("delete failed"))
             }
-            ConformanceScenario::WaitDeletedDeadline => Ok(DeleteSandboxResponse { deleted: true }),
+            ConformanceScenario::WaitDeletedDeadline => Ok(DeleteSandboxResponse {
+                outcome: DeletionOutcome::Completed as i32,
+                ..DeleteSandboxResponse::default()
+            }),
             _ => {
                 state.deleted = true;
-                Ok(DeleteSandboxResponse { deleted: true })
+                Ok(DeleteSandboxResponse {
+                    outcome: DeletionOutcome::Completed as i32,
+                    ..DeleteSandboxResponse::default()
+                })
             }
         }
     }

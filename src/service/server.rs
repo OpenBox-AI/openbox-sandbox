@@ -218,10 +218,16 @@ fn load_tls_config(config: &TlsServerConfig) -> Result<rustls::ServerConfig, Ser
     let certificates = read_certificates(&config.certificate_path)?;
     let private_key = read_private_key(&config.private_key_path)?;
     let client_roots = read_root_store(&config.client_ca_path)?;
-    let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(client_roots))
-        .build()
-        .map_err(|_| ServerError::Configuration)?;
-    rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+    // Name the provider everywhere: openshell-core enables aws-lc-rs as well
+    // as our ring, so rustls cannot pick a process default on its own.
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+        Arc::new(client_roots),
+        Arc::clone(&provider),
+    )
+    .build()
+    .map_err(|_| ServerError::Configuration)?;
+    rustls::ServerConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(|_| ServerError::Configuration)?
         .with_client_cert_verifier(verifier)

@@ -11,9 +11,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::{err, info, ok, warn};
 
-const OPENSHELL_SOURCE_PIN: &str = "f169084923503a02a94425857b938de2841cab0c";
-const SOURCE_MARKER: &str = "f1690849";
-const LOCKED_VERSION: &str = "0.0.88";
+const OPENSHELL_SOURCE_PIN: &str = "6648bd0c290efbc41ba131ee9831ee45cd431f94";
+const SOURCE_MARKER: &str = "6648bd0c";
+const LOCKED_VERSION: &str = "0.1.2";
 const DEFAULT_IMAGE: &str = "ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e";
 const CLIENT_EXT: &str = "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n";
 const CA_EXT: &str = "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n";
@@ -3088,11 +3088,11 @@ mod tests {
 
     #[test]
     fn source_marker_must_have_hex_boundaries_or_locked_version_is_used() {
-        assert!(version_has_source_marker("openshell 0.0.0-gf1690849"));
-        assert!(version_has_source_marker("f1690849"));
-        assert!(!version_has_source_marker("openshell 0.0.0-gf16908490"));
-        assert!(!version_has_source_marker("openshell af1690849b"));
-        assert!(!version_has_source_marker("openshell agf1690849"));
+        assert!(version_has_source_marker("openshell 0.0.0-g6648bd0c"));
+        assert!(version_has_source_marker("6648bd0c"));
+        assert!(!version_has_source_marker("openshell 0.0.0-g6648bd0c0"));
+        assert!(!version_has_source_marker("openshell a6648bd0cb"));
+        assert!(!version_has_source_marker("openshell ag6648bd0c"));
     }
 
     #[test]

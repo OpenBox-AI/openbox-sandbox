@@ -10,13 +10,16 @@ const SANDBOX_WRITABLE_PATH: &str = "/sandbox";
 const PROXY_TEMP_PATH: &str = "/tmp";
 // Baseline filesystem paths OpenShell injects for proxy-mode sandboxes when
 // the policy declares network policies. Mirrors PROXY_BASELINE_READ_ONLY and
-// PROXY_BASELINE_READ_WRITE in the pinned OpenShell release (0.0.88).
+// PROXY_BASELINE_READ_WRITE in the pinned OpenShell release (0.1.2,
+// crates/openshell-supervisor). Since 0.1.x the workspace comes from
+// include_workdir rather than the read-write baseline, and /dev/null is
+// read-write so child launchers can open discarded stdio.
 // /app is deliberately absent — the released sandbox images do not ship /app
 // and OpenShell skips it via its runtime existence check. If a future image
 // adds /app the enriched policy diverges and readiness fails closed.
 const PROXY_BASELINE_READ_ONLY: &[&str] =
     &["/usr", "/lib", "/etc", "/var/log", "/proc", "/dev/urandom"];
-const PROXY_BASELINE_READ_WRITE: &[&str] = &["/sandbox", "/tmp"];
+const PROXY_BASELINE_READ_WRITE: &[&str] = &["/tmp", "/dev/null"];
 
 pub fn validate_image(template: &TemplateIdentity) -> Result<String, ()> {
     let image = template.as_str();
@@ -120,7 +123,7 @@ fn meets_security_floor(policy: &SandboxPolicy, allow_degraded_landlock: bool) -
 
 /// Mirror `OpenShell`'s baseline-path enrichment for proxy-mode sandboxes.
 ///
-/// `OpenShell` (`crates/openshell-sandbox::enrich_proto_baseline_paths`) adds
+/// `OpenShell` (`crates/openshell-supervisor::enrich_proto_baseline_paths`) adds
 /// baseline filesystem paths to policies that declare network policies, then
 /// syncs the enriched document back to the gateway as a NEW policy revision.
 /// The service must normalize identically so the readiness content check
@@ -342,7 +345,12 @@ network_policies: {}
     fn exact_release_bound_network_policy_is_framework_neutral() {
         let policy = parse_with_matching_identity(NETWORK_POLICY).unwrap();
         assert_eq!(policy.network_policies.len(), 1);
-        assert_eq!(policy.filesystem.unwrap().read_write, ["/sandbox"]);
+        // /dev/null is OpenShell 0.1.x's read-write baseline; /tmp stays
+        // read-only because the policy pins it.
+        assert_eq!(
+            policy.filesystem.unwrap().read_write,
+            ["/sandbox", "/dev/null"]
+        );
 
         let document =
             PolicyDocument::new("application/yaml", NETWORK_POLICY.as_bytes().to_vec()).unwrap();

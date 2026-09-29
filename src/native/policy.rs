@@ -105,10 +105,6 @@ fn validate_policy_floor(policy: &SandboxPolicy) -> Result<NetworkAccess, Native
     expected_endpoint.ports = vec![u32::from(DEV_NETWORK_PORT)];
     let mut expected_binary = openshell_core::proto::NetworkBinary::default();
     DEV_NETWORK_BINARY.clone_into(&mut expected_binary.path);
-    #[allow(deprecated)]
-    {
-        expected_binary.harness = false;
-    }
     if endpoint.host != DEV_NETWORK_HOST
         || endpoint.port != u32::from(DEV_NETWORK_PORT)
         || endpoint != &expected_endpoint
