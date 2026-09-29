@@ -204,7 +204,7 @@ pub async fn create(
         );
         failure
     })?;
-    if returned_spec != &expected_spec {
+    if !returned_spec_matches(returned_spec, &expected_spec) {
         let failure = CreateFailure::possibly_created(
             cleanup_target,
             CreateFailureCode::Protocol,
@@ -610,6 +610,24 @@ fn build_create_request(name: &str, image: String, policy: SandboxPolicy) -> Cre
     }
 }
 
+/// Compare the gateway's stored spec with the one we sent, allowing only the
+/// fields `OpenShell` 0.1.x owns on create: it always mints a fresh
+/// `provider_attachment_epoch`, and it requests a TTY for the default login
+/// shell when the spec carries no command. Every other field must round-trip.
+fn returned_spec_matches(returned: &SandboxSpec, expected: &SandboxSpec) -> bool {
+    if returned.provider_attachment_epoch.is_empty() {
+        return false;
+    }
+    let mut expected = expected.clone();
+    expected
+        .provider_attachment_epoch
+        .clone_from(&returned.provider_attachment_epoch);
+    if expected.command.is_empty() {
+        expected.tty = true;
+    }
+    returned == &expected
+}
+
 const DEFAULT_WORKSPACE: &str = "default";
 
 fn default_workspace() -> WorkspaceSelector {
@@ -852,6 +870,44 @@ mod tests {
         assert!(template.resources.is_none());
         assert!(template.user_namespaces.is_none());
         assert!(template.driver_config.is_none());
+    }
+
+    #[test]
+    fn returned_spec_allows_only_gateway_owned_create_fields() {
+        let request = build_create_request(
+            "sbx-000000000000000",
+            format!("example.invalid/proof@sha256:{}", "a".repeat(64)),
+            SandboxPolicy {
+                version: 1,
+                ..SandboxPolicy::default()
+            },
+        );
+        let expected = request.spec.unwrap();
+        let mut returned = expected.clone();
+        returned.provider_attachment_epoch = "a9e279fa-250e-4770-9287-f1ffe7dfa6fc".to_owned();
+        returned.tty = true;
+        assert!(returned_spec_matches(&returned, &expected));
+
+        let mut no_epoch = returned.clone();
+        no_epoch.provider_attachment_epoch.clear();
+        assert!(!returned_spec_matches(&no_epoch, &expected));
+
+        let mut other_policy = returned;
+        other_policy.policy = Some(SandboxPolicy {
+            version: 2,
+            ..SandboxPolicy::default()
+        });
+        assert!(!returned_spec_matches(&other_policy, &expected));
+
+        let mut with_command = expected;
+        with_command.command = vec!["/bin/true".to_owned()];
+        let mut returned_with_command = with_command.clone();
+        returned_with_command.provider_attachment_epoch = "epoch".to_owned();
+        returned_with_command.tty = true;
+        assert!(!returned_spec_matches(
+            &returned_with_command,
+            &with_command
+        ));
     }
 
     #[test]

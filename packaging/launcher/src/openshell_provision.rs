@@ -1873,22 +1873,20 @@ fn write_gateway_files(settings: &mut Settings) -> Result<(), String> {
         .driver_bin
         .parent()
         .unwrap_or_else(|| Path::new(""));
+    // Gateway config schema v2 (OpenShell 0.1.x): scalar compute_driver, the
+    // guest TLS bundle at gateway scope, and no VM grpc_endpoint so the driver
+    // derives https://host.openshell.internal:<port>, which the server
+    // certificate already names.
+    let tls_dir = settings.tls_dir.display();
     let config = format!(
-        "[openshell]\nversion = 1\n\n[openshell.gateway]\ncompute_drivers = [\"vm\"]\ndisable_tls = false\nlog_level = \"{}\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = false\n\n[openshell.gateway.mtls_auth]\nenabled = true\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"{}/jwt/signing.pem\"\npublic_key_path = \"{}/jwt/public.pem\"\nkid_path = \"{}/jwt/kid\"\ngateway_id = \"{}\"\nttl_secs = {}\n\n[openshell.drivers.vm]\ndefault_image = \"{}\"\nkrun_log_level = {}\ngrpc_endpoint = \"https://host.containers.internal:{}\"\ndriver_dir = \"{}\"\nstate_dir = \"{}\"\nguest_tls_ca = \"{}/ca.crt\"\nguest_tls_cert = \"{}/client/tls.crt\"\nguest_tls_key = \"{}/client/tls.key\"\n",
-        settings.gateway_log_level,
-        settings.tls_dir.display(),
-        settings.tls_dir.display(),
-        settings.tls_dir.display(),
-        settings.gateway_name,
-        settings.jwt_ttl_secs,
-        settings.sandbox_image,
-        settings.krun_log_level,
-        settings.gateway_port,
-        driver_dir.display(),
-        settings.vm_driver_state_dir.display(),
-        settings.tls_dir.display(),
-        settings.tls_dir.display(),
-        settings.tls_dir.display(),
+        "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"vm\"\ndisable_tls = false\nlog_level = \"{log_level}\"\nguest_tls_ca = \"{tls_dir}/ca.crt\"\nguest_tls_cert = \"{tls_dir}/client/tls.crt\"\nguest_tls_key = \"{tls_dir}/client/tls.key\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = false\n\n[openshell.gateway.mtls_auth]\nenabled = true\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"{tls_dir}/jwt/signing.pem\"\npublic_key_path = \"{tls_dir}/jwt/public.pem\"\nkid_path = \"{tls_dir}/jwt/kid\"\ngateway_id = \"{gateway_id}\"\nttl_secs = {ttl_secs}\n\n[openshell.drivers.vm]\ndefault_image = \"{image}\"\nkrun_log_level = {krun_log_level}\ndriver_dir = \"{driver_dir}\"\nstate_dir = \"{state_dir}\"\n",
+        log_level = settings.gateway_log_level,
+        gateway_id = settings.gateway_name,
+        ttl_secs = settings.jwt_ttl_secs,
+        image = settings.sandbox_image,
+        krun_log_level = settings.krun_log_level,
+        driver_dir = driver_dir.display(),
+        state_dir = settings.vm_driver_state_dir.display(),
     );
     write_private(&settings.gateway_config, config.as_bytes())?;
     create_private_dir(&settings.gateway_meta_dir)?;
@@ -1929,7 +1927,7 @@ fn start_gateway(settings: &Settings) -> Result<(), String> {
         .arg(&settings.gateway_port)
         .arg("--log-level")
         .arg(&settings.log_level)
-        .args(["--drivers", "vm", "--db-url"])
+        .args(["--compute-driver", "vm", "--db-url"])
         .arg(format!(
             "sqlite:{}/gateway.db?mode=rwc",
             settings.gateway_state_dir.display()

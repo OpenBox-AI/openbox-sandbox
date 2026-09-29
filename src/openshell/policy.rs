@@ -173,42 +173,11 @@ fn proxy_temp_path_is_pinned_read_only(
             .any(|path| path == PROXY_TEMP_PATH)
 }
 
+/// The gateway's policy identity hash. Delegates to `OpenShell`'s own
+/// canonical encoding (public in `openshell-core` since 0.1.x) so the readiness
+/// check cannot drift from the gateway when the encoding changes upstream.
 pub fn deterministic_policy_hash(policy: &SandboxPolicy) -> String {
-    use prost::Message as _;
-
-    let mut hasher = Sha256::new();
-    hasher.update(policy.version.to_le_bytes());
-    if let Some(filesystem) = &policy.filesystem {
-        hasher.update(filesystem.encode_to_vec());
-    }
-    if let Some(landlock) = &policy.landlock {
-        hasher.update(landlock.encode_to_vec());
-    }
-    if let Some(process) = &policy.process {
-        hasher.update(process.encode_to_vec());
-    }
-    let mut network_entries = policy.network_policies.iter().collect::<Vec<_>>();
-    network_entries.sort_by_key(|(name, _)| name.as_str());
-    for (name, rule) in network_entries {
-        hasher.update(name.as_bytes());
-        hasher.update(rule.encode_to_vec());
-    }
-    if !policy.network_middlewares.is_empty() {
-        hasher.update(b"network_middlewares");
-        let mut middleware_entries = policy.network_middlewares.iter().collect::<Vec<_>>();
-        middleware_entries.sort_by_key(|(name, _)| name.as_str());
-        for (name, middleware) in middleware_entries {
-            hasher.update(name.as_bytes());
-            let encoded = middleware.encode_to_vec();
-            hasher.update(
-                u64::try_from(encoded.len())
-                    .unwrap_or(u64::MAX)
-                    .to_le_bytes(),
-            );
-            hasher.update(encoded);
-        }
-    }
-    digest_hex(hasher.finalize())
+    openshell_core::policy_identity::deterministic_policy_hash(policy)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -259,9 +228,11 @@ mod tests {
         .unwrap();
         let policy = parse_and_validate_policy(&document, &identity, false).unwrap();
         assert_eq!(policy.version, 1);
+        // OpenShell 0.1.2's canonical policy encoding (openshell-core
+        // policy_identity); changes whenever the gateway's hash changes.
         assert_eq!(
             deterministic_policy_hash(&policy),
-            "500aedd115d9b62509ba13dbc1458003a312bf98dbd557e168a66c1111a385ef"
+            "7d84b4bda748e7b32384509d21f03f3f57353c82047e8a231222c78ffa1b4b14"
         );
     }
 

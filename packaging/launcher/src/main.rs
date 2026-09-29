@@ -645,7 +645,10 @@ fn plan(os: &str, arch: &str, chosen: Runtime, posture: Posture, artifacts: &bun
     println!();
     let (degraded, policy) = posture_config(posture);
     step(&format!("PLAN — bootstrap for {os}/{arch}"));
-    info(&format!("1. driver: OPENSHELL_DRIVERS={}", chosen.key()));
+    info(&format!(
+        "1. driver: OPENSHELL_COMPUTE_DRIVER={}",
+        chosen.key()
+    ));
     info(&format!("2. gateway: {}", artifacts.gateway.display()));
     info(&format!(
         "3. service config allow_degraded_landlock = {degraded}"
@@ -685,8 +688,8 @@ fn launch(chosen: Runtime, posture: Posture, artifacts: &bundle::Artifacts) -> E
 
     let mut command = Command::new(&artifacts.gateway);
     command
-        .env("OPENSHELL_DRIVERS", chosen.key())
-        .arg("--drivers")
+        .env("OPENSHELL_COMPUTE_DRIVER", chosen.key())
+        .arg("--compute-driver")
         .arg(chosen.key());
     match command.status() {
         Ok(status) if status.success() => ExitCode::SUCCESS,

@@ -259,7 +259,15 @@ impl OpenShellTransport for ScriptTransport {
         state.create_submissions += 1;
         state.name = request.name;
         state.sandbox_id = format!("provider-{}", state.name);
-        state.spec = request.spec;
+        // Mirror the 0.1.x gateway: it mints the attachment epoch and requests
+        // a TTY for the default login shell when no command is given.
+        state.spec = request.spec.map(|mut spec| {
+            spec.provider_attachment_epoch = format!("epoch-{}", state.name);
+            if spec.command.is_empty() {
+                spec.tty = true;
+            }
+            spec
+        });
         state.policy = state.spec.as_ref().and_then(|spec| spec.policy.clone());
         match self.scenario {
             ConformanceScenario::CreateConflict => Err(CreateTransportError::Conflict),
