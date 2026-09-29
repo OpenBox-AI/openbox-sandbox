@@ -17,6 +17,7 @@ use crate::openshell::budget::{BudgetFailure, OperationBudget};
 use crate::openshell::exec::{CollectionFailure, OutputCollector, limits_within_process_ceiling};
 use crate::openshell::policy::{
     deterministic_policy_hash, parse_and_validate_policy, validate_image,
+    without_openbox_attachment,
 };
 use crate::openshell::provider::ProviderState;
 use crate::openshell::transport::{CreateTransportError, ExecTransportError, OpenShellTransport};
@@ -413,8 +414,14 @@ async fn policy_is_loaded(
                 .loaded_time
                 .as_ref()
                 .is_some_and(|loaded| loaded.seconds > 0 || loaded.nanos > 0)
-                || revision.policy.as_ref() != Some(&provider.normalized_policy)
-                || revision.policy_hash != deterministic_policy_hash(&provider.normalized_policy)
+                || !revision.policy.as_ref().is_some_and(|loaded| {
+                    // The hash must describe what is actually loaded, OpenBox
+                    // attachment included; the content must be what we asked
+                    // for plus, at most, that attachment.
+                    revision.policy_hash == deterministic_policy_hash(loaded)
+                        && without_openbox_attachment(loaded).as_ref()
+                            == Some(&provider.normalized_policy)
+                })
             {
                 return Err(ReadinessFailure::new(
                     cleanup_target,
@@ -618,6 +625,16 @@ fn returned_spec_matches(returned: &SandboxSpec, expected: &SandboxSpec) -> bool
     if returned.provider_attachment_epoch.is_empty() {
         return false;
     }
+    // A governed gateway adds the OpenBox attachment to the policy; accept
+    // exactly that and nothing else.
+    let mut returned = returned.clone();
+    if let Some(policy) = returned.policy.as_ref() {
+        let Some(requested) = without_openbox_attachment(policy) else {
+            return false;
+        };
+        returned.policy = Some(requested);
+    }
+    let returned = &returned;
     let mut expected = expected.clone();
     expected
         .provider_attachment_epoch

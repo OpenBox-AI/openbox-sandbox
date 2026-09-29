@@ -173,6 +173,56 @@ fn proxy_temp_path_is_pinned_read_only(
             .any(|path| path == PROXY_TEMP_PATH)
 }
 
+/// Registration and attachment name the `OpenBox` front desk (governance
+/// interceptor) stamps onto every sandbox in a governed gateway.
+const OPENBOX_ATTACHMENT: &str = "openbox";
+
+/// The policy this service asked for, recovered from what a governed
+/// gateway stored.
+///
+/// In a gateway running the `OpenBox` front desk, every created sandbox gets
+/// `network_middlewares.openbox` added: the `OpenBox` verdict middleware on
+/// every host (`**`), failing closed. That only adds inspection, so it is the
+/// one addition accepted here, and only in exactly that shape. Anything else
+/// the gateway added, and any other shape of the `openbox` entry, returns
+/// `None` so readiness fails closed as a mismatch.
+pub fn without_openbox_attachment(policy: &SandboxPolicy) -> Option<SandboxPolicy> {
+    let Some(attachment) = policy.network_middlewares.get(OPENBOX_ATTACHMENT) else {
+        return Some(policy.clone());
+    };
+    let selector = attachment.endpoints.as_ref()?;
+    let tls_skip_hosts: HashSet<String> = policy
+        .network_policies
+        .values()
+        .flat_map(|rule| &rule.endpoints)
+        .filter(|endpoint| endpoint.tls == openshell_core::proto::NetworkTlsMode::Skip as i32)
+        .map(|endpoint| endpoint.host.to_ascii_lowercase())
+        .collect();
+    let approval_mode_ok = attachment.config.as_ref().is_none_or(|config| {
+        config.fields.iter().all(|(key, value)| {
+            key == "approval_mode"
+                && matches!(
+                    &value.kind,
+                    Some(prost_types::value::Kind::StringValue(mode)) if mode == "queue" || mode == "deny"
+                )
+        })
+    });
+    let shape_ok = attachment.middleware == OPENBOX_ATTACHMENT
+        && attachment.on_error == "fail_closed"
+        && selector.include == ["**"]
+        && selector
+            .exclude
+            .iter()
+            .all(|host| tls_skip_hosts.contains(&host.to_ascii_lowercase()))
+        && approval_mode_ok;
+    if !shape_ok {
+        return None;
+    }
+    let mut requested = policy.clone();
+    requested.network_middlewares.remove(OPENBOX_ATTACHMENT);
+    Some(requested)
+}
+
 /// The gateway's policy identity hash. Delegates to `OpenShell`'s own
 /// canonical encoding (public in `openshell-core` since 0.1.x) so the readiness
 /// check cannot drift from the gateway when the encoding changes upstream.
@@ -199,6 +249,90 @@ mod tests {
     use crate::{PolicyDocument, PolicyIdentity, Sha256Digest, TemplateIdentity};
 
     use super::*;
+
+    fn governed(
+        mutate: impl FnOnce(&mut openshell_core::proto::NetworkMiddlewareConfig),
+    ) -> SandboxPolicy {
+        use openshell_core::proto::{MiddlewareEndpointSelector, NetworkMiddlewareConfig};
+        let mut policy = SandboxPolicy {
+            version: 1,
+            ..SandboxPolicy::default()
+        };
+        let mut attachment = NetworkMiddlewareConfig {
+            name: "OpenBox verdicts".to_owned(),
+            middleware: "openbox".to_owned(),
+            config: Some(prost_types::Struct {
+                fields: [(
+                    "approval_mode".to_owned(),
+                    prost_types::Value {
+                        kind: Some(prost_types::value::Kind::StringValue("queue".to_owned())),
+                    },
+                )]
+                .into(),
+            }),
+            on_error: "fail_closed".to_owned(),
+            endpoints: Some(MiddlewareEndpointSelector {
+                include: vec!["**".to_owned()],
+                exclude: Vec::new(),
+            }),
+            order: 1000,
+        };
+        mutate(&mut attachment);
+        policy
+            .network_middlewares
+            .insert("openbox".to_owned(), attachment);
+        policy
+    }
+
+    #[test]
+    fn the_front_desk_attachment_is_recognised_and_removed() {
+        let requested = SandboxPolicy {
+            version: 1,
+            ..SandboxPolicy::default()
+        };
+        assert_eq!(
+            without_openbox_attachment(&requested),
+            Some(requested.clone())
+        );
+        assert_eq!(
+            without_openbox_attachment(&governed(|_| {})),
+            Some(requested)
+        );
+    }
+
+    type Mutation = fn(&mut openshell_core::proto::NetworkMiddlewareConfig);
+
+    #[test]
+    fn any_other_shape_of_the_attachment_is_a_mismatch() {
+        let cases: [(&str, Mutation); 6] = [
+            ("fail open", |a| a.on_error = "fail_open".to_owned()),
+            ("other middleware", |a| {
+                a.middleware = "openshell/regex".to_owned();
+            }),
+            ("narrowed", |a| {
+                a.endpoints.as_mut().unwrap().include = vec!["api.example.com".to_owned()];
+            }),
+            ("inspectable host excluded", |a| {
+                a.endpoints.as_mut().unwrap().exclude = vec!["api.example.com".to_owned()];
+            }),
+            ("no selector", |a| a.endpoints = None),
+            ("unknown config", |a| {
+                a.config.as_mut().unwrap().fields.insert(
+                    "mode".to_owned(),
+                    prost_types::Value {
+                        kind: Some(prost_types::value::Kind::StringValue("off".to_owned())),
+                    },
+                );
+            }),
+        ];
+        for (name, mutate) in cases {
+            assert_eq!(
+                without_openbox_attachment(&governed(mutate)),
+                None,
+                "{name}"
+            );
+        }
+    }
 
     const POLICY: &str = include_str!("../../deploy/policies/policy-deny-network.yaml");
 
