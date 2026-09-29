@@ -10,13 +10,16 @@ const SANDBOX_WRITABLE_PATH: &str = "/sandbox";
 const PROXY_TEMP_PATH: &str = "/tmp";
 // Baseline filesystem paths OpenShell injects for proxy-mode sandboxes when
 // the policy declares network policies. Mirrors PROXY_BASELINE_READ_ONLY and
-// PROXY_BASELINE_READ_WRITE in the pinned OpenShell release (0.0.88).
+// PROXY_BASELINE_READ_WRITE in the pinned OpenShell release (0.1.2,
+// crates/openshell-supervisor). Since 0.1.x the workspace comes from
+// include_workdir rather than the read-write baseline, and /dev/null is
+// read-write so child launchers can open discarded stdio.
 // /app is deliberately absent — the released sandbox images do not ship /app
 // and OpenShell skips it via its runtime existence check. If a future image
 // adds /app the enriched policy diverges and readiness fails closed.
 const PROXY_BASELINE_READ_ONLY: &[&str] =
     &["/usr", "/lib", "/etc", "/var/log", "/proc", "/dev/urandom"];
-const PROXY_BASELINE_READ_WRITE: &[&str] = &["/sandbox", "/tmp"];
+const PROXY_BASELINE_READ_WRITE: &[&str] = &["/tmp", "/dev/null"];
 
 pub fn validate_image(template: &TemplateIdentity) -> Result<String, ()> {
     let image = template.as_str();
@@ -120,7 +123,7 @@ fn meets_security_floor(policy: &SandboxPolicy, allow_degraded_landlock: bool) -
 
 /// Mirror `OpenShell`'s baseline-path enrichment for proxy-mode sandboxes.
 ///
-/// `OpenShell` (`crates/openshell-sandbox::enrich_proto_baseline_paths`) adds
+/// `OpenShell` (`crates/openshell-supervisor::enrich_proto_baseline_paths`) adds
 /// baseline filesystem paths to policies that declare network policies, then
 /// syncs the enriched document back to the gateway as a NEW policy revision.
 /// The service must normalize identically so the readiness content check
@@ -170,42 +173,11 @@ fn proxy_temp_path_is_pinned_read_only(
             .any(|path| path == PROXY_TEMP_PATH)
 }
 
+/// The gateway's policy identity hash. Delegates to `OpenShell`'s own
+/// canonical encoding (public in `openshell-core` since 0.1.x) so the readiness
+/// check cannot drift from the gateway when the encoding changes upstream.
 pub fn deterministic_policy_hash(policy: &SandboxPolicy) -> String {
-    use prost::Message as _;
-
-    let mut hasher = Sha256::new();
-    hasher.update(policy.version.to_le_bytes());
-    if let Some(filesystem) = &policy.filesystem {
-        hasher.update(filesystem.encode_to_vec());
-    }
-    if let Some(landlock) = &policy.landlock {
-        hasher.update(landlock.encode_to_vec());
-    }
-    if let Some(process) = &policy.process {
-        hasher.update(process.encode_to_vec());
-    }
-    let mut network_entries = policy.network_policies.iter().collect::<Vec<_>>();
-    network_entries.sort_by_key(|(name, _)| name.as_str());
-    for (name, rule) in network_entries {
-        hasher.update(name.as_bytes());
-        hasher.update(rule.encode_to_vec());
-    }
-    if !policy.network_middlewares.is_empty() {
-        hasher.update(b"network_middlewares");
-        let mut middleware_entries = policy.network_middlewares.iter().collect::<Vec<_>>();
-        middleware_entries.sort_by_key(|(name, _)| name.as_str());
-        for (name, middleware) in middleware_entries {
-            hasher.update(name.as_bytes());
-            let encoded = middleware.encode_to_vec();
-            hasher.update(
-                u64::try_from(encoded.len())
-                    .unwrap_or(u64::MAX)
-                    .to_le_bytes(),
-            );
-            hasher.update(encoded);
-        }
-    }
-    digest_hex(hasher.finalize())
+    openshell_core::policy_identity::deterministic_policy_hash(policy)
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -256,9 +228,11 @@ mod tests {
         .unwrap();
         let policy = parse_and_validate_policy(&document, &identity, false).unwrap();
         assert_eq!(policy.version, 1);
+        // OpenShell 0.1.2's canonical policy encoding (openshell-core
+        // policy_identity); changes whenever the gateway's hash changes.
         assert_eq!(
             deterministic_policy_hash(&policy),
-            "500aedd115d9b62509ba13dbc1458003a312bf98dbd557e168a66c1111a385ef"
+            "7d84b4bda748e7b32384509d21f03f3f57353c82047e8a231222c78ffa1b4b14"
         );
     }
 
@@ -342,7 +316,12 @@ network_policies: {}
     fn exact_release_bound_network_policy_is_framework_neutral() {
         let policy = parse_with_matching_identity(NETWORK_POLICY).unwrap();
         assert_eq!(policy.network_policies.len(), 1);
-        assert_eq!(policy.filesystem.unwrap().read_write, ["/sandbox"]);
+        // /dev/null is OpenShell 0.1.x's read-write baseline; /tmp stays
+        // read-only because the policy pins it.
+        assert_eq!(
+            policy.filesystem.unwrap().read_write,
+            ["/sandbox", "/dev/null"]
+        );
 
         let document =
             PolicyDocument::new("application/yaml", NETWORK_POLICY.as_bytes().to_vec()).unwrap();

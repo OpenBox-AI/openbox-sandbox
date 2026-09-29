@@ -24,7 +24,7 @@ use std::process::Command;
 use crate::bundle::Artifacts;
 
 /// The OpenShell version this launcher is built and tested against.
-pub const REQUIRED_VERSION: &str = "0.0.88";
+pub const REQUIRED_VERSION: &str = "0.1.2";
 
 /// The official project-zot release used by registry-mode provisioning.
 pub const ZOT_VERSION: &str = "v2.1.20";
@@ -164,7 +164,7 @@ pub fn extract_version_from(binary: &Path) -> Result<String, String> {
     if text.is_empty() {
         return Err("--version printed nothing".to_string());
     }
-    // "openshell-gateway 0.0.85" → "0.0.85"
+    // "openshell-gateway 0.1.2" → "0.1.2"
     Ok(text
         .split_whitespace()
         .last()
@@ -174,16 +174,16 @@ pub fn extract_version_from(binary: &Path) -> Result<String, String> {
 }
 
 /// Exact version match, or the root-service protocol source marker. The
-/// launcher pins an exact OpenShell release (0.0.85) for its own artifact
+/// launcher pins an exact OpenShell release (0.1.2) for its own artifact
 /// track, but the hosted-bin flow ships source-built OpenShell at the root
-/// protocol pin f1690849, which reports `0.0.88-dev.11+gf1690849`. Both are
+/// protocol pin 6648bd0c, which reports a `+g6648bd0c` build suffix. Both are
 /// accepted; anything else fails closed because the wire contract (sandbox
 /// name length, hook shape) can change between releases.
-pub const ROOT_PROTOCOL_MARKER: &str = "gf1690849";
+pub const ROOT_PROTOCOL_MARKER: &str = "g6648bd0c";
 /// The locked released OpenShell version consumed by the hosted-bin flow.
 /// Released binaries never carry the source marker, so the lock version is
 /// accepted explicitly; the wire contract is proven by the live verify test.
-pub const LOCKED_RELEASE_VERSION: &str = "0.0.88";
+pub const LOCKED_RELEASE_VERSION: &str = "0.1.2";
 
 fn version_satisfies(found: &str, required: &str) -> bool {
     found == required || found == LOCKED_RELEASE_VERSION || found.contains(ROOT_PROTOCOL_MARKER)

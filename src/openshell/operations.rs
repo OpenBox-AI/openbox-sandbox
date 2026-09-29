@@ -5,8 +5,9 @@ use crate::{
     ReadinessFailure, ReadinessFailureCode, ReadySandbox,
 };
 use openshell_core::proto::{
-    CreateSandboxRequest, DeleteSandboxRequest, ExecSandboxRequest, GetSandboxPolicyStatusRequest,
-    GetSandboxRequest, PolicyStatus, SandboxPhase, SandboxPolicy, SandboxSpec, SandboxTemplate,
+    CreateSandboxRequest, DeleteSandboxRequest, DeletionOutcome, ExecSandboxRequest,
+    GetSandboxPolicyStatusRequest, GetSandboxRequest, PolicyStatus, SandboxPhase, SandboxPolicy,
+    SandboxSpec, SandboxTemplate, WorkspaceSelector, workspace_selector,
 };
 use openshell_core::{ObjectId as _, ObjectName as _};
 use tonic::Code;
@@ -203,7 +204,7 @@ pub async fn create(
         );
         failure
     })?;
-    if returned_spec != &expected_spec {
+    if !returned_spec_matches(returned_spec, &expected_spec) {
         let failure = CreateFailure::possibly_created(
             cleanup_target,
             CreateFailureCode::Protocol,
@@ -307,6 +308,13 @@ pub async fn wait_ready(
                     detail("sandbox entered workload error"),
                 ));
             }
+            SandboxPhase::Stopping | SandboxPhase::Stopped | SandboxPhase::Completed => {
+                return Err(ReadinessFailure::new(
+                    cleanup_target,
+                    ReadinessFailureCode::WorkloadError,
+                    detail("sandbox stopped before becoming ready"),
+                ));
+            }
             SandboxPhase::Ready => {
                 if status.current_policy_version == 0 {
                     pause(runtime, &budget, cleanup_target.clone()).await?;
@@ -348,6 +356,7 @@ pub async fn wait_ready(
             }
             SandboxPhase::Unspecified
             | SandboxPhase::Provisioning
+            | SandboxPhase::Starting
             | SandboxPhase::Deleting
             | SandboxPhase::Unknown => {}
         }
@@ -400,7 +409,10 @@ async fn policy_is_loaded(
     match status {
         PolicyStatus::Pending => Ok(false),
         PolicyStatus::Loaded => {
-            if revision.loaded_at_ms <= 0
+            if !revision
+                .loaded_time
+                .as_ref()
+                .is_some_and(|loaded| loaded.seconds > 0 || loaded.nanos > 0)
                 || revision.policy.as_ref() != Some(&provider.normalized_policy)
                 || revision.policy_hash != deterministic_policy_hash(&provider.normalized_policy)
             {
@@ -429,7 +441,9 @@ pub async fn exec(
     context: OperationContext,
 ) -> Result<ExecCompleted, ExecFailure> {
     let cleanup_target = ready.cleanup_target();
-    let provider = ProviderState::decode(ready.provider_handle()).map_err(|()| {
+    // Exec addresses the sandbox by name; the handle is still validated so a
+    // corrupted handle never reaches dispatch.
+    ProviderState::decode(ready.provider_handle()).map_err(|()| {
         ExecFailure::not_dispatched(
             cleanup_target.clone(),
             ExecFailureCode::Protocol,
@@ -455,7 +469,7 @@ pub async fn exec(
         .expect("budget failures are valid before dispatch")
     })?;
 
-    let grpc_request = build_exec_request(provider.sandbox_id, &request);
+    let grpc_request = build_exec_request(cleanup_target.request_id().as_str(), &request);
     let transport = runtime.transport();
     let response = budget
         .run(transport.exec_sandbox(grpc_request))
@@ -539,17 +553,19 @@ pub async fn delete(
     match response {
         Err(status) if status.code() == Code::NotFound => Ok(DeleteOutcome::AlreadyAbsent),
         Err(status) => Err(cleanup_status(target, &status)),
-        Ok(response) => {
-            if response.deleted {
+        // ACCEPTED leaves the gateway record in place until cleanup finishes;
+        // wait_deleted observes terminal absence either way.
+        Ok(response) => match DeletionOutcome::try_from(response.outcome) {
+            Ok(DeletionOutcome::Completed | DeletionOutcome::Accepted) => {
                 Ok(DeleteOutcome::Deleted)
-            } else {
-                Err(CleanupFailure::new(
-                    target,
-                    CleanupFailureCode::Protocol,
-                    detail("delete response did not acknowledge deletion"),
-                ))
             }
-        }
+            Ok(DeletionOutcome::AlreadyAbsent) => Ok(DeleteOutcome::AlreadyAbsent),
+            Ok(DeletionOutcome::Unspecified) | Err(_) => Err(CleanupFailure::new(
+                target,
+                CleanupFailureCode::Protocol,
+                detail("delete response did not acknowledge deletion"),
+            )),
+        },
     }
 }
 
@@ -589,39 +605,69 @@ fn build_create_request(name: &str, image: String, policy: SandboxPolicy) -> Cre
             ..SandboxSpec::default()
         }),
         name: name.to_owned(),
+        workspace_scope: Some(default_workspace()),
         ..CreateSandboxRequest::default()
     }
+}
+
+/// Compare the gateway's stored spec with the one we sent, allowing only the
+/// fields `OpenShell` 0.1.x owns on create: it always mints a fresh
+/// `provider_attachment_epoch`, and it requests a TTY for the default login
+/// shell when the spec carries no command. Every other field must round-trip.
+fn returned_spec_matches(returned: &SandboxSpec, expected: &SandboxSpec) -> bool {
+    if returned.provider_attachment_epoch.is_empty() {
+        return false;
+    }
+    let mut expected = expected.clone();
+    expected
+        .provider_attachment_epoch
+        .clone_from(&returned.provider_attachment_epoch);
+    if expected.command.is_empty() {
+        expected.tty = true;
+    }
+    returned == &expected
+}
+
+const DEFAULT_WORKSPACE: &str = "default";
+
+fn default_workspace() -> WorkspaceSelector {
+    workspace_selector(DEFAULT_WORKSPACE)
 }
 
 fn build_get_request(name: &str) -> GetSandboxRequest {
     GetSandboxRequest {
         name: name.to_owned(),
-        workspace: String::new(),
+        workspace_scope: Some(default_workspace()),
     }
 }
 
 fn build_policy_status_request(name: &str, version: u32) -> GetSandboxPolicyStatusRequest {
     GetSandboxPolicyStatusRequest {
-        name: name.to_owned(),
+        sandbox: name.to_owned(),
         version,
         global: false,
-        workspace: String::new(),
+        workspace_scope: Some(default_workspace()),
     }
 }
 
 fn build_delete_request(name: &str) -> DeleteSandboxRequest {
     DeleteSandboxRequest {
         name: name.to_owned(),
-        workspace: String::new(),
+        workspace_scope: Some(default_workspace()),
+        ..DeleteSandboxRequest::default()
     }
 }
 
-fn build_exec_request(sandbox_id: String, request: &ExecRequest) -> ExecSandboxRequest {
+fn build_exec_request(name: &str, request: &ExecRequest) -> ExecSandboxRequest {
     ExecSandboxRequest {
-        sandbox_id,
+        sandbox: name.to_owned(),
+        workspace_scope: Some(default_workspace()),
         command: request.argv().as_slice().to_vec(),
         workdir: request.workdir().to_owned(),
-        timeout_seconds: u32::from(request.timeout().seconds()),
+        execution_timeout: Some(prost_types::Duration {
+            seconds: i64::from(request.timeout().seconds()),
+            nanos: 0,
+        }),
         ..ExecSandboxRequest::default()
     }
 }
@@ -807,7 +853,7 @@ mod tests {
         );
         assert!(request.labels.is_empty());
         assert!(request.annotations.is_empty());
-        assert!(request.workspace.is_empty());
+        assert_eq!(request.workspace_scope, Some(default_workspace()));
         let spec = request.spec.unwrap();
         assert!(spec.log_level.is_empty());
         assert!(spec.environment.is_empty());
@@ -827,20 +873,61 @@ mod tests {
     }
 
     #[test]
+    fn returned_spec_allows_only_gateway_owned_create_fields() {
+        let request = build_create_request(
+            "sbx-000000000000000",
+            format!("example.invalid/proof@sha256:{}", "a".repeat(64)),
+            SandboxPolicy {
+                version: 1,
+                ..SandboxPolicy::default()
+            },
+        );
+        let expected = request.spec.unwrap();
+        let mut returned = expected.clone();
+        returned.provider_attachment_epoch = "a9e279fa-250e-4770-9287-f1ffe7dfa6fc".to_owned();
+        returned.tty = true;
+        assert!(returned_spec_matches(&returned, &expected));
+
+        let mut no_epoch = returned.clone();
+        no_epoch.provider_attachment_epoch.clear();
+        assert!(!returned_spec_matches(&no_epoch, &expected));
+
+        let mut other_policy = returned;
+        other_policy.policy = Some(SandboxPolicy {
+            version: 2,
+            ..SandboxPolicy::default()
+        });
+        assert!(!returned_spec_matches(&other_policy, &expected));
+
+        let mut with_command = expected;
+        with_command.command = vec!["/bin/true".to_owned()];
+        let mut returned_with_command = with_command.clone();
+        returned_with_command.provider_attachment_epoch = "epoch".to_owned();
+        returned_with_command.tty = true;
+        assert!(!returned_spec_matches(
+            &returned_with_command,
+            &with_command
+        ));
+    }
+
+    #[test]
     fn workspace_capable_requests_always_select_the_default_workspace() {
         let name = "sbx-000000000000000";
         let get = build_get_request(name);
         let policy = build_policy_status_request(name, 1);
         let delete = build_delete_request(name);
 
+        let default = Some(default_workspace());
         assert_eq!(get.name, name);
-        assert!(get.workspace.is_empty());
-        assert_eq!(policy.name, name);
+        assert_eq!(get.workspace_scope, default);
+        assert_eq!(policy.sandbox, name);
         assert_eq!(policy.version, 1);
         assert!(!policy.global);
-        assert!(policy.workspace.is_empty());
+        assert_eq!(policy.workspace_scope, default);
         assert_eq!(delete.name, name);
-        assert!(delete.workspace.is_empty());
+        assert_eq!(delete.workspace_scope, default);
+        assert!(!delete.allow_missing);
+        assert!(delete.request_id.is_empty());
     }
 
     #[test]
@@ -858,11 +945,18 @@ mod tests {
             CommandTimeout::new(30).unwrap(),
             OutputLimits::new(64, 64, 96, 64).unwrap(),
         );
-        let grpc = build_exec_request("provider-id".to_owned(), &request);
-        assert_eq!(grpc.sandbox_id, "provider-id");
+        let grpc = build_exec_request("sbx-000000000000000", &request);
+        assert_eq!(grpc.sandbox, "sbx-000000000000000");
+        assert_eq!(grpc.workspace_scope, Some(default_workspace()));
         assert_eq!(grpc.command, request.argv().as_slice());
         assert_eq!(grpc.workdir, "/sandbox");
-        assert_eq!(grpc.timeout_seconds, 30);
+        assert_eq!(
+            grpc.execution_timeout,
+            Some(prost_types::Duration {
+                seconds: 30,
+                nanos: 0
+            })
+        );
         assert!(grpc.environment.is_empty());
         assert!(grpc.stdin.is_empty());
         assert!(!grpc.tty);

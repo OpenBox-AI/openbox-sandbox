@@ -645,7 +645,10 @@ fn plan(os: &str, arch: &str, chosen: Runtime, posture: Posture, artifacts: &bun
     println!();
     let (degraded, policy) = posture_config(posture);
     step(&format!("PLAN — bootstrap for {os}/{arch}"));
-    info(&format!("1. driver: OPENSHELL_DRIVERS={}", chosen.key()));
+    info(&format!(
+        "1. driver: OPENSHELL_COMPUTE_DRIVER={}",
+        chosen.key()
+    ));
     info(&format!("2. gateway: {}", artifacts.gateway.display()));
     info(&format!(
         "3. service config allow_degraded_landlock = {degraded}"
@@ -685,8 +688,8 @@ fn launch(chosen: Runtime, posture: Posture, artifacts: &bundle::Artifacts) -> E
 
     let mut command = Command::new(&artifacts.gateway);
     command
-        .env("OPENSHELL_DRIVERS", chosen.key())
-        .arg("--drivers")
+        .env("OPENSHELL_COMPUTE_DRIVER", chosen.key())
+        .arg("--compute-driver")
         .arg(chosen.key());
     match command.status() {
         Ok(status) if status.success() => ExitCode::SUCCESS,
@@ -801,7 +804,7 @@ MODULES:
 LOCAL LOOP (source checkout only):
   cargo build --release --bin openbox-sandbox
   cargo build --release --manifest-path packaging/launcher/Cargo.toml
-  OPENSHELL_BIN_OVERRIDE=/path/to/f1690849/build obs provision
+  OPENSHELL_BIN_OVERRIDE=/path/to/6648bd0c/build obs provision
   obs --verify-runtime && obs uninstall
 
 PROVISION OPTIONS (defaults in parentheses; every OPENBOX_* env knob has a --flag):
@@ -883,8 +886,8 @@ LAUNCHER OPTIONS:
                        It does not connect or prove sandbox execution.
   -h, --help           Show this help.
 
-`obs provision` requires OpenShell 0.0.88 (locked release)
-or the root protocol marker f1690849."#
+`obs provision` requires OpenShell 0.1.2 (locked release)
+or the root protocol marker 6648bd0c."#
     );
 }
 

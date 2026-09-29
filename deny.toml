@@ -1,14 +1,12 @@
 [advisories]
 version = 2
 yanked = "deny"
-# GHSA-gfxp-f68g-8x78 (libyml <=0.0.5, yaml_string_extend unsound): transitive
-# via the LOCKED upstream openshell-policy crate (serde_yml 0.0.12); no
-# patched libyml exists and the pin cannot be changed here. Reachable only by
-# parsing operator-supplied policy YAML at provision time — not by sandbox
-# workloads. Revisit when the OpenShell lock bumps.
+# RUSTSEC-2025-0134 (rustls-pemfile archived, unmaintained): transitive via the
+# LOCKED upstream openshell-core crate at OpenShell v0.1.2. No known
+# vulnerability; this workspace parses PEM through rustls-pki-types. Revisit
+# when the OpenShell lock bumps.
 ignore = [
-  { id = "GHSA-gfxp-f68g-8x78", reason = "locked upstream openshell-policy dep; no patched release; operator-controlled input only" },
-  { id = "GHSA-hhw4-xg65-fp2x", reason = "serde_yml 0.0.12 unsound/unmaintained; locked upstream openshell-policy dep; operator-controlled input only; revisit on lock bump" },
+  { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile unmaintained; locked upstream openshell-core dep; no vulnerability; revisit on lock bump" },
 ]
 
 [licenses]

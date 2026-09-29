@@ -11,9 +11,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::{err, info, ok, warn};
 
-const OPENSHELL_SOURCE_PIN: &str = "f169084923503a02a94425857b938de2841cab0c";
-const SOURCE_MARKER: &str = "f1690849";
-const LOCKED_VERSION: &str = "0.0.88";
+const OPENSHELL_SOURCE_PIN: &str = "6648bd0c290efbc41ba131ee9831ee45cd431f94";
+const SOURCE_MARKER: &str = "6648bd0c";
+const LOCKED_VERSION: &str = "0.1.2";
 const DEFAULT_IMAGE: &str = "ghcr.io/nvidia/openshell-community/sandboxes/base@sha256:aeef1c63f00e2913ea002ccb3aaf925f338b5c5d70e63576f0d95c16a138044e";
 const CLIENT_EXT: &str = "basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=clientAuth\n";
 const CA_EXT: &str = "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign,digitalSignature\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n";
@@ -1873,22 +1873,20 @@ fn write_gateway_files(settings: &mut Settings) -> Result<(), String> {
         .driver_bin
         .parent()
         .unwrap_or_else(|| Path::new(""));
+    // Gateway config schema v2 (OpenShell 0.1.x): scalar compute_driver, the
+    // guest TLS bundle at gateway scope, and no VM grpc_endpoint so the driver
+    // derives https://host.openshell.internal:<port>, which the server
+    // certificate already names.
+    let tls_dir = settings.tls_dir.display();
     let config = format!(
-        "[openshell]\nversion = 1\n\n[openshell.gateway]\ncompute_drivers = [\"vm\"]\ndisable_tls = false\nlog_level = \"{}\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = false\n\n[openshell.gateway.mtls_auth]\nenabled = true\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"{}/jwt/signing.pem\"\npublic_key_path = \"{}/jwt/public.pem\"\nkid_path = \"{}/jwt/kid\"\ngateway_id = \"{}\"\nttl_secs = {}\n\n[openshell.drivers.vm]\ndefault_image = \"{}\"\nkrun_log_level = {}\ngrpc_endpoint = \"https://host.containers.internal:{}\"\ndriver_dir = \"{}\"\nstate_dir = \"{}\"\nguest_tls_ca = \"{}/ca.crt\"\nguest_tls_cert = \"{}/client/tls.crt\"\nguest_tls_key = \"{}/client/tls.key\"\n",
-        settings.gateway_log_level,
-        settings.tls_dir.display(),
-        settings.tls_dir.display(),
-        settings.tls_dir.display(),
-        settings.gateway_name,
-        settings.jwt_ttl_secs,
-        settings.sandbox_image,
-        settings.krun_log_level,
-        settings.gateway_port,
-        driver_dir.display(),
-        settings.vm_driver_state_dir.display(),
-        settings.tls_dir.display(),
-        settings.tls_dir.display(),
-        settings.tls_dir.display(),
+        "[openshell]\nversion = 2\n\n[openshell.gateway]\ncompute_driver = \"vm\"\ndisable_tls = false\nlog_level = \"{log_level}\"\nguest_tls_ca = \"{tls_dir}/ca.crt\"\nguest_tls_cert = \"{tls_dir}/client/tls.crt\"\nguest_tls_key = \"{tls_dir}/client/tls.key\"\n\n[openshell.gateway.auth]\nallow_unauthenticated_users = false\n\n[openshell.gateway.mtls_auth]\nenabled = true\n\n[openshell.gateway.gateway_jwt]\nsigning_key_path = \"{tls_dir}/jwt/signing.pem\"\npublic_key_path = \"{tls_dir}/jwt/public.pem\"\nkid_path = \"{tls_dir}/jwt/kid\"\ngateway_id = \"{gateway_id}\"\nttl_secs = {ttl_secs}\n\n[openshell.drivers.vm]\ndefault_image = \"{image}\"\nkrun_log_level = {krun_log_level}\ndriver_dir = \"{driver_dir}\"\nstate_dir = \"{state_dir}\"\n",
+        log_level = settings.gateway_log_level,
+        gateway_id = settings.gateway_name,
+        ttl_secs = settings.jwt_ttl_secs,
+        image = settings.sandbox_image,
+        krun_log_level = settings.krun_log_level,
+        driver_dir = driver_dir.display(),
+        state_dir = settings.vm_driver_state_dir.display(),
     );
     write_private(&settings.gateway_config, config.as_bytes())?;
     create_private_dir(&settings.gateway_meta_dir)?;
@@ -1929,7 +1927,7 @@ fn start_gateway(settings: &Settings) -> Result<(), String> {
         .arg(&settings.gateway_port)
         .arg("--log-level")
         .arg(&settings.log_level)
-        .args(["--drivers", "vm", "--db-url"])
+        .args(["--compute-driver", "vm", "--db-url"])
         .arg(format!(
             "sqlite:{}/gateway.db?mode=rwc",
             settings.gateway_state_dir.display()
@@ -3088,11 +3086,11 @@ mod tests {
 
     #[test]
     fn source_marker_must_have_hex_boundaries_or_locked_version_is_used() {
-        assert!(version_has_source_marker("openshell 0.0.0-gf1690849"));
-        assert!(version_has_source_marker("f1690849"));
-        assert!(!version_has_source_marker("openshell 0.0.0-gf16908490"));
-        assert!(!version_has_source_marker("openshell af1690849b"));
-        assert!(!version_has_source_marker("openshell agf1690849"));
+        assert!(version_has_source_marker("openshell 0.0.0-g6648bd0c"));
+        assert!(version_has_source_marker("6648bd0c"));
+        assert!(!version_has_source_marker("openshell 0.0.0-g6648bd0c0"));
+        assert!(!version_has_source_marker("openshell a6648bd0cb"));
+        assert!(!version_has_source_marker("openshell ag6648bd0c"));
     }
 
     #[test]

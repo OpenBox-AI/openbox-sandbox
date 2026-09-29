@@ -52,8 +52,8 @@ is unsupported directly; use WSL2.
 ## Version gate
 
 The service protocol is pinned to OpenShell source commit
-`f169084923503a02a94425857b938de2841cab0c` (`f1690849`). The launcher accepts
-either that source marker or the locked release **0.0.88**, and the live
+`6648bd0c290efbc41ba131ee9831ee45cd431f94` (`6648bd0c`, tag `v0.1.2`). The launcher accepts
+either that source marker or the locked release **0.1.2**, and the live
 lifecycle test proves the wire contract at runtime. Neither the pin nor the
 hash check can be overridden.
 

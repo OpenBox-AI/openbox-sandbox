@@ -484,7 +484,7 @@ fn notes_markdown(tag: &str, assets: &[String]) -> String {
 Runs one authorized command in an isolated sandbox, behind a loopback-only mTLS
 service.
 
-**Platforms:** {platforms} · **OpenShell:** locked release 0.0.88, sha256-verified
+**Platforms:** {platforms} · **OpenShell:** locked release 0.1.2, sha256-verified
 
 ### Start
 
