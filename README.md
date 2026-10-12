@@ -131,6 +131,8 @@ log.
 | `openbox-sandbox` (root) | The sandbox service |
 | `packaging/launcher` | `obs`, the launcher for operators and developers |
 | `packaging/release` | `obs-release`, the release tool for maintainers only. No release carries it. |
+| `middleware` | OpenBox for OpenShell: the door guard and the front desk. `docs/install.md` installs them. |
+| `deploy/helm/openbox-openshell` | The Helm chart for the door guard and the front desk |
 | OpenShell | The external gateway and driver runtime. Pinned here, maintained elsewhere. |
 
 This repository contains no shell scripts. The launcher does everything in Rust.
